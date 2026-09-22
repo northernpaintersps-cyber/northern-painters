@@ -1,17 +1,14 @@
 import { supabase } from './supabase'
 
-// Coerce empty strings / non-values to null for Postgres typed columns
-// Also normalises DD/MM/YYYY → YYYY-MM-DD
+// ── Sanitisers ────────────────────────────────────────────────
 function toDate(v: any): string | null {
   if (v == null || v === '' || v === 'null' || v === 'undefined') return null
   const s = String(v).trim()
-  // DD/MM/YYYY or D/M/YYYY
-  const dmyMatch = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/)
-  if (dmyMatch) {
-    const [, d, m, y] = dmyMatch
+  const dmySlash = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/)
+  if (dmySlash) {
+    const [, d, m, y] = dmySlash
     return `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`
   }
-  // DD-MM-YYYY
   const dmyDash = s.match(/^(\d{1,2})-(\d{1,2})-(\d{4})$/)
   if (dmyDash) {
     const [, d, m, y] = dmyDash
@@ -28,8 +25,12 @@ function toBool(v: any): boolean {
   if (v == null || v === '') return false
   return Boolean(v)
 }
+function uid(prefix: string, ...parts: any[]): string {
+  const base = parts.map(p => String(p ?? '').replace(/\s+/g, '').slice(0, 10)).join('-')
+  return `${prefix}-${base || Date.now()}-${Math.random().toString(36).slice(2, 6)}`
+}
 
-// ── Field mapping: old app → new schema ──────────────────────
+// ── Mappers ───────────────────────────────────────────────────
 function mapJob(j: any, userId: string) {
   return {
     id: j.id,
@@ -65,10 +66,9 @@ function mapJob(j: any, userId: string) {
 }
 
 function mapLabour(l: any, userId: string) {
-  // V16 labour rows have no id/entryId — generate one from jobId + date + sub
-  const fallbackId = `lab-${l.jobId ?? 'x'}-${(l.date ?? '').replace(/-/g, '')}-${(l.sub ?? '').replace(/\s+/g, '').slice(0, 8)}-${Math.random().toString(36).slice(2, 7)}`
+  const id = l.entryId ?? l.id ?? uid('lab', l.jobId, l.date, l.sub)
   return {
-    id: l.entryId ?? l.id ?? fallbackId,
+    id,
     user_id: userId,
     job_id: l.jobId ?? l.job_id ?? null,
     client: l.client ?? null,
@@ -87,72 +87,63 @@ function mapLabour(l: any, userId: string) {
     clock_in: toDate(l.clockIn ?? l.clock_in),
     clock_out: toDate(l.clockOut ?? l.clock_out),
     updated_at: new Date().toISOString(),
-    created_at: l.createdAt ?? l.created_at ?? new Date().toISOString(),
+    created_at: toDate(l.createdAt ?? l.created_at) ?? new Date().toISOString(),
   }
 }
 
-function mapMaterial(m: any, userId: string) {
-  // V16 uses 'item' for description (not 'desc'); invoiceNo for receipt number
-  const fallbackId = `mat-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
-  return {
-    id: m.entryId ?? m.id ?? fallbackId,
+// V16 exports costs as unified array with _src: 'material' | 'receipt' | 'expense'
+function mapCost(c: any, userId: string, _src: string) {
+  const id = c.entryId ?? c.id ?? uid(_src.slice(0, 3), c.jobId, c.date, c.supplier ?? c.item)
+  const base = {
+    id,
     user_id: userId,
-    job_id: m.jobId ?? m.job_id ?? null,
-    client: m.client ?? null,
-    date: toDate(m.date),
-    supplier: m.supplier ?? null,
-    mat_desc: m.item ?? m.desc ?? m.mat_desc ?? null,
-    cost_ex_gst: toNum(m.costExGST ?? m.cost_ex_gst),
-    gst: toNum(m.gst),
-    total_inc_gst: toNum(m.totalIncGST ?? m.total_inc_gst),
-    category: m.category ?? null,
-    billing_type: m.billingType ?? m.billing_type ?? null,
-    notes: m.notes ?? null,
-    receipt_no: m.invoiceNo?.toString() ?? m.receiptNo ?? m.receipt_no ?? null,
+    job_id: c.jobId ?? c.job_id ?? null,
+    client: c.client ?? null,
+    date: toDate(c.date),
+    supplier: c.supplier ?? null,
+    notes: c.notes ?? null,
     updated_at: new Date().toISOString(),
-    created_at: m.createdAt ?? m.created_at ?? new Date().toISOString(),
+    created_at: toDate(c.createdAt ?? c.created_at) ?? new Date().toISOString(),
   }
-}
-
-function mapReceipt(r: any, userId: string) {
+  if (_src === 'material') {
+    return {
+      ...base,
+      mat_desc: c.item ?? c.desc ?? c.mat_desc ?? null,
+      cost_ex_gst: toNum(c.costExGST ?? c.cost_ex_gst),
+      gst: toNum(c.gst),
+      total_inc_gst: toNum(c.totalIncGST ?? c.total_inc_gst),
+      category: c.category ?? null,
+      billing_type: c.billingType ?? c.billing_type ?? null,
+      receipt_no: c.receipt ?? c.invoiceNo?.toString() ?? c.receiptNo ?? c.receipt_no ?? null,
+    }
+  }
+  if (_src === 'receipt') {
+    return {
+      ...base,
+      rec_desc: c.item ?? c.desc ?? c.rec_desc ?? null,
+      cost_ex_gst: toNum(c.amount ?? c.costExGST ?? c.cost_ex_gst),
+      gst: toNum(c.gst),
+      total_inc_gst: toNum(c.totalIncGST ?? c.total_inc_gst ?? c.amount),
+      category: c.method ?? c.category ?? null,
+    }
+  }
+  // expense
   return {
-    id: r.no ?? r.id,
-    user_id: userId,
-    job_id: r.jobId ?? r.job_id ?? null,
-    client: r.client ?? null,
-    date: toDate(r.dateIssued ?? r.date),
-    supplier: r.method ?? null,
-    rec_desc: r.desc ?? r.rec_desc ?? null,
-    cost_ex_gst: toNum(r.amount ?? r.cost_ex_gst),
-    gst: toNum(r.gst),
-    total_inc_gst: toNum(r.amount ?? r.total_inc_gst),
-    category: r.method ?? null,
-    notes: r.notes ?? null,
-    updated_at: new Date().toISOString(),
-    created_at: r.createdAt ?? r.created_at ?? new Date().toISOString(),
+    ...base,
+    exp_desc: c.item ?? c.desc ?? c.exp_desc ?? null,
+    amount_ex_gst: toNum(c.amountExGST ?? c.costExGST ?? c.amount_ex_gst),
+    gst: toNum(c.gst),
+    category: c.category ?? null,
   }
 }
 
-function mapExpense(e: any, userId: string) {
-  return {
-    id: e.id,
-    user_id: userId,
-    job_id: e.jobId ?? e.job_id ?? null,
-    date: toDate(e.date),
-    exp_desc: e.desc ?? e.exp_desc ?? null,
-    amount_ex_gst: toNum(e.amountExGST ?? e.amount_ex_gst),
-    gst: toNum(e.gst),
-    category: e.category ?? null,
-    notes: e.notes ?? null,
-    updated_at: new Date().toISOString(),
-    created_at: e.createdAt ?? e.created_at ?? new Date().toISOString(),
-  }
-}
-
-function mapInvoice(inv: any, userId: string) {
+function mapInvoice(inv: any, userId: string, idx: number) {
   const ex = toNum(inv.agreedExGST ?? inv.agreed_ex_gst) ?? 0
+  // invNo may be "Cash" (duplicate), so append index to guarantee uniqueness
+  const rawId = String(inv.invNo ?? inv.id ?? `inv-${idx}`)
+  const id = rawId === 'Cash' ? `Cash-${inv.jobId ?? ''}-${idx}` : rawId
   return {
-    id: inv.id ?? inv.invNo,
+    id,
     user_id: userId,
     job_id: inv.jobId ?? inv.job_id ?? null,
     client: inv.client ?? null,
@@ -164,14 +155,13 @@ function mapInvoice(inv: any, userId: string) {
     total_inc_gst: toNum(inv.incGST ?? inv.total_inc_gst) ?? ex * 1.1,
     deposit: toNum(inv.deposit),
     deposit_date: toDate(inv.depositDate ?? inv.deposit_date),
-    notes: inv.notes ?? inv.desc ?? null,
+    notes: inv.desc ?? inv.notes ?? null,
     inv_status: inv.status ?? inv.inv_status ?? null,
     received: toNum(inv.received),
     manual_paid: toBool(inv.manualPaid ?? inv.manual_paid),
-    // Preserve V16 line items in extra so they can be displayed on printed invoice
     extra: inv.lineItems?.length ? { line_items: inv.lineItems, mat_markup: inv.matMarkup ?? 0 } : {},
     updated_at: new Date().toISOString(),
-    created_at: inv.createdAt ?? inv.created_at ?? new Date().toISOString(),
+    created_at: toDate(inv.createdAt ?? inv.created_at) ?? new Date().toISOString(),
   }
 }
 
@@ -188,13 +178,13 @@ function mapCrew(c: any, userId: string) {
     email: c.email ?? null,
     notes: c.notes ?? null,
     updated_at: new Date().toISOString(),
-    created_at: c.createdAt ?? c.created_at ?? new Date().toISOString(),
+    created_at: toDate(c.createdAt ?? c.created_at) ?? new Date().toISOString(),
   }
 }
 
 function mapAssignment(a: any, userId: string) {
   return {
-    id: a.id,
+    id: a.id ?? uid('asgn', a.jobId, a.date, a.crewName),
     user_id: userId,
     job_id: a.jobId ?? a.job_id ?? null,
     crew_name: a.crewName ?? a.crew_name ?? a.crewId ?? null,
@@ -202,17 +192,15 @@ function mapAssignment(a: any, userId: string) {
     hours: toNum(a.hours),
     notes: a.notes ?? null,
     updated_at: new Date().toISOString(),
-    created_at: a.createdAt ?? a.created_at ?? new Date().toISOString(),
+    created_at: toDate(a.createdAt ?? a.created_at) ?? new Date().toISOString(),
   }
 }
 
 function mapEnquiry(e: any, userId: string) {
-  // V16 enquiries have no id — generate from date + client
-  const fallbackId = `enq-${(e.date ?? '').replace(/-/g, '')}-${(e.client ?? '').replace(/\s+/g, '').slice(0, 8)}-${Math.random().toString(36).slice(2, 6)}`
-  // Merge action and jobType into notes
+  const id = e.id ?? uid('enq', e.date, e.client)
   const extraNotes = [e.action ? `Action: ${e.action}` : null, e.jobType ? `Job type: ${e.jobType}` : null].filter(Boolean).join(' · ')
   return {
-    id: e.id ?? fallbackId,
+    id,
     user_id: userId,
     date: toDate(e.date),
     client: e.client ?? null,
@@ -225,13 +213,13 @@ function mapEnquiry(e: any, userId: string) {
     converted_to_job: e.convertedToJob ?? e.converted_to_job ?? null,
     job_id: e.convertedJobId ?? e.job_id ?? null,
     updated_at: new Date().toISOString(),
-    created_at: e.createdAt ?? e.created_at ?? new Date().toISOString(),
+    created_at: toDate(e.createdAt ?? e.created_at) ?? new Date().toISOString(),
   }
 }
 
 function mapVariation(v: any, userId: string) {
   return {
-    id: v.id,
+    id: v.id ?? uid('var', v.jobId, v.date),
     user_id: userId,
     job_id: v.jobId ?? v.job_id ?? null,
     date: toDate(v.date),
@@ -240,27 +228,27 @@ function mapVariation(v: any, userId: string) {
     var_status: v.status ?? v.var_status ?? null,
     notes: v.notes ?? null,
     updated_at: new Date().toISOString(),
-    created_at: v.createdAt ?? v.created_at ?? new Date().toISOString(),
+    created_at: toDate(v.createdAt ?? v.created_at) ?? new Date().toISOString(),
   }
 }
 
 function mapTodo(t: any, userId: string) {
   return {
-    id: t.id,
+    id: t.id ?? uid('todo', t.text?.slice(0, 10)),
     user_id: userId,
     todo_text: t.text ?? t.todo_text ?? null,
-    done: t.done ?? false,
+    done: toBool(t.done),
     due: toDate(t.due),
     job_id: t.jobId ?? t.job_id ?? null,
     priority: t.priority ?? 'Normal',
     updated_at: new Date().toISOString(),
-    created_at: t.createdAt ?? t.created_at ?? new Date().toISOString(),
+    created_at: toDate(t.createdAt ?? t.created_at) ?? new Date().toISOString(),
   }
 }
 
 function mapCalendarEvent(ev: any, userId: string) {
   return {
-    id: ev.id,
+    id: ev.id ?? uid('cal', ev.date, ev.title?.slice(0, 10)),
     user_id: userId,
     title: ev.title ?? null,
     date: toDate(ev.date),
@@ -270,13 +258,13 @@ function mapCalendarEvent(ev: any, userId: string) {
     job_id: ev.jobId ?? ev.job_id ?? null,
     time: ev.time ?? null,
     updated_at: new Date().toISOString(),
-    created_at: ev.createdAt ?? ev.created_at ?? new Date().toISOString(),
+    created_at: toDate(ev.createdAt ?? ev.created_at) ?? new Date().toISOString(),
   }
 }
 
 function mapPaySchedule(p: any, userId: string) {
   return {
-    id: p.jobId ?? p.id ?? `ps-${Date.now()}`,
+    id: p.jobId ?? p.id ?? uid('ps', p.client),
     user_id: userId,
     worker: p.client ?? p.worker ?? null,
     period_start: toDate(p.milestones?.[0]?.dueDate ?? p.period_start),
@@ -285,29 +273,29 @@ function mapPaySchedule(p: any, userId: string) {
     paid: toBool(p.milestones?.every((m: any) => m.received) ?? p.paid),
     notes: JSON.stringify(p.milestones ?? []),
     updated_at: new Date().toISOString(),
-    created_at: p.createdAt ?? p.created_at ?? new Date().toISOString(),
+    created_at: toDate(p.createdAt ?? p.created_at) ?? new Date().toISOString(),
   }
 }
 
 function mapAdsSpend(a: any, userId: string) {
   return {
-    id: a.entryId ?? a.id,
+    id: a.entryId ?? a.id ?? uid('ads', a.date, a.platform),
     user_id: userId,
     date: toDate(a.date),
     platform: a.platform ?? null,
     amount: toNum(a.amount),
     notes: a.notes ?? null,
     updated_at: new Date().toISOString(),
-    created_at: a.createdAt ?? a.created_at ?? new Date().toISOString(),
+    created_at: toDate(a.createdAt ?? a.created_at) ?? new Date().toISOString(),
   }
 }
 
-// ── Batch upsert helper ───────────────────────────────────────
+// ── Batch upsert with deduplication ──────────────────────────
 async function batchUpsert(table: string, rows: any[], chunkSize = 50): Promise<{ count: number; errors: string[] }> {
   if (!rows.length) return { count: 0, errors: [] }
-  // Deduplicate by id — keep last occurrence (most complete data)
+  // Deduplicate by id — keep last occurrence
   const seen = new Map<string, any>()
-  for (const r of rows) seen.set(r.id, r)
+  for (const r of rows) if (r?.id != null) seen.set(String(r.id), r)
   const deduped = Array.from(seen.values())
   const errors: string[] = []
   let count = 0
@@ -320,14 +308,13 @@ async function batchUpsert(table: string, rows: any[], chunkSize = 50): Promise<
   return { count, errors }
 }
 
-// ── Main import function ──────────────────────────────────────
+// ── Main import ───────────────────────────────────────────────
 export interface ImportResult {
   counts: Record<string, number>
   errors: string[]
   total: number
 }
 
-// Resolve a key from json, checking multiple name variants
 function getArr(json: any, ...keys: string[]): any[] {
   for (const k of keys) {
     if (Array.isArray(json[k]) && json[k].length) return json[k]
@@ -339,37 +326,112 @@ export async function importBackup(json: any, userId: string, onProgress?: (msg:
   const report: Record<string, number> = {}
   const allErrors: string[] = []
 
-  // V16 exports lowercase camelCase; previous importer used UPPERCASE — support both
-  const tables: Array<{ name: string; keys: string[]; mapper: (item: any, uid: string) => any; idFields?: string[] }> = [
-    { name: 'np_jobs',            keys: ['jobs', 'JOBS'],                        mapper: mapJob,           idFields: ['id'] },
-    { name: 'np_labour',          keys: ['labour', 'LABOUR'],                    mapper: mapLabour,        idFields: ['id', 'entryId', 'jobId'] },
-    { name: 'np_materials',       keys: ['materials', 'MATERIALS'],              mapper: mapMaterial,      idFields: ['id', 'entryId', 'jobId'] },
-    { name: 'np_receipts',        keys: ['receipts', 'RECEIPTS'],                mapper: mapReceipt,       idFields: ['id', 'no'] },
-    { name: 'np_expenses',        keys: ['expenses', 'EXPENSES'],                mapper: mapExpense,       idFields: ['id'] },
-    { name: 'np_invoices',        keys: ['invoices', 'INVOICES'],                mapper: mapInvoice,       idFields: ['id', 'invNo'] },
-    { name: 'np_crew',            keys: ['crew', 'CREW'],                        mapper: mapCrew,          idFields: ['id'] },
-    { name: 'np_assignments',     keys: ['assignments', 'ASSIGNMENTS'],          mapper: mapAssignment,    idFields: ['id', 'jobId'] },
-    { name: 'np_enquiries',       keys: ['enquiries', 'ENQUIRIES'],              mapper: mapEnquiry,       idFields: ['id', 'client', 'phone'] },
-    { name: 'np_variations',      keys: ['variations', 'VARIATIONS'],            mapper: mapVariation,     idFields: ['id'] },
-    { name: 'np_todos',           keys: ['todos', 'TODOS'],                      mapper: mapTodo,          idFields: ['id'] },
-    { name: 'np_calendar_events', keys: ['calendarEvents', 'CALENDAR_EVENTS'],   mapper: mapCalendarEvent, idFields: ['id'] },
-    { name: 'np_pay_schedules',   keys: ['paySchedules', 'PAY_SCHEDULES'],       mapper: mapPaySchedule,   idFields: ['id', 'jobId'] },
-    { name: 'np_ads_spend',       keys: ['adsSpend', 'ADS_SPEND'],               mapper: mapAdsSpend,      idFields: ['id', 'entryId'] },
-  ]
+  // ── Jobs ──────────────────────────────────────────────────
+  const rawJobs = getArr(json, 'jobs', 'JOBS')
+  onProgress?.(`Importing ${rawJobs.length} jobs…`)
+  const mappedJobs = rawJobs.filter(j => j?.id).map(j => mapJob(j, userId))
+  const r1 = await batchUpsert('np_jobs', mappedJobs)
+  report.jobs = r1.count; allErrors.push(...r1.errors)
 
-  for (const { name, keys, mapper, idFields = ['id'] } of tables) {
-    const raw = getArr(json, ...keys)
-    if (!raw.length) { report[keys[0]] = 0; continue }
-    onProgress?.(`Importing ${raw.length} ${keys[0]}…`)
-    // Pre-filter: row must have at least one of the expected identifier fields
-    const withId = raw.filter(r => r && idFields.some(f => r[f] != null && r[f] !== ''))
-    const mapped = withId.map(r => mapper(r, userId)).filter(r => r.id)
-    const { count, errors } = await batchUpsert(name, mapped)
-    report[keys[0]] = count
-    allErrors.push(...errors)
-  }
+  // ── Labour ────────────────────────────────────────────────
+  const rawLabour = getArr(json, 'labour', 'LABOUR')
+  onProgress?.(`Importing ${rawLabour.length} labour entries…`)
+  const mappedLabour = rawLabour.map(l => mapLabour(l, userId))
+  const r2 = await batchUpsert('np_labour', mappedLabour)
+  report.labour = r2.count; allErrors.push(...r2.errors)
 
-  // Import V16 rates and matPrices into business settings
+  // ── Costs (materials + receipts + expenses unified in V16) ─
+  // V16 exports as `costs` array with _src field; older exports use separate arrays
+  const rawCosts = getArr(json, 'costs')
+  const rawMats = rawCosts.length
+    ? rawCosts.filter((c: any) => c._src !== 'receipt' && c._src !== 'expense')
+    : getArr(json, 'materials', 'MATERIALS')
+  const rawReceipts = rawCosts.length
+    ? rawCosts.filter((c: any) => c._src === 'receipt')
+    : getArr(json, 'receipts', 'RECEIPTS')
+  const rawExpenses = rawCosts.length
+    ? rawCosts.filter((c: any) => c._src === 'expense')
+    : getArr(json, 'expenses', 'EXPENSES')
+
+  onProgress?.(`Importing ${rawMats.length} materials…`)
+  const mappedMats = rawMats.map((m: any) => mapCost(m, userId, 'material'))
+  const r3 = await batchUpsert('np_materials', mappedMats)
+  report.materials = r3.count; allErrors.push(...r3.errors)
+
+  onProgress?.(`Importing ${rawReceipts.length} receipts…`)
+  const mappedReceipts = rawReceipts.map((r: any) => mapCost(r, userId, 'receipt'))
+  const r4 = await batchUpsert('np_receipts', mappedReceipts)
+  report.receipts = r4.count; allErrors.push(...r4.errors)
+
+  onProgress?.(`Importing ${rawExpenses.length} expenses…`)
+  const mappedExpenses = rawExpenses.map((e: any) => mapCost(e, userId, 'expense'))
+  const r5 = await batchUpsert('np_expenses', mappedExpenses)
+  report.expenses = r5.count; allErrors.push(...r5.errors)
+
+  // ── Invoices ──────────────────────────────────────────────
+  const rawInvoices = getArr(json, 'invoices', 'INVOICES')
+  onProgress?.(`Importing ${rawInvoices.length} invoices…`)
+  const mappedInvoices = rawInvoices.map((inv: any, i: number) => mapInvoice(inv, userId, i))
+  const r6 = await batchUpsert('np_invoices', mappedInvoices)
+  report.invoices = r6.count; allErrors.push(...r6.errors)
+
+  // ── Crew ──────────────────────────────────────────────────
+  const rawCrew = getArr(json, 'crew', 'CREW')
+  onProgress?.(`Importing ${rawCrew.length} crew…`)
+  const mappedCrew = rawCrew.filter((c: any) => c?.id).map((c: any) => mapCrew(c, userId))
+  const r7 = await batchUpsert('np_crew', mappedCrew)
+  report.crew = r7.count; allErrors.push(...r7.errors)
+
+  // ── Assignments ───────────────────────────────────────────
+  const rawAssign = getArr(json, 'assignments', 'ASSIGNMENTS')
+  onProgress?.(`Importing ${rawAssign.length} assignments…`)
+  const mappedAssign = rawAssign.map((a: any) => mapAssignment(a, userId))
+  const r8 = await batchUpsert('np_assignments', mappedAssign)
+  report.assignments = r8.count; allErrors.push(...r8.errors)
+
+  // ── Enquiries ─────────────────────────────────────────────
+  const rawEnq = getArr(json, 'enquiries', 'ENQUIRIES')
+  onProgress?.(`Importing ${rawEnq.length} enquiries…`)
+  const mappedEnq = rawEnq.map((e: any) => mapEnquiry(e, userId))
+  const r9 = await batchUpsert('np_enquiries', mappedEnq)
+  report.enquiries = r9.count; allErrors.push(...r9.errors)
+
+  // ── Variations ────────────────────────────────────────────
+  const rawVar = getArr(json, 'variations', 'VARIATIONS')
+  onProgress?.(`Importing ${rawVar.length} variations…`)
+  const mappedVar = rawVar.map((v: any) => mapVariation(v, userId))
+  const r10 = await batchUpsert('np_variations', mappedVar)
+  report.variations = r10.count; allErrors.push(...r10.errors)
+
+  // ── Todos ─────────────────────────────────────────────────
+  const rawTodos = getArr(json, 'todos', 'TODOS')
+  onProgress?.(`Importing ${rawTodos.length} todos…`)
+  const mappedTodos = rawTodos.map((t: any) => mapTodo(t, userId))
+  const r11 = await batchUpsert('np_todos', mappedTodos)
+  report.todos = r11.count; allErrors.push(...r11.errors)
+
+  // ── Calendar events ───────────────────────────────────────
+  const rawCal = getArr(json, 'calendarEvents', 'CALENDAR_EVENTS')
+  onProgress?.(`Importing ${rawCal.length} calendar events…`)
+  const mappedCal = rawCal.map((e: any) => mapCalendarEvent(e, userId))
+  const r12 = await batchUpsert('np_calendar_events', mappedCal)
+  report.calendarEvents = r12.count; allErrors.push(...r12.errors)
+
+  // ── Pay schedules ─────────────────────────────────────────
+  const rawPS = getArr(json, 'paySchedules', 'PAY_SCHEDULES')
+  onProgress?.(`Importing ${rawPS.length} pay schedules…`)
+  const mappedPS = rawPS.map((p: any) => mapPaySchedule(p, userId))
+  const r13 = await batchUpsert('np_pay_schedules', mappedPS)
+  report.paySchedules = r13.count; allErrors.push(...r13.errors)
+
+  // ── Ads spend ─────────────────────────────────────────────
+  const rawAds = getArr(json, 'adsSpend', 'ADS_SPEND')
+  onProgress?.(`Importing ${rawAds.length} ads entries…`)
+  const mappedAds = rawAds.map((a: any) => mapAdsSpend(a, userId))
+  const r14 = await batchUpsert('np_ads_spend', mappedAds)
+  report.adsSpend = r14.count; allErrors.push(...r14.errors)
+
+  // ── Rates + paint products ────────────────────────────────
   await importV16Settings(json, userId, onProgress, allErrors)
 
   const total = Object.values(report).reduce((a, b) => a + b, 0)
@@ -380,15 +442,11 @@ async function importV16Settings(json: any, userId: string, onProgress: ((msg: s
   const rates = json.rates
   const matPrices: any[] = getArr(json, 'matPrices', 'MAT_PRICES')
   if (!rates && !matPrices.length) return
-
   try {
-    // Fetch existing business settings to merge
     const { data: existing } = await (supabase.from('np_settings') as any)
       .select('value').eq('user_id', userId).eq('key', 'business').maybeSingle()
     const current: any = existing?.value ?? {}
-
     const update: any = { ...current }
-
     if (rates) {
       onProgress?.('Importing labour rates…')
       update.rates = {
@@ -401,7 +459,6 @@ async function importV16Settings(json: any, userId: string, onProgress: ((msg: s
       }
       update.default_labour_rate = rates.chargeRate ?? current.default_labour_rate ?? 65
     }
-
     if (matPrices.length) {
       onProgress?.(`Importing ${matPrices.length} paint products…`)
       update.paint_products = matPrices.map((p: any, i: number) => ({
@@ -416,15 +473,11 @@ async function importV16Settings(json: any, userId: string, onProgress: ((msg: s
         yours:    p.yours    ?? 0,
       }))
     }
-
     const { error } = await (supabase.from('np_settings') as any).upsert({
-      key: 'business',
-      user_id: userId,
-      value: update,
-      updated_at: new Date().toISOString(),
+      key: 'business', user_id: userId, value: update, updated_at: new Date().toISOString(),
     })
     if (error) errors.push(`np_settings: ${error.message}`)
   } catch (e: any) {
-    errors.push(`np_settings rates/products: ${e?.message}`)
+    errors.push(`np_settings: ${e?.message}`)
   }
 }
