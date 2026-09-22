@@ -2,12 +2,14 @@ import { useState } from 'react'
 import { NavLink, Outlet } from 'react-router-dom'
 import { useAuth } from '@/lib/auth'
 import { useRealtime } from '@/lib/useRealtime'
+import { useInstall } from '@/lib/useInstall'
 import {
   LayoutDashboard, Briefcase, FileText, Users, Calendar,
   DollarSign, ClipboardList, Settings, LogOut, Phone,
   BarChart2, Menu, X, MapPin, Receipt, Megaphone, Calculator,
   Package, GitBranch, UserCheck, Shield, TrendingUp, PieChart,
-  Paintbrush, MessageCircle, Banknote, ReceiptText, Clock, Wallet, CalendarDays
+  Paintbrush, MessageCircle, Banknote, ReceiptText, Clock, Wallet, CalendarDays,
+  Download
 } from 'lucide-react'
 
 const nav = [
@@ -50,6 +52,7 @@ const nav = [
 export default function Layout() {
   const { signOut } = useAuth()
   const [mobileOpen, setMobileOpen] = useState(false)
+  const { canPrompt, install } = useInstall()
   useRealtime()
 
   const sidebar = (
@@ -90,6 +93,12 @@ export default function Layout() {
       </nav>
 
       <div className="border-t border-black/10 py-2">
+        {canPrompt && (
+          <button onClick={() => { install(); setMobileOpen(false) }}
+            className="flex w-full items-center gap-2 px-4 py-[7px] text-[13px] border-l-2 border-transparent text-[#2563eb] hover:bg-[#f5f4f0] transition-colors font-medium">
+            <Download size={14} /> Install app
+          </button>
+        )}
         <NavLink to="/settings" onClick={() => setMobileOpen(false)}
           className={({ isActive }) =>
             `flex items-center gap-2 px-4 py-[7px] text-[13px] border-l-2 transition-colors ${isActive ? 'border-blue-600 bg-[#f5f4f0] text-gray-900 font-medium' : 'border-transparent text-gray-500 hover:bg-[#f5f4f0] hover:text-gray-900'}`

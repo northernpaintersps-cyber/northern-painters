@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import InstallCard from '@/components/InstallCard'
 import { useAuth } from '@/lib/auth'
 import { supabase } from '@/lib/supabase'
 import { importBackup } from '@/lib/importData'
@@ -507,6 +508,11 @@ export default function SettingsPage() {
             </div>
           </div>
         )}
+      </section>
+
+      {/* ── Install ──────────────────────────────────────────── */}
+      <section className="space-y-3">
+        <InstallCard />
       </section>
 
       {/* ── Account ──────────────────────────────────────────── */}
