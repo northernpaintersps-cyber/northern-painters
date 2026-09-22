@@ -76,25 +76,42 @@ export function normaliseDate(d: string | null | undefined): string | null {
 
 // ── Job scheduled dates ──────────────────────────────────────
 export function getJobScheduledDates(
-  job: { scheduledDates?: unknown; schedStart?: string | null; estDays?: number | null },
+  job: {
+    scheduledDates?: unknown; scheduled_dates?: unknown
+    schedStart?: string | null; sched_start?: string | null
+    estDays?: number | null; est_days?: number | null
+  },
   workWeekends = false
 ): string[] {
-  const manual = Array.isArray(job.scheduledDates) ? job.scheduledDates as string[] : []
+  const rawManual = job.scheduled_dates ?? job.scheduledDates
+  const manual = Array.isArray(rawManual) ? rawManual as string[] : []
   if (manual.length) return [...manual].sort()
-  const start = normaliseDate(job.schedStart)
+  const start = normaliseDate(job.sched_start ?? job.schedStart)
   if (!start) return []
-  const days = Number(job.estDays) || 1
+  const days = Number(job.est_days ?? job.estDays) || 1
   return getWorkingDates(start, days, workWeekends)
 }
 
 // ── Invoice calculations ─────────────────────────────────────
-export function calcOwed(inv: { incGST?: number | null; received?: number | null; manualPaid?: boolean | null; manual_paid?: boolean | null }) {
-  if (inv.manualPaid || inv.manual_paid) return 0
-  return Math.max(0, (inv.incGST ?? 0) - (inv.received ?? 0))
+// DB column is total_inc_gst; V16 backups use incGST. Accept both.
+type Inv = {
+  incGST?: number | null; total_inc_gst?: number | null
+  received?: number | null
+  manualPaid?: boolean | null; manual_paid?: boolean | null
 }
 
-export function invStatus(inv: { incGST?: number | null; received?: number | null; manualPaid?: boolean | null; manual_paid?: boolean | null }): 'Paid' | 'Part Paid' | 'Unpaid' {
-  if (inv.manualPaid || inv.manual_paid || calcOwed(inv) <= 0) return 'Paid'
+export function invIncGST(inv: Inv): number {
+  return inv.total_inc_gst ?? inv.incGST ?? 0
+}
+
+export function calcOwed(inv: Inv) {
+  if (inv.manualPaid || inv.manual_paid) return 0
+  return Math.max(0, invIncGST(inv) - (inv.received ?? 0))
+}
+
+export function invStatus(inv: Inv): 'Paid' | 'Part Paid' | 'Unpaid' {
+  if (inv.manualPaid || inv.manual_paid) return 'Paid'
+  if (calcOwed(inv) <= 0) return 'Paid'
   if ((inv.received ?? 0) > 0) return 'Part Paid'
   return 'Unpaid'
 }
