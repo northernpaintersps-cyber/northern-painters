@@ -36,8 +36,10 @@ function mapJob(j: any, userId: string) {
 }
 
 function mapLabour(l: any, userId: string) {
+  // V16 labour rows have no id/entryId — generate one from jobId + date + sub
+  const fallbackId = `lab-${l.jobId ?? 'x'}-${(l.date ?? '').replace(/-/g, '')}-${(l.sub ?? '').replace(/\s+/g, '').slice(0, 8)}-${Math.random().toString(36).slice(2, 7)}`
   return {
-    id: l.entryId ?? l.id,
+    id: l.entryId ?? l.id ?? fallbackId,
     user_id: userId,
     job_id: l.jobId ?? l.job_id ?? null,
     client: l.client ?? null,
@@ -61,20 +63,23 @@ function mapLabour(l: any, userId: string) {
 }
 
 function mapMaterial(m: any, userId: string) {
+  // V16 uses 'item' for description (not 'desc'); invoiceNo for receipt number
+  const fallbackId = `mat-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
   return {
-    id: m.entryId ?? m.id,
+    id: m.entryId ?? m.id ?? fallbackId,
     user_id: userId,
     job_id: m.jobId ?? m.job_id ?? null,
     client: m.client ?? null,
     date: m.date ?? null,
     supplier: m.supplier ?? null,
-    mat_desc: m.desc ?? m.mat_desc ?? null,
+    mat_desc: m.item ?? m.desc ?? m.mat_desc ?? null,
     cost_ex_gst: m.costExGST ?? m.cost_ex_gst ?? null,
     gst: m.gst ?? null,
     total_inc_gst: m.totalIncGST ?? m.total_inc_gst ?? null,
     category: m.category ?? null,
+    billing_type: m.billingType ?? m.billing_type ?? null,
     notes: m.notes ?? null,
-    receipt_no: m.receiptNo ?? m.receipt_no ?? null,
+    receipt_no: m.invoiceNo?.toString() ?? m.receiptNo ?? m.receipt_no ?? null,
     updated_at: new Date().toISOString(),
     created_at: m.createdAt ?? m.created_at ?? new Date().toISOString(),
   }
@@ -130,11 +135,12 @@ function mapInvoice(inv: any, userId: string) {
     total_inc_gst: inv.incGST ?? inv.total_inc_gst ?? ex * 1.1,
     deposit: inv.deposit ?? null,
     deposit_date: inv.depositDate ?? inv.deposit_date ?? null,
-    notes: inv.notes ?? null,
+    notes: inv.notes ?? inv.desc ?? null,
     inv_status: inv.status ?? inv.inv_status ?? null,
     received: inv.received ?? null,
     manual_paid: inv.manualPaid ?? inv.manual_paid ?? false,
-    extra: {},
+    // Preserve V16 line items in extra so they can be displayed on printed invoice
+    extra: inv.lineItems?.length ? { line_items: inv.lineItems, mat_markup: inv.matMarkup ?? 0 } : {},
     updated_at: new Date().toISOString(),
     created_at: inv.createdAt ?? inv.created_at ?? new Date().toISOString(),
   }
@@ -172,8 +178,12 @@ function mapAssignment(a: any, userId: string) {
 }
 
 function mapEnquiry(e: any, userId: string) {
+  // V16 enquiries have no id — generate from date + client
+  const fallbackId = `enq-${(e.date ?? '').replace(/-/g, '')}-${(e.client ?? '').replace(/\s+/g, '').slice(0, 8)}-${Math.random().toString(36).slice(2, 6)}`
+  // Merge action and jobType into notes
+  const extraNotes = [e.action ? `Action: ${e.action}` : null, e.jobType ? `Job type: ${e.jobType}` : null].filter(Boolean).join(' · ')
   return {
-    id: e.id,
+    id: e.id ?? fallbackId,
     user_id: userId,
     date: e.date ?? null,
     client: e.client ?? null,
@@ -181,7 +191,7 @@ function mapEnquiry(e: any, userId: string) {
     phone: e.phone ?? null,
     email: e.email ?? null,
     source: e.source ?? null,
-    notes: e.notes ?? null,
+    notes: [e.notes, extraNotes].filter(Boolean).join('\n') || null,
     enq_status: e.status ?? e.enq_status ?? null,
     converted_to_job: e.convertedToJob ?? e.converted_to_job ?? null,
     job_id: e.convertedJobId ?? e.job_id ?? null,
@@ -284,37 +294,104 @@ export interface ImportResult {
   total: number
 }
 
+// Resolve a key from json, checking multiple name variants
+function getArr(json: any, ...keys: string[]): any[] {
+  for (const k of keys) {
+    if (Array.isArray(json[k]) && json[k].length) return json[k]
+  }
+  return []
+}
+
 export async function importBackup(json: any, userId: string, onProgress?: (msg: string) => void): Promise<ImportResult> {
   const report: Record<string, number> = {}
   const allErrors: string[] = []
 
-  const tables: Array<{ name: string; key: string; mapper: (item: any, uid: string) => any }> = [
-    { name: 'np_jobs',            key: 'JOBS',            mapper: mapJob },
-    { name: 'np_labour',          key: 'LABOUR',          mapper: mapLabour },
-    { name: 'np_materials',       key: 'MATERIALS',       mapper: mapMaterial },
-    { name: 'np_receipts',        key: 'RECEIPTS',        mapper: mapReceipt },
-    { name: 'np_expenses',        key: 'EXPENSES',        mapper: mapExpense },
-    { name: 'np_invoices',        key: 'INVOICES',        mapper: mapInvoice },
-    { name: 'np_crew',            key: 'CREW',            mapper: mapCrew },
-    { name: 'np_assignments',     key: 'ASSIGNMENTS',     mapper: mapAssignment },
-    { name: 'np_enquiries',       key: 'ENQUIRIES',       mapper: mapEnquiry },
-    { name: 'np_variations',      key: 'VARIATIONS',      mapper: mapVariation },
-    { name: 'np_todos',           key: 'TODOS',           mapper: mapTodo },
-    { name: 'np_calendar_events', key: 'CALENDAR_EVENTS', mapper: mapCalendarEvent },
-    { name: 'np_pay_schedules',   key: 'PAY_SCHEDULES',   mapper: mapPaySchedule },
-    { name: 'np_ads_spend',       key: 'ADS_SPEND',       mapper: mapAdsSpend },
+  // V16 exports lowercase camelCase; previous importer used UPPERCASE — support both
+  const tables: Array<{ name: string; keys: string[]; mapper: (item: any, uid: string) => any; idFields?: string[] }> = [
+    { name: 'np_jobs',            keys: ['jobs', 'JOBS'],                        mapper: mapJob,           idFields: ['id'] },
+    { name: 'np_labour',          keys: ['labour', 'LABOUR'],                    mapper: mapLabour,        idFields: ['id', 'entryId', 'jobId'] },
+    { name: 'np_materials',       keys: ['materials', 'MATERIALS'],              mapper: mapMaterial,      idFields: ['id', 'entryId', 'jobId'] },
+    { name: 'np_receipts',        keys: ['receipts', 'RECEIPTS'],                mapper: mapReceipt,       idFields: ['id', 'no'] },
+    { name: 'np_expenses',        keys: ['expenses', 'EXPENSES'],                mapper: mapExpense,       idFields: ['id'] },
+    { name: 'np_invoices',        keys: ['invoices', 'INVOICES'],                mapper: mapInvoice,       idFields: ['id', 'invNo'] },
+    { name: 'np_crew',            keys: ['crew', 'CREW'],                        mapper: mapCrew,          idFields: ['id'] },
+    { name: 'np_assignments',     keys: ['assignments', 'ASSIGNMENTS'],          mapper: mapAssignment,    idFields: ['id', 'jobId'] },
+    { name: 'np_enquiries',       keys: ['enquiries', 'ENQUIRIES'],              mapper: mapEnquiry,       idFields: ['id', 'client', 'phone'] },
+    { name: 'np_variations',      keys: ['variations', 'VARIATIONS'],            mapper: mapVariation,     idFields: ['id'] },
+    { name: 'np_todos',           keys: ['todos', 'TODOS'],                      mapper: mapTodo,          idFields: ['id'] },
+    { name: 'np_calendar_events', keys: ['calendarEvents', 'CALENDAR_EVENTS'],   mapper: mapCalendarEvent, idFields: ['id'] },
+    { name: 'np_pay_schedules',   keys: ['paySchedules', 'PAY_SCHEDULES'],       mapper: mapPaySchedule,   idFields: ['id', 'jobId'] },
+    { name: 'np_ads_spend',       keys: ['adsSpend', 'ADS_SPEND'],               mapper: mapAdsSpend,      idFields: ['id', 'entryId'] },
   ]
 
-  for (const { name, key, mapper } of tables) {
-    const raw: any[] = json[key] ?? []
-    if (!raw.length) { report[key] = 0; continue }
-    onProgress?.(`Importing ${raw.length} ${key}…`)
-    const mapped = raw.filter(r => r?.id || r?.entryId || r?.no || r?.jobId).map(r => mapper(r, userId)).filter(r => r.id)
+  for (const { name, keys, mapper, idFields = ['id'] } of tables) {
+    const raw = getArr(json, ...keys)
+    if (!raw.length) { report[keys[0]] = 0; continue }
+    onProgress?.(`Importing ${raw.length} ${keys[0]}…`)
+    // Pre-filter: row must have at least one of the expected identifier fields
+    const withId = raw.filter(r => r && idFields.some(f => r[f] != null && r[f] !== ''))
+    const mapped = withId.map(r => mapper(r, userId)).filter(r => r.id)
     const { count, errors } = await batchUpsert(name, mapped)
-    report[key] = count
+    report[keys[0]] = count
     allErrors.push(...errors)
   }
 
+  // Import V16 rates and matPrices into business settings
+  await importV16Settings(json, userId, onProgress, allErrors)
+
   const total = Object.values(report).reduce((a, b) => a + b, 0)
   return { counts: report, errors: allErrors, total }
+}
+
+async function importV16Settings(json: any, userId: string, onProgress: ((msg: string) => void) | undefined, errors: string[]) {
+  const rates = json.rates
+  const matPrices: any[] = getArr(json, 'matPrices', 'MAT_PRICES')
+  if (!rates && !matPrices.length) return
+
+  try {
+    // Fetch existing business settings to merge
+    const { data: existing } = await (supabase.from('np_settings') as any)
+      .select('value').eq('user_id', userId).eq('key', 'business').maybeSingle()
+    const current: any = existing?.value ?? {}
+
+    const update: any = { ...current }
+
+    if (rates) {
+      onProgress?.('Importing labour rates…')
+      update.rates = {
+        standard:    rates.standard    ?? current.rates?.standard    ?? 65,
+        lead:        rates.lead        ?? current.rates?.lead        ?? 75,
+        sub:         rates.sub         ?? current.rates?.sub         ?? 70,
+        overhead:    rates.overhead    ?? current.rates?.overhead    ?? 12,
+        hpd:         rates.hpd         ?? current.rates?.hpd         ?? 8,
+        charge_rate: rates.chargeRate  ?? current.rates?.charge_rate ?? 65,
+      }
+      update.default_labour_rate = rates.chargeRate ?? current.default_labour_rate ?? 65
+    }
+
+    if (matPrices.length) {
+      onProgress?.(`Importing ${matPrices.length} paint products…`)
+      update.paint_products = matPrices.map((p: any, i: number) => ({
+        id: `pp-v16-${i}`,
+        product:  p.product  ?? '',
+        cat:      p.cat      ?? 'interior',
+        use:      p.use      ?? '',
+        size:     p.size     ?? '',
+        finish:   p.finish   ?? '',
+        coverage: p.coverage ?? 12,
+        rrp:      p.rrp      ?? 0,
+        yours:    p.yours    ?? 0,
+      }))
+    }
+
+    const { error } = await (supabase.from('np_settings') as any).upsert({
+      key: 'business',
+      user_id: userId,
+      value: update,
+      updated_at: new Date().toISOString(),
+    })
+    if (error) errors.push(`np_settings: ${error.message}`)
+  } catch (e: any) {
+    errors.push(`np_settings rates/products: ${e?.message}`)
+  }
 }
