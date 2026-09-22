@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/lib/auth'
 import { Modal } from '@/components/ui/Modal'
+import JobDayPanel from '@/components/JobDayPanel'
 import { Input, Select, TextArea } from '@/components/ui/Field'
 import { fmtDate, genId, today, addDays, getJobScheduledDates } from '@/lib/utils'
 import { ChevronLeft, ChevronRight, Plus, Loader2, Trash2 } from 'lucide-react'
@@ -83,6 +84,7 @@ export default function CalendarPage() {
   const [selectedEvent, setSelectedEvent] = useState<any | null>(null)
   const [form, setForm] = useState<any>({})
   const [saving, setSaving] = useState(false)
+  const [panel, setPanel] = useState<{ jobId: string; date: string } | null>(null)
 
   const todayStr = today()
 
@@ -224,7 +226,11 @@ export default function CalendarPage() {
                   </div>
                   <div className="space-y-0.5 overflow-hidden">
                     {items.slice(0, 3).map((item, i) => (
-                      <div key={i} onClick={item.type === 'event' ? (e) => openEvent(item.data, e) : undefined}
+                      <div key={i}
+                        onClick={item.type === 'event'
+                          ? (e) => openEvent(item.data, e)
+                          : (e) => { e.stopPropagation(); setPanel({ jobId: item.data.id, date }) }}
+                        title={item.type === 'event' ? undefined : 'Assign crew for this day'}
                         className={`text-[10px] px-1 py-0.5 rounded truncate leading-tight ${item.color}`}>
                         {item.label}
                       </div>
@@ -241,6 +247,12 @@ export default function CalendarPage() {
       }
 
       {/* Event modal */}
+      <JobDayPanel
+        jobId={panel?.jobId ?? null}
+        date={panel?.date ?? null}
+        onClose={() => setPanel(null)}
+      />
+
       <Modal open={modalOpen} onClose={() => setModalOpen(false)}
         title={selectedEvent ? 'Edit event' : `Add event — ${fmtDate(selectedDate || '')}`}>
         <div className="space-y-3">

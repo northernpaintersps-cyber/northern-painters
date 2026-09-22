@@ -4,8 +4,9 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/lib/auth'
 import { Modal } from '@/components/ui/Modal'
+import JobDayPanel from '@/components/JobDayPanel'
 import { Input } from '@/components/ui/Field'
-import { getJobScheduledDates, genId, today, findCrew, crewLabel } from '@/lib/utils'
+import { getJobScheduledDates, genId, findCrew, crewLabel } from '@/lib/utils'
 import {
   Plus, Loader2, Trash2, Edit2, ChevronLeft, ChevronRight,
   MessageSquare, CalendarDays,
@@ -97,14 +98,12 @@ export default function Crew() {
 
   const upsertCrew = useUpsert('np_crew')
   const delCrew = useDelete('np_crew')
-  const upsertAsn = useUpsert('np_assignments')
   const delAsn = useDelete('np_assignments')
 
   const [offset, setOffset] = useState(0)
   const [crewModal, setCrewModal] = useState(false)
   const [crewForm, setCrewForm] = useState<Row>({})
-  const [asnModal, setAsnModal] = useState(false)
-  const [asnForm, setAsnForm] = useState<Row>({ date: today(), time_slot: 'full' })
+  const [panel, setPanel] = useState<{ jobId: string; date: string } | null>(null)
 
   const ws = weekStart(offset)
   const days = useMemo(() => Array.from({ length: 7 }, (_, i) => {
@@ -166,17 +165,7 @@ export default function Crew() {
 
   // ── Assignment CRUD ───────────────────────────────────────
   function openAssign(jobId: string, date: string) {
-    const j = jobs.find(x => x.id === jobId)
-    setAsnForm({ job_id: jobId, date, time_slot: 'full', crew_name: crew[0]?.name ?? '', client: j?.client })
-    setAsnModal(true)
-  }
-  async function saveAsn() {
-    if (!asnForm.crew_name) { alert('Pick a crew member'); return }
-    await upsertAsn.mutateAsync({
-      ...asnForm, id: asnForm.id || genId('a'),
-      created_at: asnForm.created_at || new Date().toISOString(),
-    })
-    setAsnModal(false)
+    setPanel({ jobId, date })
   }
 
   // V16 openBriefingMsg
@@ -446,60 +435,11 @@ export default function Crew() {
         </div>
       </Modal>
 
-      {/* Assignment modal */}
-      <Modal open={asnModal} onClose={() => setAsnModal(false)} title="Assign Crew">
-        <div className="grid grid-cols-2 gap-3">
-          <div className="col-span-2">
-            <label className="block text-xs font-medium text-gray-500 mb-1">Crew member</label>
-            <select value={asnForm.crew_name || ''} onChange={e => setAsnForm(p => ({ ...p, crew_name: e.target.value }))}
-              className="w-full bg-white border border-black/20 rounded-lg px-3 py-2 text-[13px] focus:outline-none focus:ring-1 focus:ring-blue-500">
-              <option value="">— Select —</option>
-              {crew.map(c => <option key={c.id} value={c.name}>{c.name}{c.role ? ` · ${c.role}` : ''}</option>)}
-            </select>
-          </div>
-          <Input label="Date" type="date" value={asnForm.date || ''} onChange={e => setAsnForm(p => ({ ...p, date: e.target.value }))} />
-          <div>
-            <label className="block text-xs font-medium text-gray-500 mb-1">Shift</label>
-            <select value={asnForm.time_slot || 'full'} onChange={e => setAsnForm(p => ({ ...p, time_slot: e.target.value }))}
-              className="w-full bg-white border border-black/20 rounded-lg px-3 py-2 text-[13px] focus:outline-none focus:ring-1 focus:ring-blue-500">
-              {(Object.keys(SLOT) as SlotKey[]).map(k => <option key={k} value={k}>{SLOT[k].label}</option>)}
-            </select>
-          </div>
-          <div className="col-span-2">
-            <label className="block text-xs font-medium text-gray-500 mb-1">Job</label>
-            <select value={asnForm.job_id || ''} onChange={e => {
-              const j = jobs.find(x => x.id === e.target.value)
-              setAsnForm(p => ({ ...p, job_id: e.target.value, client: j?.client }))
-            }}
-              className="w-full bg-white border border-black/20 rounded-lg px-3 py-2 text-[13px] focus:outline-none focus:ring-1 focus:ring-blue-500">
-              <option value="">— Select job —</option>
-              {jobs.map(j => <option key={j.id} value={j.id}>{j.id} — {j.client}</option>)}
-            </select>
-          </div>
-          <Input label="Notes" value={asnForm.notes || ''} onChange={e => setAsnForm(p => ({ ...p, notes: e.target.value }))} wrapperClassName="col-span-2" />
-        </div>
-
-        {/* Existing assignments for this job+day */}
-        {asnForm.job_id && asnForm.date && (
-          <div className="mt-4 pt-3 border-t border-black/10">
-            <div className="text-[10px] font-bold uppercase tracking-wider text-[#666] mb-1.5">Already assigned this day</div>
-            {assignments.filter(a => a.job_id === asnForm.job_id && a.date === asnForm.date).map(a => (
-              <div key={a.id} className="flex items-center justify-between py-1 text-xs border-b border-black/[0.05]">
-                <span>{crewLabel(crew, a.crew_name)} · {SLOT[slotOf(a)].label}</span>
-                <button onClick={() => delAsn.mutate(a.id)} className="text-[#c0392b] hover:underline">Remove</button>
-              </div>
-            ))}
-            {assignments.filter(a => a.job_id === asnForm.job_id && a.date === asnForm.date).length === 0 && (
-              <div className="text-xs text-[#666]">Nobody assigned yet.</div>
-            )}
-          </div>
-        )}
-
-        <div className="flex justify-end gap-2 mt-5 pt-4 border-t border-black/10">
-          <button onClick={() => setAsnModal(false)} className="px-4 py-2 text-[13px] rounded-lg bg-[#f5f4f0] text-gray-600 border border-black/10 hover:bg-gray-200">Cancel</button>
-          <button onClick={saveAsn} className="px-5 py-2 text-[13px] rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-semibold">Assign</button>
-        </div>
-      </Modal>
+      <JobDayPanel
+        jobId={panel?.jobId ?? null}
+        date={panel?.date ?? null}
+        onClose={() => setPanel(null)}
+      />
     </div>
   )
 }
