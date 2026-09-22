@@ -7,7 +7,7 @@ import {
   DollarSign, ClipboardList, Settings, LogOut, Phone,
   BarChart2, Menu, X, MapPin, Receipt, Megaphone, Calculator,
   Package, GitBranch, UserCheck, Shield, TrendingUp, PieChart,
-  Paintbrush, MessageCircle, Banknote
+  Paintbrush, MessageCircle, Banknote, ReceiptText
 } from 'lucide-react'
 
 const nav = [
@@ -30,6 +30,7 @@ const nav = [
     { to: '/costs',         label: 'Project Costs', icon: TrendingUp },
     { to: '/profitability', label: 'Profitability', icon: PieChart },
     { to: '/finance',       label: 'Finance',       icon: DollarSign },
+    { to: '/tax',           label: 'Tax & BAS',     icon: ReceiptText },
     { to: '/reports',       label: 'Reports',       icon: BarChart2 },
   ]},
   { group: 'Resources', items: [
