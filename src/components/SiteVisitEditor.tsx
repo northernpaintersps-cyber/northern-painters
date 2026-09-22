@@ -1,8 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
-import {
-  SV_SUBS, SV_GROUP_HDR, SV_GROUP_BG, SV_CONDITIONS,
-  SV_PHOTO_TAGS, SV_TAG_BG, SV_TAG_FG, type SVSub,
-} from '@/lib/siteVisitData'
+import { SV_CONDITIONS, SV_PHOTO_TAGS, SV_TAG_BG, SV_TAG_FG } from '@/lib/siteVisitData'
+import { emptySubstrates, normaliseSubstrates, type SubEntry } from '@/lib/substrates'
+import SubstratePicker from '@/components/SubstratePicker'
 import { genId, today } from '@/lib/utils'
 import {
   ArrowLeft, Save, Check, Plus, Trash2, Mic, Camera, Upload, Copy,
@@ -14,14 +13,12 @@ type Row = Record<string, any>
 export type SVArea = { id: string; name: string; condition: string; prep: string; l: number; w: number; h: number; notes: string }
 export type SVPhoto = { id: string; data: string; tag: string; label: string }
 export type SVVoice = { id: string; text: string }
-export type SVLine = { id: string; type: string; sqm: number; lm: number; qty: number; notes: string }
-export type SVSubData = { inc: boolean; lines: SVLine[] }
 
 export type SVState = {
   date: string; jobId: string; client: string; address: string; jobType: string
   notes: string; status: string
   areas: SVArea[]; photos: SVPhoto[]; voiceNotes: SVVoice[]
-  substrates: Record<string, SVSubData>
+  substrates: Record<string, SubEntry>
   sketch: string | null
 }
 
@@ -35,11 +32,8 @@ const BTN_P = 'flex items-center gap-1.5 px-2.5 py-1.5 text-[12px] bg-blue-600 h
 
 export const emptyArea = (n: number): SVArea =>
   ({ id: genId('ar'), name: `Area ${n}`, condition: 'Good', prep: '', l: 0, w: 0, h: 0, notes: '' })
-const emptyLine = (): SVLine => ({ id: genId('ln'), type: '', sqm: 0, lm: 0, qty: 0, notes: '' })
-
 export function emptySVState(): SVState {
-  const substrates: Record<string, SVSubData> = {}
-  SV_SUBS.forEach(s => { substrates[s.key] = { inc: false, lines: [emptyLine()] } })
+  const substrates = emptySubstrates()
   return {
     date: today(), jobId: '', client: '', address: '', jobType: JOB_TYPES[0],
     notes: '', status: 'Draft',
@@ -51,28 +45,13 @@ export function emptySVState(): SVState {
 export function normaliseSV(s: Partial<SVState> | null | undefined): SVState {
   const base = emptySVState()
   if (!s) return base
-  const substrates = { ...base.substrates }
-  Object.entries(s.substrates ?? {}).forEach(([k, v]: [string, any]) => {
-    if (!v) return
-    substrates[k] = {
-      inc: !!v.inc,
-      lines: Array.isArray(v.lines) && v.lines.length
-        ? v.lines.map((l: any) => ({ ...emptyLine(), ...l }))
-        : [emptyLine()],
-    }
-  })
+  const substrates = normaliseSubstrates(s.substrates)
   return {
     ...base, ...s, substrates,
     areas: s.areas?.length ? s.areas.map((a: any, i: number) => ({ ...emptyArea(i + 1), ...a })) : base.areas,
     photos: s.photos ?? [], voiceNotes: s.voiceNotes ?? [],
   }
 }
-
-const subTotal = (d: SVSubData, unit: SVSub['unit']) =>
-  d.lines.reduce((t, l) => t + (unit === 'sqm' ? l.sqm : unit === 'lm' ? l.lm : l.qty), 0)
-
-const unitLabel = (unit: SVSub['unit'], total: number) =>
-  unit === 'qty' ? `${total} ${total === 1 ? 'item' : 'items'}` : `${total} ${unit === 'sqm' ? 'm²' : 'lin.m'}`
 
 // ── Sketch pad with pen/erase, colour, size, undo ────────────
 function Sketch({ value, onChange }: { value: string | null; onChange: (v: string | null) => void }) {
@@ -204,28 +183,6 @@ export default function SiteVisitEditor({ initial, jobs, isNew, onClose, onSave,
     setSv(s => ({ ...s, areas: [...s.areas, { ...a, id: genId('ar'), name: `${a.name} (copy)` }] }))
   const delArea = (id: string) => setSv(s => ({ ...s, areas: s.areas.filter(a => a.id !== id) }))
 
-  // Substrates
-  const setSub = (key: string, p: Partial<SVSubData>) =>
-    setSv(s => ({ ...s, substrates: { ...s.substrates, [key]: { ...s.substrates[key], ...p } } }))
-  const setLine = (key: string, lineId: string, p: Partial<SVLine>) =>
-    setSv(s => ({
-      ...s,
-      substrates: {
-        ...s.substrates,
-        [key]: { ...s.substrates[key], lines: s.substrates[key].lines.map(l => l.id === lineId ? { ...l, ...p } : l) },
-      },
-    }))
-  const addLine = (key: string) =>
-    setSv(s => ({ ...s, substrates: { ...s.substrates, [key]: { ...s.substrates[key], lines: [...s.substrates[key].lines, emptyLine()] } } }))
-  const delLine = (key: string, lineId: string) =>
-    setSv(s => ({
-      ...s,
-      substrates: {
-        ...s.substrates,
-        [key]: { ...s.substrates[key], lines: s.substrates[key].lines.filter(l => l.id !== lineId) },
-      },
-    }))
-
   // Photos
   async function addPhotos(e: React.ChangeEvent<HTMLInputElement>, tag = 'reference') {
     const files = Array.from(e.target.files ?? [])
@@ -254,9 +211,6 @@ export default function SiteVisitEditor({ initial, jobs, isNew, onClose, onSave,
     rec.onend = () => setListening(false)
     try { rec.start() } catch (err: any) { setListening(false); alert('Could not start microphone: ' + err.message) }
   }
-
-  // Grouped substrate rows
-  let lastGroup = ''
 
   return (
     <div className="fixed inset-0 z-[200] bg-[#f5f4f0] overflow-y-auto overscroll-contain">
@@ -453,85 +407,9 @@ export default function SiteVisitEditor({ initial, jobs, isNew, onClose, onSave,
         <div className={CARD}>
           <div className="flex justify-between items-center mb-3 gap-2 flex-wrap">
             <div className={CT}>Substrates &amp; Elements</div>
-            <span className="text-[11px] text-[#666]">Tick what's included · enter qty/area · note type</span>
+            <span className="text-[11px] text-[#666]">Tick what's included · pick a type or enter your own · enter qty/area</span>
           </div>
-          <div>
-            {SV_SUBS.map(sub => {
-              const d = sv.substrates[sub.key] ?? { inc: false, lines: [] }
-              const total = subTotal(d, sub.unit)
-              const header = sub.group !== lastGroup ? sub.group : null
-              if (header) lastGroup = sub.group
-              return (
-                <div key={sub.key}>
-                  {header && (
-                    <div className="px-3 py-1.5 text-[10px] font-extrabold uppercase tracking-widest text-[#444] mt-2 first:mt-0"
-                      style={{ background: SV_GROUP_HDR[header], borderRadius: '6px 6px 0 0' }}>
-                      {header}
-                    </div>
-                  )}
-                  <div className="border border-black/[0.08] border-t-0 px-3 py-2.5 transition-opacity"
-                    style={{ background: d.inc ? '#fff' : SV_GROUP_BG[sub.group], opacity: d.inc ? 1 : 0.55 }}>
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <input type="checkbox" checked={d.inc} id={`sv-${sub.key}`}
-                        onChange={e => setSub(sub.key, { inc: e.target.checked })}
-                        className="w-5 h-5 cursor-pointer shrink-0 accent-blue-600" />
-                      <label htmlFor={`sv-${sub.key}`} className="text-[13px] font-semibold cursor-pointer flex-1 min-w-[100px]">
-                        {sub.label}
-                      </label>
-                      {total > 0 && (
-                        <span className="text-[11px] font-bold text-[#0a7c4e] bg-[#dcfce7] rounded-[5px] px-1.5 py-0.5">
-                          {unitLabel(sub.unit, total)}
-                        </span>
-                      )}
-                      {d.inc && (
-                        <button onClick={() => addLine(sub.key)}
-                          className="px-2.5 py-1 border-[1.5px] border-dashed border-[#2563eb] rounded-[7px] text-[11px] text-[#2563eb] font-semibold whitespace-nowrap">
-                          + Add type
-                        </button>
-                      )}
-                    </div>
-
-                    {d.inc && (
-                      <div className="mt-2 flex flex-col gap-1.5">
-                        {d.lines.map(ln => (
-                          <div key={ln.id} className="flex items-center gap-1.5 flex-wrap bg-[#f8f8f6] rounded-lg px-2 py-1.5">
-                            {sub.typeOpts ? (
-                              <select value={ln.type} onChange={e => setLine(sub.key, ln.id, { type: e.target.value })}
-                                className="px-1.5 py-1 text-[11px] bg-white border border-black/20 rounded min-w-[110px]">
-                                <option value="">Type…</option>
-                                {sub.typeOpts.map(t => <option key={t} value={t}>{t}</option>)}
-                              </select>
-                            ) : (
-                              <input value={ln.type} placeholder="Type / detail"
-                                onChange={e => setLine(sub.key, ln.id, { type: e.target.value })}
-                                className="px-1.5 py-1 text-[11px] bg-white border border-black/20 rounded min-w-[110px] flex-1" />
-                            )}
-                            <input type="number" min={0} step="any"
-                              value={(sub.unit === 'sqm' ? ln.sqm : sub.unit === 'lm' ? ln.lm : ln.qty) || ''}
-                              placeholder="0"
-                              onChange={e => {
-                                const v = parseFloat(e.target.value) || 0
-                                setLine(sub.key, ln.id, sub.unit === 'sqm' ? { sqm: v } : sub.unit === 'lm' ? { lm: v } : { qty: v })
-                              }}
-                              className="w-16 px-1.5 py-1 text-right font-mono text-[11px] bg-white border border-black/20 rounded" />
-                            <span className="text-[10px] text-[#999] w-9">
-                              {sub.unit === 'sqm' ? 'm²' : sub.unit === 'lm' ? 'lin.m' : 'items'}
-                            </span>
-                            <input value={ln.notes} placeholder="Notes…"
-                              onChange={e => setLine(sub.key, ln.id, { notes: e.target.value })}
-                              className="flex-1 min-w-[90px] px-1.5 py-1 text-[11px] bg-white border border-black/20 rounded" />
-                            {d.lines.length > 1 && (
-                              <button onClick={() => delLine(sub.key, ln.id)} className="text-[#c0392b]"><Trash2 size={12} /></button>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )
-            })}
-          </div>
+          <SubstratePicker value={sv.substrates} onChange={substrates => patch({ substrates })} />
         </div>
 
         {/* Sketch */}

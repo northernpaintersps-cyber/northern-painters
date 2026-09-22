@@ -10,10 +10,15 @@ import {
   extractQuantities, type ExtractDoc, type QuantityExtraction,
 } from '@/lib/ai'
 import {
-  INT_SUBS, EXT_SUBS, SPEC_SUBS, PROD_RATES, JOB_TYPES, QUOTE_TERMS,
+  PROD_RATES, JOB_TYPES, QUOTE_TERMS,
   PREP_OPTS, HEIGHT_OPTS, ACCESS_OPTS, METHOD_OPTS, CONS_PREP, WORKFLOWS,
-  BENCHMARKS, APP_OPTS, FINISH_OPTS, type Sub,
+  BENCHMARKS,
 } from '@/lib/quoteData'
+import {
+  SUBSTRATES, emptySubstrates, normaliseSubstrates, substrateLines as buildSubLines,
+  substrateTotals, newSubLine, type SubEntry,
+} from '@/lib/substrates'
+import SubstratePicker from '@/components/SubstratePicker'
 import {
   Plus, Trash2, Loader2, Sparkles, Save, ClipboardList, Settings2,
   FileText, Image as ImageIcon, Ruler, Hammer, RefreshCw,
@@ -43,13 +48,6 @@ type Room = { id: string; name: string; w: number; l: number; h: number }
 type Equip = { id: string; name: string; cost: number }
 type ExtraMat = { id: string; name: string; cost: number }
 type Painter = { id: string; name: string; rate: number }
-// A duplicated substrate — e.g. "Doors interior — French" alongside the plain row.
-// srcKey points back at the preset so production rates still apply.
-type Variant = {
-  id: string; group: 'i' | 'e' | 's'; srcKey: string | null
-  label: string; unit: string; qty: number
-  paint: string; method: string; finish: string
-}
 
 // Markdown-ish rendering for the AI estimate, tables included
 function renderEstimate(src: string): string {
@@ -143,9 +141,7 @@ export default function QuotingTool() {
   const [rooms, setRooms] = useState<Room[]>([])
 
   // 2. Substrates
-  const [qty, setQty] = useState<Record<string, number>>({})
-  const [extraSubs, setExtraSubs] = useState<Variant[]>([])
-  const [openVariant, setOpenVariant] = useState<string | null>(null)
+  const [substrates, setSubstrates] = useState<Record<string, SubEntry>>(emptySubstrates)
 
   // 3. Condition
   const [prep, setPrep] = useState(PREP_OPTS[1])
@@ -207,16 +203,15 @@ export default function QuotingTool() {
       if (p.client) setClient(p.client)
       if (p.address) setAddress(p.address)
       if (p.jobType && JOB_TYPES.includes(p.jobType)) setJobType(p.jobType)
-      // Ticked substrates from the site visit come across directly
-      if (p.substrates && typeof p.substrates === 'object') {
-        setQty(q => ({ ...q, ...p.substrates }))
-      }
+      // The site visit's typed substrate lines come across whole
+      if (p.substrateEntries) setSubstrates(normaliseSubstrates(p.substrateEntries))
+      else if (p.substrates) setSubstrates(normaliseSubstrates(p.substrates))
       if (p.siteNotes) setSiteNotes(p.siteNotes)
       if (Array.isArray(p.areas) && p.areas.length) {
         // Only infer wall area when the visit did not tick substrates itself
-        if (!p.substrates || !Object.keys(p.substrates).length) {
+        if (!p.substrateEntries && !p.substrates) {
           const walls = p.areas.reduce((s: number, a: any) => s + (a.sqm || 0), 0)
-          if (walls > 0) setQty(q => ({ ...q, walls: Math.round(walls) }))
+          if (walls > 0) setSubstrates(normaliseSubstrates({ walls: Math.round(walls) }))
         }
         if (!p.siteNotes) {
           setSiteNotes(p.areas.map((a: any) => `${a.area_name}: ${a.notes || ''}`)
@@ -229,29 +224,13 @@ export default function QuotingTool() {
     } catch {}
   }, [])
 
-  const allSubs: { sub: Sub }[] = [
-    ...INT_SUBS.map(s => ({ sub: s })),
-    ...EXT_SUBS.map(s => ({ sub: s })),
-    ...SPEC_SUBS.map(s => ({ sub: s })),
-  ]
-
-  const substrateLines = useMemo(() => {
-    const lines = allSubs
-      .filter(({ sub }) => (qty[sub.key] || 0) > 0)
-      .map(({ sub }) => `${sub.label}: ${qty[sub.key]} ${sub.unit} — ${sub.paint}, ${sub.defMethod}, ${sub.defFinish}`)
-    extraSubs.filter(s => s.qty > 0).forEach(s =>
-      lines.push(`${s.label}: ${s.qty} ${s.unit} — ${s.paint}, ${s.method}, ${s.finish}`))
-    return lines.join('\n')
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [qty, extraSubs])
+  const substrateLines = useMemo(() => buildSubLines(substrates).join('\n'), [substrates])
+  const totals = useMemo(() => substrateTotals(substrates), [substrates])
 
   // V16 PROD_RATES baseline — a sanity figure next to the AI's hours
-  const baselineHours = useMemo(() => {
-    const presets = allSubs.reduce((s, { sub }) => s + (qty[sub.key] || 0) * (PROD_RATES[sub.key] ?? 0), 0)
-    const variants = extraSubs.reduce((s, v) => s + v.qty * (PROD_RATES[v.srcKey ?? ''] ?? 0), 0)
-    return presets + variants
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [qty, extraSubs])
+  const baselineHours = useMemo(
+    () => Object.entries(totals).reduce((s, [key, q]) => s + q * (PROD_RATES[key] ?? 0), 0),
+    [totals])
 
   const rateSum = painters.reduce((s, p) => s + (p.rate || 0), 0)
   const totalHours = processes.reduce((s, p) => s + (p.hours || 0), 0)
@@ -264,27 +243,26 @@ export default function QuotingTool() {
   const materials = useMemo(() => {
     const products: Record<string, { product: string; size: string; litres: number; coverage: number; price: number }> = {}
     const lib: any[] = biz?.paint_products ?? []
-    const addPaint = (paint: string, unit: string, q: number) => {
+    SUBSTRATES.forEach(sub => {
+      const q = totals[sub.key] ?? 0
       if (q <= 0) return
-      const first = paint.toLowerCase().split(' ')[0]
+      const first = sub.paint.toLowerCase().split(' ')[0]
       const hit = lib.find(p => (p.product ?? '').toLowerCase().includes(first))
       const coverage = hit?.coverage ?? 12
-      const m2 = unit === 'm2' ? q : unit === 'lm' ? q * 0.3 : q * 2
+      // linear metres and counts convert to an approximate painted area
+      const m2 = sub.unit === 'sqm' ? q : sub.unit === 'lm' ? q * 0.3 : q * 2
       const litres = (m2 * parseInt(coats)) / coverage
-      const key = hit?.product ?? paint
+      const key = hit?.product ?? sub.paint
       if (!products[key]) products[key] = { product: key, size: hit?.size ?? '4L', litres: 0, coverage, price: hit?.yours ?? 0 }
       products[key].litres += litres
-    }
-    allSubs.forEach(({ sub }) => addPaint(sub.paint, sub.unit, qty[sub.key] || 0))
-    extraSubs.forEach(v => addPaint(v.paint, v.unit, v.qty))
+    })
     const rows = Object.values(products).map(p => {
       const tinL = parseFloat(p.size) || 4
       const tins = Math.ceil(p.litres / tinL)
       return { ...p, tins, cost: tins * p.price }
     })
     return { rows, total: rows.reduce((s, r) => s + r.cost, 0) + extraMatTotal }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [qty, coats, biz, extraMatTotal, extraSubs])
+  }, [totals, coats, biz, extraMatTotal])
 
   const subtotal = labourCost + materials.total + consTotal + equipTotal
   const gst = subtotal * 0.1
@@ -295,26 +273,41 @@ export default function QuotingTool() {
     e.target.value = ''
   }
 
+  /** Tick a substrate on and set its quantity, keeping any typed lines intact. */
+  function applyQuantities(next: Record<string, number>) {
+    setSubstrates(prev => {
+      const out = { ...prev }
+      Object.entries(next).forEach(([key, qty]) => {
+        if (!(key in out) || !(qty > 0)) return
+        const entry = out[key]
+        const lines = entry.lines.length ? [...entry.lines] : [newSubLine()]
+        lines[0] = { ...lines[0], qty }
+        out[key] = { inc: true, lines }
+      })
+      return out
+    })
+  }
+
   async function runExtract() {
     if (!apiKey) { setGenErr('No API key set. Add your Anthropic API key in Settings.'); return }
     setExtracting(true); setGenErr('')
     try {
       const res = await extractQuantities(apiKey, docs, siteNotes)
       setExtractRes(res)
-      const next = { ...qty }
+      const next: Record<string, number> = {}
       ;(['interior', 'exterior', 'specialty'] as const).forEach(sec => {
         const vals = (res as any)[sec] as Record<string, number> | undefined
         if (!vals) return
         Object.entries(vals).forEach(([k, v]) => { if (v > 0) next[k] = v })
       })
-      setQty(next)
+      applyQuantities(next)
     } catch (e: any) { setGenErr(e?.message ?? 'Extraction failed') } finally { setExtracting(false) }
   }
 
   function applyRooms() {
     const ceil = rooms.reduce((s, r) => s + r.w * r.l, 0)
     const wall = rooms.reduce((s, r) => s + 2 * (r.w + r.l) * (r.h || 2.4), 0)
-    setQty(q => ({ ...q, ceilings: Math.round(ceil), walls: Math.round(wall) }))
+    applyQuantities({ ceilings: Math.round(ceil), walls: Math.round(wall) })
   }
 
   function loadWorkflow() {
@@ -415,7 +408,7 @@ export default function QuotingTool() {
         est_days: Math.max(1, Math.round(days)),
         notes: siteNotes,
         quote_no: quoteNo || null,
-        extra: { quote_estimate: estimate, substrates: qty, processes, painters, quote_id: quoteId },
+        extra: { quote_estimate: estimate, substrates, processes, painters, quote_id: quoteId },
         created_at: new Date().toISOString(),
       })
       if (error) throw error
@@ -438,7 +431,7 @@ export default function QuotingTool() {
   // Everything needed to rebuild this quote exactly
   function captureState() {
     return {
-      client, address, jobType, terms, qty, extraSubs, prep, ceilingHeight, access,
+      client, address, jobType, terms, substrates, prep, ceilingHeight, access,
       method, coats, processes, consPrep, consTotal, consNotes, extraMats,
       painters, travelKm, equip, siteNotes, logisticsNotes, estimate, lockedPrice, rooms,
     }
@@ -446,7 +439,8 @@ export default function QuotingTool() {
 
   function restoreState(d: Row) {
     setClient(d.client ?? ''); setAddress(d.address ?? ''); setJobType(d.jobType ?? JOB_TYPES[0])
-    setTerms(d.terms ?? QUOTE_TERMS[0]); setQty(d.qty ?? {}); setExtraSubs(d.extraSubs ?? [])
+    setTerms(d.terms ?? QUOTE_TERMS[0])
+    setSubstrates(normaliseSubstrates(d.substrates ?? d.qty))
     setPrep(d.prep ?? PREP_OPTS[1]); setCeilingHeight(d.ceilingHeight ?? HEIGHT_OPTS[0]); setAccess(d.access ?? ACCESS_OPTS[0])
     setMethod(d.method ?? 'roll'); setCoats(d.coats ?? '2'); setProcesses(d.processes ?? [])
     setConsPrep(d.consPrep ?? 'medium'); setConsTotal(d.consTotal ?? 0); setConsNotes(d.consNotes ?? '')
@@ -505,7 +499,7 @@ export default function QuotingTool() {
 
   function clearAll() {
     if (!confirm('Start a new quote? Unsaved changes will be lost.')) return
-    setClient(''); setAddress(''); setQty({}); setExtraSubs([]); setProcesses([])
+    setClient(''); setAddress(''); setSubstrates(emptySubstrates()); setProcesses([])
     setConsTotal(0); setConsNotes(''); setExtraMats([]); setEquip([]); setRooms([])
     setSiteNotes(''); setLogisticsNotes(''); setEstimate(''); setLockedPrice(''); setDocs([]); setExtractRes(null)
     setQuoteId(null); setQuoteNo('')
@@ -523,95 +517,6 @@ export default function QuotingTool() {
     w.document.close()
     setTimeout(() => w.print(), 500)
   }
-
-  function addVariant(group: 'i' | 'e' | 's', from?: Sub) {
-    const v: Variant = {
-      id: genId('xs'), group, srcKey: from?.key ?? null,
-      label: from ? `${from.label} — variant` : '',
-      unit: from?.unit ?? 'm2', qty: 0,
-      paint: from?.paint ?? '', method: from?.defMethod ?? 'Brush', finish: from?.defFinish ?? 'Low Sheen',
-    }
-    setExtraSubs(x => [...x, v])
-    setOpenVariant(v.id)
-  }
-
-  const SubGroup = ({ title, subs, group }: { title: string; subs: Sub[]; group: 'i' | 'e' | 's' }) => (
-    <Card>
-      <div className={CT}>{title}</div>
-      <div className="text-[11px] text-[#666] mb-2">
-        Enter quantities. Use the copy button to add a variant of a substrate — e.g. French, solid and panel doors priced separately.
-      </div>
-      <div className="grid gap-1.5" style={{ gridTemplateColumns: 'repeat(auto-fill,minmax(230px,1fr))' }}>
-        {subs.map(s => (
-          <div key={s.key} className="flex items-center gap-1.5 bg-[#f5f4f0] rounded-lg px-2.5 py-1.5">
-            <div className="flex-1 min-w-0">
-              <div className="text-[12.5px] font-medium truncate">{s.label}</div>
-              <div className="text-[10px] text-[#666] truncate">{s.paint}</div>
-            </div>
-            <input type="number" min={0} step="any" value={qty[s.key] || ''} placeholder="0"
-              onChange={e => setQty(q => ({ ...q, [s.key]: parseFloat(e.target.value) || 0 }))}
-              className="w-16 px-1.5 py-1 text-right font-mono text-xs bg-white border border-black/20 rounded focus:outline-none focus:ring-1 focus:ring-blue-500" />
-            <span className="text-[10px] text-[#999] w-7">{s.unit}</span>
-            <button onClick={() => addVariant(group, s)} title="Add a variant of this substrate"
-              className="p-1 rounded bg-white border border-black/20 hover:bg-white text-[#2563eb] shrink-0">
-              <CopyPlus size={12} />
-            </button>
-          </div>
-        ))}
-      </div>
-
-      {extraSubs.filter(v => v.group === group).map(v => (
-        <div key={v.id} className="border border-black/[0.12] rounded-lg mt-1.5 overflow-hidden">
-          <div className="flex items-center gap-1.5 px-2.5 py-1.5 bg-[#f5f4f0] flex-wrap">
-            <input value={v.label} placeholder="Substrate name — e.g. Doors — French"
-              onChange={e => setExtraSubs(x => x.map(y => y.id === v.id ? { ...y, label: e.target.value } : y))}
-              className="flex-1 min-w-[120px] px-1.5 py-1 text-xs bg-white border border-black/20 rounded focus:outline-none" />
-            <input type="number" min={0} step="any" value={v.qty || ''} placeholder="0"
-              onChange={e => setExtraSubs(x => x.map(y => y.id === v.id ? { ...y, qty: parseFloat(e.target.value) || 0 } : y))}
-              className="w-16 px-1.5 py-1 text-right font-mono text-xs bg-white border border-black/20 rounded focus:outline-none" />
-            <select value={v.unit} onChange={e => setExtraSubs(x => x.map(y => y.id === v.id ? { ...y, unit: e.target.value } : y))}
-              className="text-[10px] bg-white border border-black/20 rounded px-1 py-1">
-              {['m2', 'lm', 'count'].map(u => <option key={u}>{u}</option>)}
-            </select>
-            <button onClick={() => setOpenVariant(o => o === v.id ? null : v.id)} title="Coating settings"
-              className={`p-1 rounded border shrink-0 ${openVariant === v.id ? 'bg-[#ede9fe] border-[#c4b5fd] text-[#5b21b6]' : 'bg-white border-black/20 text-[#666]'}`}>
-              <Settings2 size={12} />
-            </button>
-            <button onClick={() => addVariant(group, subs.find(s => s.key === v.srcKey))} title="Duplicate this variant"
-              className="p-1 rounded bg-white border border-black/20 text-[#2563eb] shrink-0"><CopyPlus size={12} /></button>
-            <button onClick={() => setExtraSubs(x => x.filter(y => y.id !== v.id))}
-              className="p-1 rounded bg-white border border-black/20 text-[#c0392b] shrink-0"><Trash2 size={12} /></button>
-          </div>
-          {openVariant === v.id && (
-            <div className="px-2.5 py-2 grid gap-2" style={{ gridTemplateColumns: 'repeat(auto-fill,minmax(150px,1fr))' }}>
-              <div>
-                <label className="block text-[10px] uppercase font-bold text-[#666] mb-1">Product</label>
-                <input list="paint-products" value={v.paint} placeholder="Paint product"
-                  onChange={e => setExtraSubs(x => x.map(y => y.id === v.id ? { ...y, paint: e.target.value } : y))}
-                  className="w-full px-1.5 py-1 text-xs bg-white border border-black/20 rounded focus:outline-none" />
-              </div>
-              <div>
-                <label className="block text-[10px] uppercase font-bold text-[#666] mb-1">Application</label>
-                <select value={v.method} onChange={e => setExtraSubs(x => x.map(y => y.id === v.id ? { ...y, method: e.target.value } : y))}
-                  className="w-full px-1.5 py-1 text-xs bg-white border border-black/20 rounded focus:outline-none">
-                  {APP_OPTS.map(o => <option key={o}>{o}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="block text-[10px] uppercase font-bold text-[#666] mb-1">Finish</label>
-                <select value={v.finish} onChange={e => setExtraSubs(x => x.map(y => y.id === v.id ? { ...y, finish: e.target.value } : y))}
-                  className="w-full px-1.5 py-1 text-xs bg-white border border-black/20 rounded focus:outline-none">
-                  {FINISH_OPTS.map(o => <option key={o}>{o}</option>)}
-                </select>
-              </div>
-            </div>
-          )}
-        </div>
-      ))}
-
-      <button onClick={() => addVariant(group)} className={`${BTN} mt-2`}><Plus size={12} /> Add substrate</button>
-    </Card>
-  )
 
   return (
     <div className="p-5">
@@ -780,12 +685,21 @@ export default function QuotingTool() {
             </div>
           </Card>
 
-          <datalist id="paint-products">
-            {(biz?.paint_products ?? []).map((p: any) => <option key={p.id} value={p.product} />)}
-          </datalist>
-          <SubGroup title="2a. Interior Substrates" subs={INT_SUBS} group="i" />
-          <SubGroup title="2b. Exterior Substrates" subs={EXT_SUBS} group="e" />
-          <SubGroup title="2c. Specialty" subs={SPEC_SUBS} group="s" />
+          <Card>
+            <div className={CT}>2. Substrates</div>
+            <div className="text-[11px] text-[#666] mb-2.5">
+              Tick what's in scope, then add a line per type — pick a preset or enter your own,
+              so French, solid and panel doors can be priced separately. This is the same list the
+              site visit uses, so a visit's takeoff lands here unchanged.
+            </div>
+            <SubstratePicker value={substrates} onChange={setSubstrates} />
+            {Object.keys(totals).length > 0 && (
+              <div className="mt-3 pt-2.5 border-t border-black/[0.12] text-[11px] text-[#666]">
+                {Object.keys(totals).length} substrate{Object.keys(totals).length !== 1 ? 's' : ''} in scope ·
+                {' '}{buildSubLines(substrates).length} priced line{buildSubLines(substrates).length !== 1 ? 's' : ''}
+              </div>
+            )}
+          </Card>
 
           <Card>
             <div className={CT}>3. Condition and Complexity</div>

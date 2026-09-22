@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/lib/auth'
 import { genId, today } from '@/lib/utils'
-import { SV_SUBS } from '@/lib/siteVisitData'
+import { substrateTotals } from '@/lib/substrates'
 import SiteVisitEditor, { emptySVState, normaliseSV, type SVState } from '@/components/SiteVisitEditor'
 import {
   Plus, Loader2, Trash2, Edit2, Calculator, ArrowUpDown, X, Camera, MapPin,
@@ -123,18 +123,12 @@ export default function SiteVisits() {
 
   // V16 buildQuoteFromSiteVisit — areas and ticked substrates carry across
   function buildQuote(d: SVState) {
-    const substrates: Record<string, number> = {}
-    SV_SUBS.forEach(sub => {
-      const entry = d.substrates?.[sub.key]
-      if (!entry?.inc) return
-      const total = entry.lines.reduce((t, l) =>
-        t + (sub.unit === 'sqm' ? l.sqm : sub.unit === 'lm' ? l.lm : l.qty), 0)
-      if (total > 0) substrates[sub.key] = total
-    })
     try {
       sessionStorage.setItem('np_prefill_quote', JSON.stringify({
         client: d.client, address: d.address, jobType: d.jobType,
-        substrates,
+        // Hand the full typed lines across, not just totals
+        substrateEntries: d.substrates,
+        substrates: substrateTotals(d.substrates),
         areas: d.areas.map(a => ({
           area_name: a.name,
           sqm: a.l && a.w ? a.l * a.w : 0,
