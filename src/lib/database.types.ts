@@ -26,6 +26,7 @@ export interface Database {
           on_books: string | null
           lead_source: string | null
           notes: string | null
+          quote_sent: string | null
           drive_link: string | null
           assigned_crew: string | null
           scheduled_dates: Json | null
@@ -80,6 +81,7 @@ export interface Database {
           inv_status: string | null
           received: number | null
           manual_paid: boolean | null
+          due_date: string | null
           extra: Json | null
           updated_at: string | null
           created_at: string | null
