@@ -228,6 +228,10 @@ export interface Database {
           gst: number | null
           total_inc_gst: number | null
           category: string | null
+          address: string | null
+          payment_date: string | null
+          method_other: string | null
+          inv_ref: string | null
           notes: string | null
           updated_at: string | null
           created_at: string | null
