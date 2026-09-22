@@ -7,7 +7,7 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   LineChart, Line, PieChart, Pie, Cell, Legend, AreaChart, Area,
 } from 'recharts'
-import { Loader2, TrendingUp, TrendingDown } from 'lucide-react'
+import { Loader2, TrendingUp, TrendingDown, Download } from 'lucide-react'
 
 // ── Data hooks ─────────────────────────────────────────────────
 function useAll() {
@@ -85,6 +85,26 @@ function KPI({ label, value, sub, trend }: { label: string; value: string; sub?:
       )}
     </div>
   )
+}
+
+// ── CSV export helpers ────────────────────────────────────────
+function toCSV(rows: any[], cols: { key: string; label: string }[]): string {
+  const header = cols.map(c => `"${c.label}"`).join(',')
+  const body = rows.map(r => cols.map(c => {
+    const v = r[c.key] ?? ''
+    return typeof v === 'string' && (v.includes(',') || v.includes('"') || v.includes('\n'))
+      ? `"${v.replace(/"/g, '""')}"`
+      : v
+  }).join(','))
+  return [header, ...body].join('\n')
+}
+
+function downloadCSV(content: string, filename: string) {
+  const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url; a.download = filename; a.click()
+  URL.revokeObjectURL(url)
 }
 
 export default function Reports() {
@@ -207,12 +227,42 @@ export default function Reports() {
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <h1 className="text-lg font-bold text-white">Reports & Insights</h1>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <span className="text-sm text-gray-400">Year</span>
           <select value={selYear} onChange={e => setSelYear(Number(e.target.value))}
             className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:ring-1 focus:ring-yellow-400">
             {years.map(y => <option key={y}>{y}</option>)}
           </select>
+          {/* CSV exports */}
+          <div className="flex gap-1.5">
+            {[
+              { label: 'Invoices', fn: () => downloadCSV(toCSV(invoices.filter(i => i.date && new Date(i.date).getFullYear() === selYear), [
+                { key: 'id', label: 'Invoice #' }, { key: 'date', label: 'Date' }, { key: 'client', label: 'Client' },
+                { key: 'job_id', label: 'Job' }, { key: 'agreed_ex_gst', label: 'Ex GST' }, { key: 'gst', label: 'GST' },
+                { key: 'total_inc_gst', label: 'Total Inc GST' }, { key: 'received', label: 'Received' }, { key: 'inv_status', label: 'Status' },
+              ]), `invoices-${selYear}.csv`) },
+              { label: 'Labour', fn: () => downloadCSV(toCSV(labour.filter(l => l.date && new Date(l.date).getFullYear() === selYear), [
+                { key: 'date', label: 'Date' }, { key: 'job_id', label: 'Job' }, { key: 'client', label: 'Client' },
+                { key: 'sub', label: 'Worker' }, { key: 'hours', label: 'Hours' }, { key: 'rate', label: 'Rate' },
+                { key: 'cost', label: 'Cost' }, { key: 'billing_type', label: 'Billing' }, { key: 'paid', label: 'Paid' },
+                { key: 'labour_desc', label: 'Description' },
+              ]), `labour-${selYear}.csv`) },
+              { label: 'Materials', fn: () => downloadCSV(toCSV(materials.filter(m => m.date && new Date(m.date).getFullYear() === selYear), [
+                { key: 'date', label: 'Date' }, { key: 'job_id', label: 'Job' }, { key: 'client', label: 'Client' },
+                { key: 'supplier', label: 'Supplier' }, { key: 'mat_desc', label: 'Description' }, { key: 'category', label: 'Category' },
+                { key: 'cost_ex_gst', label: 'Ex GST' }, { key: 'gst', label: 'GST' }, { key: 'total_inc_gst', label: 'Total Inc GST' },
+                { key: 'receipt_no', label: 'Receipt #' },
+              ]), `materials-${selYear}.csv`) },
+              { label: 'Expenses', fn: () => downloadCSV(toCSV(expenses.filter(e => e.date && new Date(e.date).getFullYear() === selYear), [
+                { key: 'date', label: 'Date' }, { key: 'exp_desc', label: 'Description' }, { key: 'category', label: 'Category' },
+                { key: 'amount_ex_gst', label: 'Ex GST' }, { key: 'gst', label: 'GST' }, { key: 'job_id', label: 'Job' },
+              ]), `expenses-${selYear}.csv`) },
+            ].map(({ label, fn }) => (
+              <button key={label} onClick={fn} className="flex items-center gap-1 text-xs bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 px-2.5 py-1.5 rounded-lg transition-colors">
+                <Download size={11} /> {label}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 

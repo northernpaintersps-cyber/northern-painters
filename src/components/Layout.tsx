@@ -5,23 +5,25 @@ import { useRealtime } from '@/lib/useRealtime'
 import {
   LayoutDashboard, Briefcase, FileText, Users, Calendar,
   DollarSign, ClipboardList, Settings, LogOut, Phone,
-  BarChart2, Menu, X, MapPin, Receipt, Megaphone, Calculator
+  BarChart2, Menu, X, MapPin, Receipt, Megaphone, Calculator,
+  Package
 } from 'lucide-react'
 
 const nav = [
-  { to: '/dashboard',  label: 'Dashboard',   icon: LayoutDashboard },
-  { to: '/jobs',       label: 'Jobs',         icon: Briefcase },
-  { to: '/invoices',   label: 'Invoices',     icon: FileText },
-  { to: '/crew',       label: 'Crew',         icon: Users },
-  { to: '/calendar',   label: 'Calendar',     icon: Calendar },
-  { to: '/finance',    label: 'Finance',      icon: DollarSign },
-  { to: '/enquiries',  label: 'Enquiries',    icon: Phone },
-  { to: '/visits',     label: 'Site Visits',  icon: MapPin },
-  { to: '/receipts',   label: 'Receipts',     icon: Receipt },
-  { to: '/ads',        label: 'Ads Spend',    icon: Megaphone },
-  { to: '/quotes',     label: 'Quote Builder',icon: Calculator },
-  { to: '/todos',      label: 'To‑do',        icon: ClipboardList },
-  { to: '/reports',    label: 'Reports',      icon: BarChart2 },
+  { to: '/dashboard',  label: 'Dashboard',    icon: LayoutDashboard },
+  { to: '/jobs',       label: 'Jobs',          icon: Briefcase },
+  { to: '/invoices',   label: 'Invoices',      icon: FileText },
+  { to: '/crew',       label: 'Crew',          icon: Users },
+  { to: '/calendar',   label: 'Calendar',      icon: Calendar },
+  { to: '/finance',    label: 'Finance',       icon: DollarSign },
+  { to: '/enquiries',  label: 'Enquiries',     icon: Phone },
+  { to: '/visits',     label: 'Site Visits',   icon: MapPin },
+  { to: '/materials',  label: 'Materials',     icon: Package },
+  { to: '/receipts',   label: 'Receipts',      icon: Receipt },
+  { to: '/ads',        label: 'Ads Spend',     icon: Megaphone },
+  { to: '/quotes',     label: 'Quote Builder', icon: Calculator },
+  { to: '/todos',      label: 'To‑do',         icon: ClipboardList },
+  { to: '/reports',    label: 'Reports',       icon: BarChart2 },
 ]
 
 export default function Layout() {

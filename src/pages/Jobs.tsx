@@ -216,6 +216,155 @@ function emptyForm(): Job {
   }
 }
 
+// ── Cost Tracker Tab ─────────────────────────────────────────
+function CostTrackerTab({ job, jobId }: { job: any; jobId: string | null }) {
+  const { user } = useAuth()
+
+  const { data: labourEntries = [] } = useQuery<any[]>({
+    queryKey: ['np_labour_job', jobId, user?.id],
+    queryFn: async () => {
+      const { data } = await supabase.from('np_labour').select('*').eq('user_id', user!.id).eq('job_id', jobId!)
+      return data ?? []
+    },
+    enabled: !!user && !!jobId,
+  })
+
+  const { data: materialEntries = [] } = useQuery<any[]>({
+    queryKey: ['np_materials_job', jobId, user?.id],
+    queryFn: async () => {
+      const { data } = await (supabase.from('np_materials') as any).select('*').eq('user_id', user!.id).eq('job_id', jobId!)
+      return data ?? []
+    },
+    enabled: !!user && !!jobId,
+  })
+
+  const { data: variations = [] } = useQuery<any[]>({
+    queryKey: ['np_variations', jobId, user?.id],
+    queryFn: async () => {
+      const { data } = await supabase.from('np_variations').select('*').eq('user_id', user!.id).eq('job_id', jobId!).eq('var_status', 'Approved')
+      return data ?? []
+    },
+    enabled: !!user && !!jobId,
+  })
+
+  const quotedLabour   = job.est_labour_ex ?? 0
+  const quotedMaterials = job.est_materials_ex ?? 0
+  const agreedValue    = job.agreed_ex_gst ?? job.quote_ex_gst ?? 0
+
+  const actualLabour   = labourEntries.reduce((s, e) => s + (e.cost ?? (e.hours ?? 0) * (e.rate ?? 0)), 0)
+  const actualMaterials = materialEntries.reduce((s, m) => s + (m.cost_ex_gst ?? 0), 0)
+  const approvedVarValue = variations.reduce((s, v) => s + (v.amount_ex_gst ?? 0), 0)
+  const totalRevenue   = agreedValue + approvedVarValue
+
+  const actualTotal    = actualLabour + actualMaterials
+  const quotedTotal    = quotedLabour + quotedMaterials
+  const grossProfit    = totalRevenue - actualTotal
+  const margin         = totalRevenue > 0 ? (grossProfit / totalRevenue) * 100 : 0
+
+  function pct(actual: number, quoted: number) {
+    if (!quoted) return null
+    return ((actual / quoted) * 100).toFixed(0) + '%'
+  }
+  function bar(actual: number, quoted: number) {
+    if (!quoted) return 0
+    return Math.min((actual / quoted) * 100, 100)
+  }
+  function barColor(actual: number, quoted: number) {
+    if (!quoted) return 'bg-gray-600'
+    const ratio = actual / quoted
+    if (ratio < 0.8) return 'bg-green-500'
+    if (ratio < 1.0) return 'bg-yellow-400'
+    return 'bg-red-500'
+  }
+
+  if (!jobId) return <p className="text-sm text-gray-500 py-4">Save the job first to track costs.</p>
+
+  return (
+    <div className="space-y-5">
+      {/* Summary tiles */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        {[
+          { label: 'Revenue (agreed + vars)', value: fmtCurrency(totalRevenue), color: 'text-yellow-300' },
+          { label: 'Total actual cost', value: fmtCurrency(actualTotal), color: actualTotal > quotedTotal ? 'text-red-400' : 'text-gray-200' },
+          { label: 'Gross profit', value: fmtCurrency(grossProfit), color: grossProfit >= 0 ? 'text-green-400' : 'text-red-400' },
+          { label: 'Margin', value: margin.toFixed(1) + '%', color: margin >= 30 ? 'text-green-400' : margin >= 15 ? 'text-yellow-400' : 'text-red-400' },
+        ].map(({ label, value, color }) => (
+          <div key={label} className="bg-gray-800 rounded-lg p-3">
+            <p className="text-xs text-gray-500 mb-1">{label}</p>
+            <p className={`text-base font-bold ${color}`}>{value}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* Labour */}
+      <div className="bg-gray-800 rounded-lg p-4 space-y-2">
+        <div className="flex items-center justify-between">
+          <p className="text-sm font-semibold text-white">Labour</p>
+          <div className="flex gap-4 text-xs text-gray-400">
+            <span>Quoted: <span className="text-gray-200 font-medium">{fmtCurrency(quotedLabour)}</span></span>
+            <span>Actual: <span className={`font-medium ${actualLabour > quotedLabour && quotedLabour > 0 ? 'text-red-400' : 'text-gray-200'}`}>{fmtCurrency(actualLabour)}</span></span>
+            {pct(actualLabour, quotedLabour) && <span className="text-gray-500">{pct(actualLabour, quotedLabour)} of quote</span>}
+          </div>
+        </div>
+        {quotedLabour > 0 && (
+          <div className="h-2 bg-gray-700 rounded-full overflow-hidden">
+            <div className={`h-full rounded-full transition-all ${barColor(actualLabour, quotedLabour)}`} style={{ width: `${bar(actualLabour, quotedLabour)}%` }} />
+          </div>
+        )}
+        {labourEntries.length > 0 && (
+          <div className="space-y-1 pt-1 max-h-40 overflow-y-auto">
+            {labourEntries.map(e => (
+              <div key={e.id} className="flex justify-between text-xs text-gray-400">
+                <span>{e.date} — {e.sub || 'Worker'}{e.labour_desc ? ` · ${e.labour_desc}` : ''}</span>
+                <span className="font-mono text-gray-300">{e.cost ? fmtCurrency(e.cost) : `${e.hours}h @ $${e.rate}/hr = ${fmtCurrency((e.hours ?? 0) * (e.rate ?? 0))}`}</span>
+              </div>
+            ))}
+          </div>
+        )}
+        {labourEntries.length === 0 && <p className="text-xs text-gray-600">No labour entries logged yet.</p>}
+      </div>
+
+      {/* Materials */}
+      <div className="bg-gray-800 rounded-lg p-4 space-y-2">
+        <div className="flex items-center justify-between">
+          <p className="text-sm font-semibold text-white">Materials</p>
+          <div className="flex gap-4 text-xs text-gray-400">
+            <span>Quoted: <span className="text-gray-200 font-medium">{fmtCurrency(quotedMaterials)}</span></span>
+            <span>Actual: <span className={`font-medium ${actualMaterials > quotedMaterials && quotedMaterials > 0 ? 'text-red-400' : 'text-gray-200'}`}>{fmtCurrency(actualMaterials)}</span></span>
+            {pct(actualMaterials, quotedMaterials) && <span className="text-gray-500">{pct(actualMaterials, quotedMaterials)} of quote</span>}
+          </div>
+        </div>
+        {quotedMaterials > 0 && (
+          <div className="h-2 bg-gray-700 rounded-full overflow-hidden">
+            <div className={`h-full rounded-full transition-all ${barColor(actualMaterials, quotedMaterials)}`} style={{ width: `${bar(actualMaterials, quotedMaterials)}%` }} />
+          </div>
+        )}
+        {materialEntries.length > 0 && (
+          <div className="space-y-1 pt-1 max-h-40 overflow-y-auto">
+            {materialEntries.map(m => (
+              <div key={m.id} className="flex justify-between text-xs text-gray-400">
+                <span>{m.date} — {m.mat_desc || m.supplier || 'Material'}</span>
+                <span className="font-mono text-gray-300">{fmtCurrency(m.cost_ex_gst ?? 0)}</span>
+              </div>
+            ))}
+          </div>
+        )}
+        {materialEntries.length === 0 && <p className="text-xs text-gray-600">No material purchases logged yet.</p>}
+      </div>
+
+      {/* Variations */}
+      {approvedVarValue > 0 && (
+        <div className="bg-gray-800 rounded-lg p-4">
+          <div className="flex justify-between text-sm">
+            <span className="font-semibold text-white">Approved variations</span>
+            <span className="text-green-400 font-medium">{fmtCurrency(approvedVarValue)}</span>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Main component ────────────────────────────────────────────
 export default function Jobs() {
   const { data: jobs = [], isLoading } = useJobs()
@@ -230,7 +379,7 @@ export default function Jobs() {
   const [form, setForm] = useState<Job>(emptyForm())
   const [modalOpen, setModalOpen] = useState(false)
   const [saving, setSaving] = useState(false)
-  const [tab, setTab] = useState<'details'|'schedule'|'financials'|'variations'>('details')
+  const [tab, setTab] = useState<'details'|'schedule'|'financials'|'costs'|'variations'>('details')
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
@@ -413,10 +562,10 @@ export default function Jobs() {
 
         {/* Tabs */}
         <div className="flex gap-1 mb-5 bg-gray-800 p-1 rounded-lg">
-          {(['details','schedule','financials','variations'] as const).map(t => (
+          {(['details','schedule','financials','costs','variations'] as const).map(t => (
             <button key={t} onClick={() => setTab(t)}
               className={`flex-1 text-xs py-1.5 rounded-md font-medium transition-colors capitalize ${tab === t ? 'bg-gray-700 text-white' : 'text-gray-400 hover:text-white'}`}>
-              {t}
+              {t === 'costs' ? 'Cost Tracker' : t}
             </button>
           ))}
         </div>
@@ -488,6 +637,7 @@ export default function Jobs() {
           </div>
         )}
 
+        {tab === 'costs' && <CostTrackerTab job={form} jobId={selectedId} />}
         {tab === 'variations' && <VariationsTab jobId={selectedId} />}
 
         <div className="flex items-center justify-between mt-6 pt-4 border-t border-gray-800">

@@ -46,6 +46,18 @@ function useJobs() {
   })
 }
 
+function useAssignments() {
+  const { user } = useAuth()
+  return useQuery({
+    queryKey: ['np_assignments_cal', user?.id],
+    queryFn: async () => {
+      const { data } = await supabase.from('np_assignments').select('*').eq('user_id', user!.id)
+      return (data ?? []) as any[]
+    },
+    enabled: !!user,
+  })
+}
+
 function useUpsertEvent() {
   const qc = useQueryClient()
   const { user } = useAuth()
@@ -72,6 +84,7 @@ function useDeleteEvent() {
 export default function CalendarPage() {
   const { data: events = [] } = useCalendarEvents()
   const { data: jobs = [], isLoading } = useJobs()
+  const { data: assignments = [] } = useAssignments()
   const upsertEvent = useUpsertEvent()
   const deleteEvent = useDeleteEvent()
 
@@ -130,8 +143,14 @@ export default function CalendarPage() {
     events.forEach(ev => {
       add(ev.date, { type: 'event', label: ev.title || ev.color || 'Event', color: EVENT_COLORS[ev.color || 'Other'] || EVENT_COLORS['Other'], id: ev.id, data: ev })
     })
+    // Crew assignments
+    assignments.forEach(a => {
+      if (!a.date) return
+      const label = `👷 ${a.crew_name || 'Crew'}${a.job_id ? ` · ${a.job_id}` : ''}`
+      add(a.date, { type: 'event', label, color: 'bg-orange-500/20 text-orange-300 border-l-2 border-orange-400', id: a.id, data: { ...a, _isAssignment: true } })
+    })
     return map
-  }, [jobs, events])
+  }, [jobs, events, assignments])
 
   // ── Navigation ────────────────────────────────────────────────
   function prev() { if (month === 0) { setMonth(11); setYear(y => y - 1) } else setMonth(m => m - 1) }

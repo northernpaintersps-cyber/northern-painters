@@ -1,11 +1,12 @@
 import { useState, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useNavigate } from 'react-router-dom'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/lib/auth'
 import { Modal } from '@/components/ui/Modal'
 import { Input, TextArea } from '@/components/ui/Field'
 import { fmtDate, genId, today } from '@/lib/utils'
-import { Plus, Loader2, Trash2, Edit2, Search, MapPin, CalendarDays } from 'lucide-react'
+import { Plus, Loader2, Trash2, Edit2, Search, MapPin, CalendarDays, Calculator } from 'lucide-react'
 
 function useSiteVisits() {
   const { user } = useAuth()
@@ -60,6 +61,7 @@ export default function SiteVisits() {
   const { data: jobs = [] } = useJobs()
   const upsert = useUpsert()
   const del = useDelete()
+  const navigate = useNavigate()
 
   const [open, setOpen] = useState(false)
   const [form, setForm] = useState<any>({})
@@ -71,6 +73,19 @@ export default function SiteVisits() {
 
   function openNew() { setForm({ date: today() }); setOpen(true) }
   function openEdit(v: any) { setForm({ ...v }); setOpen(true) }
+
+  function buildQuote(v: any) {
+    const job = jobs.find(j => j.id === v.job_id)
+    try {
+      sessionStorage.setItem('np_prefill_quote', JSON.stringify({
+        job_id: v.job_id || '',
+        client: job?.client || '',
+        address: job?.address || v.address || '',
+        notes: v.notes || '',
+      }))
+    } catch {}
+    navigate('/quotes')
+  }
 
   async function save() {
     setSaving(true)
@@ -142,6 +157,10 @@ export default function SiteVisits() {
                       {v.notes && <p className="text-sm text-gray-300 mt-1">{v.notes}</p>}
                     </div>
                     <div className="flex gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                      <button onClick={() => buildQuote(v)} title="Build quote from this visit"
+                        className="flex items-center gap-1 text-xs text-gray-500 hover:text-yellow-400 px-2 py-1 rounded transition-colors">
+                        <Calculator size={12} /> Quote
+                      </button>
                       <button onClick={() => openEdit(v)} className="text-gray-500 hover:text-yellow-400 p-1"><Edit2 size={13} /></button>
                       <button onClick={() => { if (confirm('Delete this visit?')) del.mutate(v.id) }} className="text-gray-500 hover:text-red-400 p-1"><Trash2 size={13} /></button>
                     </div>
@@ -180,6 +199,12 @@ export default function SiteVisits() {
             )}
           </div>
           <div className="flex gap-2">
+            {form.id && (
+              <button onClick={() => { setOpen(false); buildQuote(form) }}
+                className="flex items-center gap-1.5 text-sm px-3 py-2 rounded-lg bg-blue-500/20 text-blue-400 hover:bg-blue-500/30 font-medium transition-colors">
+                <Calculator size={13} /> Build quote
+              </button>
+            )}
             <button onClick={() => setOpen(false)} className="text-sm px-4 py-2 rounded-lg bg-gray-800 text-gray-400 hover:text-white">Cancel</button>
             <button onClick={save} disabled={saving} className="flex items-center gap-1.5 text-sm px-5 py-2 rounded-lg bg-yellow-400 hover:bg-yellow-300 text-gray-900 font-semibold disabled:opacity-50">
               {saving && <Loader2 size={13} className="animate-spin" />} Save

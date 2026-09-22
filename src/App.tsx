@@ -16,6 +16,7 @@ import SiteVisits from '@/pages/SiteVisits'
 import Receipts from '@/pages/Receipts'
 import AdsSpend from '@/pages/AdsSpend'
 import QuotingTool from '@/pages/QuotingTool'
+import Materials from '@/pages/Materials'
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const { session, loading } = useAuth()
@@ -46,6 +47,7 @@ export default function App() {
         <Route path="/receipts" element={<Receipts />} />
         <Route path="/ads" element={<AdsSpend />} />
         <Route path="/quotes" element={<QuotingTool />} />
+        <Route path="/materials" element={<Materials />} />
         <Route path="/settings" element={<SettingsPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/dashboard" replace />} />

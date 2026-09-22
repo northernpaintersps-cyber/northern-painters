@@ -4,9 +4,30 @@ import { useAuth } from '@/lib/auth'
 import { supabase } from '@/lib/supabase'
 import { importBackup } from '@/lib/importData'
 import type { ImportResult } from '@/lib/importData'
-import { Upload, CheckCircle, AlertCircle, Loader2, ChevronDown, ChevronRight, Save } from 'lucide-react'
+import { Upload, CheckCircle, AlertCircle, Loader2, ChevronDown, ChevronRight, Save, Plus, Trash2, Key } from 'lucide-react'
 
 // ── Business settings hook ────────────────────────────────────
+export interface LabourRates {
+  standard: number   // standard painter $/hr
+  lead: number       // leading hand $/hr
+  sub: number        // subcontractor $/hr
+  overhead: number   // overhead $/hr
+  hpd: number        // hours per day default
+  charge_rate: number // charge-out rate to client $/hr
+}
+
+export interface PaintProduct {
+  id: string
+  product: string
+  cat: 'interior' | 'exterior' | 'specialty'
+  use: string
+  size: string
+  finish: string
+  coverage: number  // m² per litre
+  rrp: number
+  yours: number     // your cost price
+}
+
 export interface BusinessSettings {
   company_name: string
   abn: string
@@ -24,7 +45,38 @@ export interface BusinessSettings {
   quote_valid_days: number
   quote_footer: string
   invoice_footer: string
+  rates: LabourRates
+  paint_products: PaintProduct[]
+  ai_api_key: string
 }
+
+const DEFAULT_RATES: LabourRates = {
+  standard: 65,
+  lead: 75,
+  sub: 70,
+  overhead: 12,
+  hpd: 8,
+  charge_rate: 65,
+}
+
+const DEFAULT_PAINT_PRODUCTS: PaintProduct[] = [
+  { id: 'p1',  product: 'Dulux Ceiling White Flat',         cat: 'interior',  use: 'Interior ceilings',             size: '15L', finish: 'Flat',       coverage: 14, rrp: 149, yours: 120 },
+  { id: 'p2',  product: 'Dulux Wash and Wear Low Sheen',    cat: 'interior',  use: 'Interior walls',                size: '15L', finish: 'Low Sheen',  coverage: 16, rrp: 189, yours: 155 },
+  { id: 'p3',  product: 'Dulux Wash and Wear Low Sheen',    cat: 'interior',  use: 'Interior walls',                size: '4L',  finish: 'Low Sheen',  coverage: 16, rrp: 72,  yours: 58 },
+  { id: 'p4',  product: 'Dulux Aquanamel Semi-Gloss',       cat: 'interior',  use: 'Doors trims skirtings',         size: '4L',  finish: 'Semi-Gloss', coverage: 12, rrp: 89,  yours: 72 },
+  { id: 'p5',  product: 'Dulux Aquanamel Gloss',            cat: 'interior',  use: 'Doors and trims gloss',         size: '4L',  finish: 'Gloss',      coverage: 12, rrp: 89,  yours: 72 },
+  { id: 'p6',  product: 'Dulux Acrylic Undercoat',          cat: 'interior',  use: 'Interior primer undercoat',     size: '10L', finish: 'Flat',       coverage: 12, rrp: 125, yours: 99 },
+  { id: 'p7',  product: 'Dulux Oil Based Undercoat',        cat: 'interior',  use: 'Oil based primer',              size: '4L',  finish: 'Flat',       coverage: 12, rrp: 79,  yours: 64 },
+  { id: 'p8',  product: 'Berger Breathe Easy Low Sheen',    cat: 'interior',  use: 'Interior walls low VOC',        size: '15L', finish: 'Low Sheen',  coverage: 15, rrp: 165, yours: 135 },
+  { id: 'p9',  product: 'Dulux Weathershield Low Sheen',    cat: 'exterior',  use: 'Exterior walls and boards',     size: '15L', finish: 'Low Sheen',  coverage: 14, rrp: 225, yours: 185 },
+  { id: 'p10', product: 'Dulux Weathershield Low Sheen',    cat: 'exterior',  use: 'Exterior walls',                size: '4L',  finish: 'Low Sheen',  coverage: 14, rrp: 82,  yours: 67 },
+  { id: 'p11', product: 'Dulux Weathershield Semi-Gloss',   cat: 'exterior',  use: 'Exterior trims fascia doors',   size: '4L',  finish: 'Semi-Gloss', coverage: 12, rrp: 86,  yours: 70 },
+  { id: 'p12', product: 'Dulux Weathershield Exterior Primer', cat: 'exterior', use: 'Exterior primer',            size: '4L',  finish: 'Flat',       coverage: 12, rrp: 72,  yours: 58 },
+  { id: 'p13', product: 'Acratex Render Coat',              cat: 'exterior',  use: 'Textured render walls',         size: '15L', finish: 'Texture',    coverage: 6,  rrp: 210, yours: 172 },
+  { id: 'p14', product: 'Dulux Roof and Trim',              cat: 'exterior',  use: 'Roof coating',                  size: '10L', finish: 'Low Sheen',  coverage: 10, rrp: 165, yours: 135 },
+  { id: 'p15', product: 'Dulux Super Grip Medium',          cat: 'exterior',  use: 'Concrete driveways',            size: '10L', finish: 'Medium',     coverage: 6,  rrp: 145, yours: 118 },
+  { id: 'p16', product: 'Cutek CD50 Clear',                 cat: 'specialty', use: 'Deck timber oil clear',         size: '4L',  finish: 'Oil',        coverage: 8,  rrp: 95,  yours: 79 },
+]
 
 const DEFAULT_SETTINGS: BusinessSettings = {
   company_name: 'Northern Painters',
@@ -43,6 +95,9 @@ const DEFAULT_SETTINGS: BusinessSettings = {
   quote_valid_days: 30,
   quote_footer: 'All surfaces to be cleaned and prepared before painting.\nAll furniture and floor coverings to be protected during works.',
   invoice_footer: 'This invoice is issued in accordance with the Building and Construction Industry Security of Payment Act 1999 (NSW).',
+  rates: DEFAULT_RATES,
+  paint_products: DEFAULT_PAINT_PRODUCTS,
+  ai_api_key: '',
 }
 
 export function useBusinessSettings() {
@@ -107,13 +162,43 @@ export default function SettingsPage() {
   const [biz, setBiz] = useState<BusinessSettings>(DEFAULT_SETTINGS)
   const [bizSaving, setBizSaving] = useState(false)
   const [bizSaved, setBizSaved] = useState(false)
+  const [showKey, setShowKey] = useState(false)
+  const [newProduct, setNewProduct] = useState<Partial<PaintProduct> | null>(null)
 
   useEffect(() => {
-    if (savedSettings) setBiz(savedSettings)
+    if (savedSettings) setBiz(p => ({
+      ...p,
+      ...savedSettings,
+      rates: { ...DEFAULT_RATES, ...(savedSettings.rates ?? {}) },
+      paint_products: savedSettings.paint_products?.length ? savedSettings.paint_products : DEFAULT_PAINT_PRODUCTS,
+    }))
   }, [savedSettings])
 
   function set(k: keyof BusinessSettings) {
     return (v: string) => setBiz(p => ({ ...p, [k]: v }))
+  }
+  function setRate(k: keyof LabourRates) {
+    return (v: string) => setBiz(p => ({ ...p, rates: { ...p.rates, [k]: parseFloat(v) || 0 } }))
+  }
+
+  function deleteProduct(id: string) {
+    setBiz(p => ({ ...p, paint_products: p.paint_products.filter(x => x.id !== id) }))
+  }
+  function saveProduct() {
+    if (!newProduct?.product || !newProduct.use) return
+    const prod: PaintProduct = {
+      id: `pp-${Date.now()}`,
+      product: newProduct.product ?? '',
+      cat: (newProduct.cat as any) ?? 'interior',
+      use: newProduct.use ?? '',
+      size: newProduct.size ?? '15L',
+      finish: newProduct.finish ?? '',
+      coverage: Number(newProduct.coverage) || 12,
+      rrp: Number(newProduct.rrp) || 0,
+      yours: Number(newProduct.yours) || 0,
+    }
+    setBiz(p => ({ ...p, paint_products: [...p.paint_products, prod] }))
+    setNewProduct(null)
   }
 
   async function handleSaveBiz() {
@@ -203,7 +288,19 @@ export default function SettingsPage() {
             <Field label="Default labour rate ($/hr)" value={biz.default_labour_rate} onChange={set('default_labour_rate')} type="number" />
             <Field label="Default markup %" value={biz.default_markup_pct} onChange={set('default_markup_pct')} type="number" />
             <Field label="Quote valid (days)" value={biz.quote_valid_days} onChange={set('quote_valid_days')} type="number" />
-            <Field label="Invoice terms" value={biz.invoice_terms} onChange={set('invoice_terms')} />
+            <Field label="Invoice terms (days)" value={biz.invoice_terms} onChange={set('invoice_terms')} />
+          </div>
+        </div>
+
+        <div className="space-y-3 pt-2 border-t border-gray-800">
+          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Labour rates</p>
+          <div className="grid grid-cols-3 md:grid-cols-6 gap-3">
+            <Field label="Standard ($/hr)" value={biz.rates.standard} onChange={setRate('standard')} type="number" />
+            <Field label="Lead hand ($/hr)" value={biz.rates.lead} onChange={setRate('lead')} type="number" />
+            <Field label="Sub ($/hr)" value={biz.rates.sub} onChange={setRate('sub')} type="number" />
+            <Field label="Overhead ($/hr)" value={biz.rates.overhead} onChange={setRate('overhead')} type="number" />
+            <Field label="Charge rate ($/hr)" value={biz.rates.charge_rate} onChange={setRate('charge_rate')} type="number" />
+            <Field label="Hours per day" value={biz.rates.hpd} onChange={setRate('hpd')} type="number" />
           </div>
         </div>
 
@@ -213,6 +310,119 @@ export default function SettingsPage() {
             <TextAreaField label="Quote footer / scope notes" value={biz.quote_footer} onChange={set('quote_footer')} />
             <TextAreaField label="Invoice footer" value={biz.invoice_footer} onChange={set('invoice_footer')} />
           </div>
+        </div>
+      </section>
+
+      {/* ── AI API Key ───────────────────────────────────────── */}
+      <section className="bg-gray-900 rounded-xl border border-gray-800 p-6 space-y-4">
+        <div className="flex items-center gap-2">
+          <Key size={16} className="text-yellow-400" />
+          <div>
+            <h2 className="text-base font-semibold text-white">AI API key</h2>
+            <p className="text-xs text-gray-500 mt-0.5">Used for AI quote builder and invoice reader. Key is stored locally in your Supabase account only.</p>
+          </div>
+        </div>
+        <div className="flex gap-2">
+          <div className="flex-1 relative">
+            <input
+              type={showKey ? 'text' : 'password'}
+              value={biz.ai_api_key}
+              onChange={e => setBiz(p => ({ ...p, ai_api_key: e.target.value }))}
+              placeholder="sk-..."
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-yellow-400 placeholder-gray-600 font-mono"
+            />
+          </div>
+          <button onClick={() => setShowKey(v => !v)} className="px-3 py-2 bg-gray-800 rounded-lg text-xs text-gray-400 hover:text-white border border-gray-700">
+            {showKey ? 'Hide' : 'Show'}
+          </button>
+          <button onClick={handleSaveBiz} disabled={bizSaving} className="flex items-center gap-1.5 text-sm bg-yellow-400 hover:bg-yellow-300 disabled:opacity-50 text-gray-900 font-semibold px-4 py-2 rounded-lg">
+            {bizSaving ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />} Save
+          </button>
+        </div>
+      </section>
+
+      {/* ── Paint products ───────────────────────────────────── */}
+      <section className="bg-gray-900 rounded-xl border border-gray-800 p-6 space-y-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-base font-semibold text-white">Paint products</h2>
+            <p className="text-xs text-gray-500 mt-0.5">Products used in the quote builder and paint calculator. Edit your cost price and coverage.</p>
+          </div>
+          <div className="flex gap-2">
+            <button onClick={() => setNewProduct({ cat: 'interior', size: '15L', coverage: 12 })}
+              className="flex items-center gap-1.5 text-xs bg-gray-800 border border-gray-700 hover:border-yellow-400/50 text-gray-300 px-3 py-1.5 rounded-lg">
+              <Plus size={12} /> Add product
+            </button>
+            <button onClick={handleSaveBiz} disabled={bizSaving}
+              className="flex items-center gap-1.5 text-sm bg-yellow-400 hover:bg-yellow-300 disabled:opacity-50 text-gray-900 font-semibold px-4 py-1.5 rounded-lg">
+              {bizSaving ? <Loader2 size={13} className="animate-spin" /> : bizSaved ? <CheckCircle size={13} /> : <Save size={13} />}
+              {bizSaved ? 'Saved' : 'Save'}
+            </button>
+          </div>
+        </div>
+
+        {newProduct && (
+          <div className="bg-gray-800/60 rounded-lg p-3 grid grid-cols-2 md:grid-cols-4 gap-2 border border-yellow-400/30">
+            <Field label="Product name" value={newProduct.product ?? ''} onChange={v => setNewProduct(p => ({ ...p, product: v }))} />
+            <Field label="Use / surface" value={newProduct.use ?? ''} onChange={v => setNewProduct(p => ({ ...p, use: v }))} />
+            <div className="flex flex-col gap-1">
+              <label className="text-xs font-medium text-gray-400">Category</label>
+              <select value={newProduct.cat ?? 'interior'} onChange={e => setNewProduct(p => ({ ...p, cat: e.target.value as any }))}
+                className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-yellow-400">
+                <option value="interior">Interior</option>
+                <option value="exterior">Exterior</option>
+                <option value="specialty">Specialty</option>
+              </select>
+            </div>
+            <Field label="Size" value={newProduct.size ?? ''} onChange={v => setNewProduct(p => ({ ...p, size: v }))} placeholder="15L" />
+            <Field label="Finish" value={newProduct.finish ?? ''} onChange={v => setNewProduct(p => ({ ...p, finish: v }))} />
+            <Field label="Coverage (m²/L)" value={newProduct.coverage ?? ''} onChange={v => setNewProduct(p => ({ ...p, coverage: v as any }))} type="number" />
+            <Field label="RRP ($)" value={newProduct.rrp ?? ''} onChange={v => setNewProduct(p => ({ ...p, rrp: v as any }))} type="number" />
+            <Field label="Your cost ($)" value={newProduct.yours ?? ''} onChange={v => setNewProduct(p => ({ ...p, yours: v as any }))} type="number" />
+            <div className="col-span-2 md:col-span-4 flex gap-2 justify-end pt-1">
+              <button onClick={() => setNewProduct(null)} className="text-xs px-3 py-1.5 rounded-lg bg-gray-700 text-gray-400 hover:text-white">Cancel</button>
+              <button onClick={saveProduct} className="text-xs px-4 py-1.5 rounded-lg bg-yellow-400 hover:bg-yellow-300 text-gray-900 font-semibold">Add</button>
+            </div>
+          </div>
+        )}
+
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="text-gray-500 border-b border-gray-800">
+                <th className="text-left py-2 pr-3 font-medium">Product</th>
+                <th className="text-left py-2 pr-3 font-medium">Use</th>
+                <th className="text-left py-2 pr-3 font-medium">Cat</th>
+                <th className="text-left py-2 pr-3 font-medium">Size</th>
+                <th className="text-right py-2 pr-3 font-medium">Coverage</th>
+                <th className="text-right py-2 pr-3 font-medium">RRP</th>
+                <th className="text-right py-2 pr-3 font-medium">Your cost</th>
+                <th className="py-2 w-6"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {biz.paint_products.map(p => (
+                <tr key={p.id} className="border-b border-gray-800/50 hover:bg-gray-800/30">
+                  <td className="py-2 pr-3 text-gray-200 font-medium">{p.product}</td>
+                  <td className="py-2 pr-3 text-gray-400">{p.use}</td>
+                  <td className="py-2 pr-3">
+                    <span className={`px-1.5 py-0.5 rounded text-xs ${p.cat === 'interior' ? 'bg-blue-500/20 text-blue-300' : p.cat === 'exterior' ? 'bg-green-500/20 text-green-300' : 'bg-purple-500/20 text-purple-300'}`}>
+                      {p.cat}
+                    </span>
+                  </td>
+                  <td className="py-2 pr-3 text-gray-400">{p.size}</td>
+                  <td className="py-2 pr-3 text-right text-gray-300">{p.coverage} m²/L</td>
+                  <td className="py-2 pr-3 text-right text-gray-400">${p.rrp}</td>
+                  <td className="py-2 pr-3 text-right text-yellow-300 font-medium">${p.yours}</td>
+                  <td className="py-2">
+                    <button onClick={() => deleteProduct(p.id)} className="text-gray-600 hover:text-red-400 transition-colors">
+                      <Trash2 size={13} />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       </section>
 
