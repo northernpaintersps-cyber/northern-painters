@@ -106,6 +106,7 @@ export interface Database {
           billing_type: string | null
           notes: string | null
           receipt_no: string | null
+          line_items: Json | null
           updated_at: string | null
           created_at: string | null
         }

@@ -30,6 +30,16 @@ function uid(prefix: string, ...parts: any[]): string {
   return `${prefix}-${base || Date.now()}-${Math.random().toString(36).slice(2, 6)}`
 }
 
+/** V16 line items use mixed field names across versions. */
+function normaliseLineItems(raw: any): any[] {
+  if (!Array.isArray(raw)) return []
+  return raw.map((li: any) => ({
+    description: li.description ?? li.desc ?? '',
+    qty: toNum(li.qty) ?? 1,
+    total_ex_gst: toNum(li.totalExGST ?? li.total_ex_gst ?? li.total ?? li.unitPrice) ?? 0,
+  })).filter(li => li.description || li.total_ex_gst)
+}
+
 // ── Mappers ───────────────────────────────────────────────────
 function mapJob(j: any, userId: string) {
   return {
@@ -115,6 +125,8 @@ function mapCost(c: any, userId: string, _src: string) {
       category: c.category ?? null,
       billing_type: c.billingType ?? c.billing_type ?? null,
       receipt_no: c.receipt ?? c.invoiceNo?.toString() ?? c.receiptNo ?? c.receipt_no ?? null,
+      // V16 scanned invoices carry their itemisation — keep it
+      line_items: normaliseLineItems(c.lineItems ?? c.line_items),
     }
   }
   if (_src === 'receipt') {
