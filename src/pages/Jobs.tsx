@@ -79,37 +79,37 @@ function VariationsTab({ jobId }: { jobId: string | null }) {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <div className="text-sm text-gray-400">
-          Approved variations: <span className="text-white font-semibold">{fmtCurrency(totalApproved)}</span>
+        <div className="text-sm text-gray-500">
+          Approved variations: <span className="text-gray-900 font-semibold">{fmtCurrency(totalApproved)}</span>
           <span className="text-gray-600 mx-2">·</span>
           <span className="text-xs text-gray-500">{vars.length} total</span>
         </div>
         <button onClick={() => setVarForm({ date: today(), var_status: 'Pending', job_id: jobId })}
-          className="flex items-center gap-1 text-xs bg-yellow-400 hover:bg-yellow-300 text-gray-900 font-semibold px-2.5 py-1.5 rounded-lg">
+          className="flex items-center gap-1 text-xs bg-blue-600 hover:bg-blue-700 text-gray-900 font-semibold px-2.5 py-1.5 rounded-lg">
           <Plus size={12} /> Add
         </button>
       </div>
 
       {isLoading
-        ? <div className="flex justify-center py-8"><Loader2 size={16} className="animate-spin text-yellow-400" /></div>
+        ? <div className="flex justify-center py-8"><Loader2 size={16} className="animate-spin text-blue-600" /></div>
         : (
           <div className="space-y-2">
             {vars.map(v => (
-              <div key={v.id} className="flex items-start gap-3 bg-gray-800 rounded-lg p-3 group">
+              <div key={v.id} className="flex items-start gap-3 bg-gray-50 rounded-lg p-3 group">
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 mb-0.5">
                     <Badge label={v.var_status || 'Pending'} />
                     <span className="text-xs text-gray-500">{fmtDate(v.date)}</span>
                   </div>
-                  <p className="text-sm text-white">{v.var_desc || '—'}</p>
+                  <p className="text-sm text-gray-900">{v.var_desc || '—'}</p>
                   {v.notes && <p className="text-xs text-gray-500 mt-0.5">{v.notes}</p>}
                 </div>
                 <div className="text-right shrink-0">
-                  <p className="text-sm font-semibold text-white">{fmtCurrency(v.amount_ex_gst)}</p>
+                  <p className="text-sm font-semibold text-gray-900">{fmtCurrency(v.amount_ex_gst)}</p>
                   <p className="text-xs text-gray-500">ex GST</p>
                 </div>
                 <div className="flex flex-col gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                  <button onClick={() => setVarForm({ ...v })} className="text-gray-500 hover:text-yellow-400"><Edit2 size={12} /></button>
+                  <button onClick={() => setVarForm({ ...v })} className="text-gray-500 hover:text-blue-600"><Edit2 size={12} /></button>
                   <button onClick={() => { if (confirm('Delete variation?')) del.mutate(v.id) }} className="text-gray-500 hover:text-red-400"><Trash2 size={12} /></button>
                 </div>
               </div>
@@ -120,8 +120,8 @@ function VariationsTab({ jobId }: { jobId: string | null }) {
       }
 
       {varForm && (
-        <div className="bg-gray-800 rounded-xl border border-gray-700 p-4 space-y-3 mt-2">
-          <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">{varForm.id ? 'Edit variation' : 'New variation'}</p>
+        <div className="bg-gray-50 rounded-xl border border-gray-200 p-4 space-y-3 mt-2">
+          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">{varForm.id ? 'Edit variation' : 'New variation'}</p>
           <div className="grid grid-cols-2 gap-3">
             <Input label="Date" type="date" value={varForm.date || ''} onChange={ef('date')} />
             <Select label="Status" value={varForm.var_status || 'Pending'} onChange={ef('var_status')} options={VAR_STATUSES} />
@@ -130,8 +130,8 @@ function VariationsTab({ jobId }: { jobId: string | null }) {
           <Input label="Amount ex GST ($)" type="number" value={varForm.amount_ex_gst ?? ''} onChange={ef('amount_ex_gst')} />
           <TextArea label="Notes" value={varForm.notes || ''} onChange={ef('notes')} />
           <div className="flex justify-end gap-2 pt-1">
-            <button onClick={() => setVarForm(null)} className="text-xs px-3 py-1.5 rounded-lg bg-gray-700 text-gray-400 hover:text-white">Cancel</button>
-            <button onClick={saveVar} disabled={saving} className="flex items-center gap-1 text-xs px-3 py-1.5 rounded-lg bg-yellow-400 hover:bg-yellow-300 text-gray-900 font-semibold disabled:opacity-50">
+            <button onClick={() => setVarForm(null)} className="text-xs px-3 py-1.5 rounded-lg bg-gray-200 text-gray-500 hover:text-gray-900">Cancel</button>
+            <button onClick={saveVar} disabled={saving} className="flex items-center gap-1 text-xs px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-gray-900 font-semibold disabled:opacity-50">
               {saving && <Loader2 size={11} className="animate-spin" />} Save
             </button>
           </div>
@@ -273,7 +273,7 @@ function CostTrackerTab({ job, jobId }: { job: any; jobId: string | null }) {
     if (!quoted) return 'bg-gray-600'
     const ratio = actual / quoted
     if (ratio < 0.8) return 'bg-green-500'
-    if (ratio < 1.0) return 'bg-yellow-400'
+    if (ratio < 1.0) return 'bg-blue-600'
     return 'bg-red-500'
   }
 
@@ -284,12 +284,12 @@ function CostTrackerTab({ job, jobId }: { job: any; jobId: string | null }) {
       {/* Summary tiles */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {[
-          { label: 'Revenue (agreed + vars)', value: fmtCurrency(totalRevenue), color: 'text-yellow-300' },
+          { label: 'Revenue (agreed + vars)', value: fmtCurrency(totalRevenue), color: 'text-blue-500' },
           { label: 'Total actual cost', value: fmtCurrency(actualTotal), color: actualTotal > quotedTotal ? 'text-red-400' : 'text-gray-200' },
           { label: 'Gross profit', value: fmtCurrency(grossProfit), color: grossProfit >= 0 ? 'text-green-400' : 'text-red-400' },
-          { label: 'Margin', value: margin.toFixed(1) + '%', color: margin >= 30 ? 'text-green-400' : margin >= 15 ? 'text-yellow-400' : 'text-red-400' },
+          { label: 'Margin', value: margin.toFixed(1) + '%', color: margin >= 30 ? 'text-green-400' : margin >= 15 ? 'text-blue-600' : 'text-red-400' },
         ].map(({ label, value, color }) => (
-          <div key={label} className="bg-gray-800 rounded-lg p-3">
+          <div key={label} className="bg-gray-50 rounded-lg p-3">
             <p className="text-xs text-gray-500 mb-1">{label}</p>
             <p className={`text-base font-bold ${color}`}>{value}</p>
           </div>
@@ -297,26 +297,26 @@ function CostTrackerTab({ job, jobId }: { job: any; jobId: string | null }) {
       </div>
 
       {/* Labour */}
-      <div className="bg-gray-800 rounded-lg p-4 space-y-2">
+      <div className="bg-gray-50 rounded-lg p-4 space-y-2">
         <div className="flex items-center justify-between">
-          <p className="text-sm font-semibold text-white">Labour</p>
-          <div className="flex gap-4 text-xs text-gray-400">
+          <p className="text-sm font-semibold text-gray-900">Labour</p>
+          <div className="flex gap-4 text-xs text-gray-500">
             <span>Quoted: <span className="text-gray-200 font-medium">{fmtCurrency(quotedLabour)}</span></span>
             <span>Actual: <span className={`font-medium ${actualLabour > quotedLabour && quotedLabour > 0 ? 'text-red-400' : 'text-gray-200'}`}>{fmtCurrency(actualLabour)}</span></span>
             {pct(actualLabour, quotedLabour) && <span className="text-gray-500">{pct(actualLabour, quotedLabour)} of quote</span>}
           </div>
         </div>
         {quotedLabour > 0 && (
-          <div className="h-2 bg-gray-700 rounded-full overflow-hidden">
+          <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
             <div className={`h-full rounded-full transition-all ${barColor(actualLabour, quotedLabour)}`} style={{ width: `${bar(actualLabour, quotedLabour)}%` }} />
           </div>
         )}
         {labourEntries.length > 0 && (
           <div className="space-y-1 pt-1 max-h-40 overflow-y-auto">
             {labourEntries.map(e => (
-              <div key={e.id} className="flex justify-between text-xs text-gray-400">
+              <div key={e.id} className="flex justify-between text-xs text-gray-500">
                 <span>{e.date} — {e.sub || 'Worker'}{e.labour_desc ? ` · ${e.labour_desc}` : ''}</span>
-                <span className="font-mono text-gray-300">{e.cost ? fmtCurrency(e.cost) : `${e.hours}h @ $${e.rate}/hr = ${fmtCurrency((e.hours ?? 0) * (e.rate ?? 0))}`}</span>
+                <span className="font-mono text-gray-600">{e.cost ? fmtCurrency(e.cost) : `${e.hours}h @ $${e.rate}/hr = ${fmtCurrency((e.hours ?? 0) * (e.rate ?? 0))}`}</span>
               </div>
             ))}
           </div>
@@ -325,26 +325,26 @@ function CostTrackerTab({ job, jobId }: { job: any; jobId: string | null }) {
       </div>
 
       {/* Materials */}
-      <div className="bg-gray-800 rounded-lg p-4 space-y-2">
+      <div className="bg-gray-50 rounded-lg p-4 space-y-2">
         <div className="flex items-center justify-between">
-          <p className="text-sm font-semibold text-white">Materials</p>
-          <div className="flex gap-4 text-xs text-gray-400">
+          <p className="text-sm font-semibold text-gray-900">Materials</p>
+          <div className="flex gap-4 text-xs text-gray-500">
             <span>Quoted: <span className="text-gray-200 font-medium">{fmtCurrency(quotedMaterials)}</span></span>
             <span>Actual: <span className={`font-medium ${actualMaterials > quotedMaterials && quotedMaterials > 0 ? 'text-red-400' : 'text-gray-200'}`}>{fmtCurrency(actualMaterials)}</span></span>
             {pct(actualMaterials, quotedMaterials) && <span className="text-gray-500">{pct(actualMaterials, quotedMaterials)} of quote</span>}
           </div>
         </div>
         {quotedMaterials > 0 && (
-          <div className="h-2 bg-gray-700 rounded-full overflow-hidden">
+          <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
             <div className={`h-full rounded-full transition-all ${barColor(actualMaterials, quotedMaterials)}`} style={{ width: `${bar(actualMaterials, quotedMaterials)}%` }} />
           </div>
         )}
         {materialEntries.length > 0 && (
           <div className="space-y-1 pt-1 max-h-40 overflow-y-auto">
             {materialEntries.map(m => (
-              <div key={m.id} className="flex justify-between text-xs text-gray-400">
+              <div key={m.id} className="flex justify-between text-xs text-gray-500">
                 <span>{m.date} — {m.mat_desc || m.supplier || 'Material'}</span>
-                <span className="font-mono text-gray-300">{fmtCurrency(m.cost_ex_gst ?? 0)}</span>
+                <span className="font-mono text-gray-600">{fmtCurrency(m.cost_ex_gst ?? 0)}</span>
               </div>
             ))}
           </div>
@@ -354,9 +354,9 @@ function CostTrackerTab({ job, jobId }: { job: any; jobId: string | null }) {
 
       {/* Variations */}
       {approvedVarValue > 0 && (
-        <div className="bg-gray-800 rounded-lg p-4">
+        <div className="bg-gray-50 rounded-lg p-4">
           <div className="flex justify-between text-sm">
-            <span className="font-semibold text-white">Approved variations</span>
+            <span className="font-semibold text-gray-900">Approved variations</span>
             <span className="text-green-400 font-medium">{fmtCurrency(approvedVarValue)}</span>
           </div>
         </div>
@@ -461,32 +461,32 @@ export default function Jobs() {
   return (
     <div className="h-full flex flex-col">
       {/* Header */}
-      <div className="px-6 py-4 border-b border-gray-800 space-y-3 shrink-0">
+      <div className="px-6 py-4 border-b border-gray-200 space-y-3 shrink-0">
         <div className="flex items-center justify-between">
-          <h1 className="text-lg font-bold text-white">Jobs & Quotes</h1>
-          <button onClick={openNew} className="flex items-center gap-1.5 bg-yellow-400 hover:bg-yellow-300 text-gray-900 font-semibold text-sm px-3 py-1.5 rounded-lg transition-colors">
+          <h1 className="text-lg font-bold text-gray-900">Jobs & Quotes</h1>
+          <button onClick={openNew} className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-gray-900 font-semibold text-sm px-3 py-1.5 rounded-lg transition-colors">
             <Plus size={14} /> New job
           </button>
         </div>
         <div className="relative">
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
           <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search client, address, job ID…"
-            className="w-full bg-gray-800 border border-gray-700 rounded-lg pl-8 pr-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-yellow-400" />
+            className="w-full bg-gray-50 border border-gray-200 rounded-lg pl-8 pr-3 py-2 text-sm text-gray-900 placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-blue-500" />
         </div>
         <div className="flex gap-2 overflow-x-auto pb-0.5">
           <div className="flex gap-1 shrink-0">
             {['All', ...JOB_STATUSES].map(s => (
               <button key={s} onClick={() => setStatusFilter(s)}
-                className={`shrink-0 text-xs px-2.5 py-1 rounded-full transition-colors ${statusFilter === s ? 'bg-yellow-400 text-gray-900 font-semibold' : 'bg-gray-800 text-gray-400 hover:text-white'}`}>
+                className={`shrink-0 text-xs px-2.5 py-1 rounded-full transition-colors ${statusFilter === s ? 'bg-blue-600 text-gray-900 font-semibold' : 'bg-gray-50 text-gray-500 hover:text-gray-900'}`}>
                 {s}
               </button>
             ))}
           </div>
-          <div className="w-px bg-gray-700 shrink-0" />
+          <div className="w-px bg-gray-200 shrink-0" />
           <div className="flex gap-1 shrink-0">
             {['All', ...QUOTE_STATUSES].map(s => (
               <button key={s} onClick={() => setQuoteFilter(s)}
-                className={`shrink-0 text-xs px-2.5 py-1 rounded-full transition-colors ${quoteFilter === s ? 'bg-blue-500 text-white font-semibold' : 'bg-gray-800 text-gray-400 hover:text-white'}`}>
+                className={`shrink-0 text-xs px-2.5 py-1 rounded-full transition-colors ${quoteFilter === s ? 'bg-blue-500 text-gray-900 font-semibold' : 'bg-gray-50 text-gray-500 hover:text-gray-900'}`}>
                 {s}
               </button>
             ))}
@@ -496,10 +496,10 @@ export default function Jobs() {
       </div>
 
       {/* List */}
-      <div className="flex-1 overflow-y-auto divide-y divide-gray-800">
+      <div className="flex-1 overflow-y-auto divide-y divide-gray-200">
         {isLoading && (
           <div className="flex items-center justify-center py-16">
-            <Loader2 size={20} className="animate-spin text-yellow-400" />
+            <Loader2 size={20} className="animate-spin text-blue-600" />
           </div>
         )}
         {!isLoading && filtered.length === 0 && (
@@ -508,7 +508,7 @@ export default function Jobs() {
         {filtered.map(j => {
           const dates = Array.isArray(j.scheduled_dates) ? j.scheduled_dates : []
           return (
-            <div key={j.id} className="flex items-center hover:bg-gray-800/40 transition-colors group">
+            <div key={j.id} className="flex items-center hover:bg-gray-50/40 transition-colors group">
               <button className="flex-1 text-left px-6 py-4 min-w-0" onClick={() => openEdit(j)}>
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0 flex-1">
@@ -516,8 +516,8 @@ export default function Jobs() {
                       <span className="text-xs text-gray-500 font-mono">{j.id}</span>
                       {j.quote_status && <Badge label={j.quote_status} />}
                     </div>
-                    <div className="text-sm font-semibold text-white truncate">{j.client || '—'}</div>
-                    <div className="text-xs text-gray-400 truncate mt-0.5">{j.address || '—'}</div>
+                    <div className="text-sm font-semibold text-gray-900 truncate">{j.client || '—'}</div>
+                    <div className="text-xs text-gray-500 truncate mt-0.5">{j.address || '—'}</div>
                     <div className="flex items-center gap-3 mt-1.5 flex-wrap">
                       {j.type && <span className="text-xs text-gray-500">{j.type}</span>}
                       {dates.length > 0 && (
@@ -529,7 +529,7 @@ export default function Jobs() {
                     </div>
                   </div>
                   <div className="text-right shrink-0">
-                    <div className="text-sm font-bold text-white">{fmtCurrency(j.agreed_ex_gst || j.quote_ex_gst)}</div>
+                    <div className="text-sm font-bold text-gray-900">{fmtCurrency(j.agreed_ex_gst || j.quote_ex_gst)}</div>
                     {j.agreed_ex_gst && j.quote_ex_gst && j.agreed_ex_gst !== j.quote_ex_gst && (
                       <div className="text-xs text-gray-500">quoted {fmtCurrency(j.quote_ex_gst)}</div>
                     )}
@@ -546,7 +546,7 @@ export default function Jobs() {
                     e.stopPropagation()
                     await upsert.mutateAsync({ ...j, status: e.target.value })
                   }}
-                  className="text-xs bg-gray-800 border border-gray-700 rounded-lg px-2 py-1 text-gray-300 focus:outline-none focus:ring-1 focus:ring-yellow-400 cursor-pointer opacity-0 group-hover:opacity-100 transition-opacity"
+                  className="text-xs bg-gray-50 border border-gray-200 rounded-lg px-2 py-1 text-gray-600 focus:outline-none focus:ring-1 focus:ring-blue-500 cursor-pointer opacity-0 group-hover:opacity-100 transition-opacity"
                 >
                   {JOB_STATUSES.map(s => <option key={s}>{s}</option>)}
                 </select>
@@ -561,10 +561,10 @@ export default function Jobs() {
         title={selectedId ? `Edit ${selectedId}` : 'New Job'}>
 
         {/* Tabs */}
-        <div className="flex gap-1 mb-5 bg-gray-800 p-1 rounded-lg">
+        <div className="flex gap-1 mb-5 bg-gray-50 p-1 rounded-lg">
           {(['details','schedule','financials','costs','variations'] as const).map(t => (
             <button key={t} onClick={() => setTab(t)}
-              className={`flex-1 text-xs py-1.5 rounded-md font-medium transition-colors capitalize ${tab === t ? 'bg-gray-700 text-white' : 'text-gray-400 hover:text-white'}`}>
+              className={`flex-1 text-xs py-1.5 rounded-md font-medium transition-colors capitalize ${tab === t ? 'bg-gray-200 text-gray-900' : 'text-gray-500 hover:text-gray-900'}`}>
               {t === 'costs' ? 'Cost Tracker' : t}
             </button>
           ))}
@@ -595,8 +595,8 @@ export default function Jobs() {
             <Input label="Quote sent date" type="date" value={form.quote_sent || ''} onChange={fld('quote_sent')} />
             <div className="col-span-2">
               {form.sched_start && form.est_days ? (
-                <div className="bg-gray-800 rounded-lg p-3">
-                  <p className="text-xs text-gray-400 mb-2">Calculated working days:</p>
+                <div className="bg-gray-50 rounded-lg p-3">
+                  <p className="text-xs text-gray-500 mb-2">Calculated working days:</p>
                   <div className="flex flex-wrap gap-1.5">
                     {getJobScheduledDates(form).map(d => (
                       <span key={d} className="text-xs bg-blue-500/20 text-blue-400 px-2 py-0.5 rounded">{fmtDate(d)}</span>
@@ -617,8 +617,8 @@ export default function Jobs() {
             <Input label="Est. labour ex GST ($)" type="number" value={form.est_labour_ex || ''} onChange={num('est_labour_ex')} min={0} />
             <Input label="Est. materials ex GST ($)" type="number" value={form.est_materials_ex || ''} onChange={num('est_materials_ex')} min={0} />
             <Input label="Labour rate ($/hr)" type="number" value={form.labour_rate || ''} onChange={num('labour_rate')} min={0} />
-            <div className="col-span-2 bg-gray-800 rounded-lg p-3 space-y-1">
-              <p className="text-xs text-gray-400">Estimated financials</p>
+            <div className="col-span-2 bg-gray-50 rounded-lg p-3 space-y-1">
+              <p className="text-xs text-gray-500">Estimated financials</p>
               <div className="grid grid-cols-3 gap-2 mt-2">
                 {[
                   { label: 'Quote inc GST', value: fmtCurrency((form.quote_ex_gst || 0) * 1.1) },
@@ -627,9 +627,9 @@ export default function Jobs() {
                   { label: 'Est. profit', value: fmtCurrency((form.agreed_ex_gst || 0) - (form.est_labour_ex || 0) - (form.est_materials_ex || 0)) },
                   { label: 'Est. margin', value: form.agreed_ex_gst ? `${(((form.agreed_ex_gst - (form.est_labour_ex || 0) - (form.est_materials_ex || 0)) / form.agreed_ex_gst) * 100).toFixed(1)}%` : '—' },
                 ].map(({ label, value }) => (
-                  <div key={label} className="bg-gray-700/50 rounded p-2">
+                  <div key={label} className="bg-gray-200/50 rounded p-2">
                     <p className="text-xs text-gray-500">{label}</p>
-                    <p className="text-sm font-semibold text-white">{value}</p>
+                    <p className="text-sm font-semibold text-gray-900">{value}</p>
                   </div>
                 ))}
               </div>
@@ -640,7 +640,7 @@ export default function Jobs() {
         {tab === 'costs' && <CostTrackerTab job={form} jobId={selectedId} />}
         {tab === 'variations' && <VariationsTab jobId={selectedId} />}
 
-        <div className="flex items-center justify-between mt-6 pt-4 border-t border-gray-800">
+        <div className="flex items-center justify-between mt-6 pt-4 border-t border-gray-200">
           <div>
             {selectedId && (
               <button onClick={handleDelete} className="flex items-center gap-1.5 text-sm text-red-400 hover:text-red-300 transition-colors">
@@ -649,11 +649,11 @@ export default function Jobs() {
             )}
           </div>
           <div className="flex gap-2">
-            <button onClick={() => setModalOpen(false)} className="text-sm px-4 py-2 rounded-lg bg-gray-800 text-gray-400 hover:text-white transition-colors">
+            <button onClick={() => setModalOpen(false)} className="text-sm px-4 py-2 rounded-lg bg-gray-50 text-gray-500 hover:text-gray-900 transition-colors">
               Cancel
             </button>
             <button onClick={handleSave} disabled={saving}
-              className="flex items-center gap-1.5 text-sm px-5 py-2 rounded-lg bg-yellow-400 hover:bg-yellow-300 text-gray-900 font-semibold transition-colors disabled:opacity-50">
+              className="flex items-center gap-1.5 text-sm px-5 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-gray-900 font-semibold transition-colors disabled:opacity-50">
               {saving && <Loader2 size={13} className="animate-spin" />}
               Save job
             </button>

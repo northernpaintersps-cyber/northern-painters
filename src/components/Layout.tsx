@@ -6,24 +6,35 @@ import {
   LayoutDashboard, Briefcase, FileText, Users, Calendar,
   DollarSign, ClipboardList, Settings, LogOut, Phone,
   BarChart2, Menu, X, MapPin, Receipt, Megaphone, Calculator,
-  Package
+  Package, GitBranch, UserCheck, Shield
 } from 'lucide-react'
 
 const nav = [
-  { to: '/dashboard',  label: 'Dashboard',    icon: LayoutDashboard },
-  { to: '/jobs',       label: 'Jobs',          icon: Briefcase },
-  { to: '/invoices',   label: 'Invoices',      icon: FileText },
-  { to: '/crew',       label: 'Crew',          icon: Users },
-  { to: '/calendar',   label: 'Calendar',      icon: Calendar },
-  { to: '/finance',    label: 'Finance',       icon: DollarSign },
-  { to: '/enquiries',  label: 'Enquiries',     icon: Phone },
-  { to: '/visits',     label: 'Site Visits',   icon: MapPin },
-  { to: '/materials',  label: 'Materials',     icon: Package },
-  { to: '/receipts',   label: 'Receipts',      icon: Receipt },
-  { to: '/ads',        label: 'Ads Spend',     icon: Megaphone },
-  { to: '/quotes',     label: 'Quote Builder', icon: Calculator },
-  { to: '/todos',      label: 'To‑do',         icon: ClipboardList },
-  { to: '/reports',    label: 'Reports',       icon: BarChart2 },
+  { group: 'Overview', items: [
+    { to: '/dashboard',  label: 'Dashboard',    icon: LayoutDashboard },
+    { to: '/pipeline',   label: 'Pipeline',      icon: GitBranch },
+    { to: '/calendar',   label: 'Calendar',      icon: Calendar },
+    { to: '/todos',      label: 'To‑do',         icon: ClipboardList },
+  ]},
+  { group: 'Work', items: [
+    { to: '/jobs',       label: 'Jobs',          icon: Briefcase },
+    { to: '/enquiries',  label: 'Enquiries',     icon: Phone },
+    { to: '/visits',     label: 'Site Visits',   icon: MapPin },
+    { to: '/clients',    label: 'Clients',       icon: UserCheck },
+  ]},
+  { group: 'Finance', items: [
+    { to: '/invoices',   label: 'Invoices',      icon: FileText },
+    { to: '/receipts',   label: 'Receipts',      icon: Receipt },
+    { to: '/finance',    label: 'Finance',       icon: DollarSign },
+    { to: '/reports',    label: 'Reports',       icon: BarChart2 },
+  ]},
+  { group: 'Resources', items: [
+    { to: '/quotes',     label: 'Quote Builder', icon: Calculator },
+    { to: '/materials',  label: 'Materials',     icon: Package },
+    { to: '/crew',       label: 'Crew',          icon: Users },
+    { to: '/legal',      label: 'Legal Docs',    icon: Shield },
+    { to: '/ads',        label: 'Ads Spend',     icon: Megaphone },
+  ]},
 ]
 
 export default function Layout() {
@@ -32,80 +43,74 @@ export default function Layout() {
   useRealtime()
 
   const sidebar = (
-    <aside className="flex flex-col h-full bg-gray-900 border-r border-gray-800">
-      <div className="px-4 py-5 border-b border-gray-800 flex items-center justify-between">
-        <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-lg bg-yellow-400 flex items-center justify-center text-sm shrink-0">🎨</div>
-          <div>
-            <div className="text-sm font-bold text-white leading-none">Northern</div>
-            <div className="text-xs text-gray-400">Painters</div>
-          </div>
+    <aside className="flex flex-col h-full bg-white border-r border-black/10">
+      <div className="px-4 py-3.5 border-b border-black/10 flex items-center justify-between">
+        <div>
+          <div className="text-[13px] font-bold text-gray-900 leading-tight">Northern Painters</div>
+          <div className="text-[11px] text-gray-500 mt-0.5">Business Management</div>
         </div>
-        <button className="lg:hidden text-gray-400 hover:text-white" onClick={() => setMobileOpen(false)}>
-          <X size={18} />
+        <button className="lg:hidden text-gray-500 hover:text-gray-900" onClick={() => setMobileOpen(false)}>
+          <X size={16} />
         </button>
       </div>
 
-      <nav className="flex-1 px-2 py-3 space-y-0.5 overflow-y-auto">
-        {nav.map(({ to, label, icon: Icon }) => (
-          <NavLink
-            key={to}
-            to={to}
-            onClick={() => setMobileOpen(false)}
-            className={({ isActive }) =>
-              `flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors ${
-                isActive
-                  ? 'bg-yellow-400 text-gray-900 font-semibold'
-                  : 'text-gray-400 hover:text-white hover:bg-gray-800'
-              }`
-            }
-          >
-            <Icon size={16} />
-            {label}
-          </NavLink>
+      <nav className="flex-1 overflow-y-auto py-2">
+        {nav.map(({ group, items }) => (
+          <div key={group}>
+            <div className="px-4 pt-3 pb-1 text-[10px] font-semibold text-gray-400 uppercase tracking-wider">{group}</div>
+            {items.map(({ to, label, icon: Icon }) => (
+              <NavLink
+                key={to}
+                to={to}
+                onClick={() => setMobileOpen(false)}
+                className={({ isActive }) =>
+                  `flex items-center gap-2 px-4 py-[7px] text-[13px] border-l-2 transition-colors ${
+                    isActive
+                      ? 'border-blue-600 bg-[#f5f4f0] text-gray-900 font-medium'
+                      : 'border-transparent text-gray-500 hover:bg-[#f5f4f0] hover:text-gray-900'
+                  }`
+                }
+              >
+                <Icon size={14} />
+                {label}
+              </NavLink>
+            ))}
+          </div>
         ))}
       </nav>
 
-      <div className="p-2 border-t border-gray-800 space-y-0.5">
+      <div className="border-t border-black/10 py-2">
         <NavLink to="/settings" onClick={() => setMobileOpen(false)}
           className={({ isActive }) =>
-            `flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors ${isActive ? 'bg-yellow-400 text-gray-900 font-semibold' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`
+            `flex items-center gap-2 px-4 py-[7px] text-[13px] border-l-2 transition-colors ${isActive ? 'border-blue-600 bg-[#f5f4f0] text-gray-900 font-medium' : 'border-transparent text-gray-500 hover:bg-[#f5f4f0] hover:text-gray-900'}`
           }>
-          <Settings size={16} /> Settings
+          <Settings size={14} /> Settings
         </NavLink>
-        <button onClick={signOut} className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-gray-400 hover:text-white hover:bg-gray-800 w-full transition-colors">
-          <LogOut size={16} /> Sign out
+        <button onClick={signOut} className="flex w-full items-center gap-2 px-4 py-[7px] text-[13px] border-l-2 border-transparent text-gray-500 hover:bg-[#f5f4f0] hover:text-gray-900 transition-colors">
+          <LogOut size={14} /> Sign out
         </button>
       </div>
     </aside>
   )
 
   return (
-    <div className="flex h-screen bg-gray-950 text-white overflow-hidden">
-      {/* Desktop sidebar */}
-      <div className="hidden lg:flex lg:w-56 lg:shrink-0 flex-col">{sidebar}</div>
+    <div className="flex h-screen bg-[#f5f4f0] overflow-hidden">
+      <div className="hidden lg:flex lg:w-[200px] lg:shrink-0 flex-col">{sidebar}</div>
 
-      {/* Mobile sidebar */}
       {mobileOpen && (
         <>
-          <div className="fixed inset-0 z-40 bg-black/60" onClick={() => setMobileOpen(false)} />
-          <div className="fixed inset-y-0 left-0 z-50 w-56">{sidebar}</div>
+          <div className="fixed inset-0 z-40 bg-black/40" onClick={() => setMobileOpen(false)} />
+          <div className="fixed inset-y-0 left-0 z-50 w-[200px]">{sidebar}</div>
         </>
       )}
 
-      {/* Main content */}
       <div className="flex-1 flex flex-col overflow-hidden">
-        {/* Mobile header */}
-        <div className="lg:hidden flex items-center gap-3 px-4 py-3 border-b border-gray-800 bg-gray-900 shrink-0">
-          <button onClick={() => setMobileOpen(true)} className="text-gray-400 hover:text-white">
-            <Menu size={20} />
+        <div className="lg:hidden flex items-center gap-3 px-4 py-3 border-b border-black/10 bg-white shrink-0">
+          <button onClick={() => setMobileOpen(true)} className="text-gray-500 hover:text-gray-900">
+            <Menu size={18} />
           </button>
-          <div className="flex items-center gap-2">
-            <div className="w-6 h-6 rounded-md bg-yellow-400 flex items-center justify-center text-xs">🎨</div>
-            <span className="text-sm font-bold">Northern Painters</span>
-          </div>
+          <span className="text-sm font-bold text-gray-900">Northern Painters</span>
         </div>
-
         <main className="flex-1 overflow-y-auto">
           <Outlet />
         </main>

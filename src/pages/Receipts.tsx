@@ -111,11 +111,11 @@ export default function Receipts() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-lg font-bold text-white">Receipts</h1>
+          <h1 className="text-lg font-bold text-gray-900">Receipts</h1>
           <p className="text-xs text-gray-500 mt-0.5">{receipts.length} receipts · GST claimable: <span className="text-green-400">{fmtCurrency(totalGST)}</span></p>
         </div>
         <button onClick={openNew}
-          className="flex items-center gap-1.5 bg-yellow-400 hover:bg-yellow-300 text-gray-900 font-semibold text-sm px-3 py-1.5 rounded-lg transition-colors">
+          className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-gray-900 font-semibold text-sm px-3 py-1.5 rounded-lg transition-colors">
           <Plus size={14} /> Add receipt
         </button>
       </div>
@@ -123,12 +123,12 @@ export default function Receipts() {
       {/* Summary tiles */}
       <div className="grid grid-cols-3 gap-3">
         {[
-          { label: 'Total inc GST', value: fmtCurrency(totalIncGST), color: 'text-white' },
+          { label: 'Total inc GST', value: fmtCurrency(totalIncGST), color: 'text-gray-900' },
           { label: 'GST claimable', value: fmtCurrency(totalGST), color: 'text-green-400' },
-          { label: 'Receipts shown', value: filtered.length, color: 'text-gray-300' },
+          { label: 'Receipts shown', value: filtered.length, color: 'text-gray-600' },
         ].map(s => (
-          <div key={s.label} className="bg-gray-900 rounded-xl border border-gray-800 p-3 flex items-center justify-between">
-            <span className="text-xs text-gray-400">{s.label}</span>
+          <div key={s.label} className="bg-white rounded-xl border border-gray-200 p-3 flex items-center justify-between">
+            <span className="text-xs text-gray-500">{s.label}</span>
             <span className={`text-lg font-bold tabular-nums ${s.color}`}>{s.value}</span>
           </div>
         ))}
@@ -139,10 +139,10 @@ export default function Receipts() {
         <div className="relative flex-1 min-w-[180px] max-w-xs">
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
           <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search supplier, description…"
-            className="w-full bg-gray-900 border border-gray-700 rounded-lg pl-8 pr-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-yellow-400/50" />
+            className="w-full bg-white border border-gray-200 rounded-lg pl-8 pr-3 py-2 text-sm text-gray-900 placeholder-gray-500 focus:outline-none focus:border-blue-500/50" />
         </div>
         <select value={filterCat} onChange={e => setFilterCat(e.target.value)}
-          className="bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-300 focus:outline-none focus:border-yellow-400/50">
+          className="bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-600 focus:outline-none focus:border-blue-500/50">
           <option value="">All categories</option>
           {REC_CATS.map(c => <option key={c}>{c}</option>)}
         </select>
@@ -150,9 +150,9 @@ export default function Receipts() {
 
       {/* Table */}
       {isLoading
-        ? <div className="flex justify-center py-16"><Loader2 size={20} className="animate-spin text-yellow-400" /></div>
+        ? <div className="flex justify-center py-16"><Loader2 size={20} className="animate-spin text-blue-600" /></div>
         : (
-          <div className="overflow-x-auto rounded-xl border border-gray-800">
+          <div className="overflow-x-auto rounded-xl border border-gray-200">
             <table className="w-full">
               <thead>
                 <tr>
@@ -163,18 +163,18 @@ export default function Receipts() {
               </thead>
               <tbody>
                 {filtered.map(r => (
-                  <tr key={r.id} className="border-t border-gray-800 hover:bg-gray-800/40 group">
-                    <td className="px-3 py-2.5 text-sm text-gray-300 whitespace-nowrap">{fmtDate(r.date)}</td>
-                    <td className="px-3 py-2.5 text-sm text-gray-300">{r.job_id || r.client || '—'}</td>
-                    <td className="px-3 py-2.5 text-sm text-gray-300">{r.supplier || '—'}</td>
-                    <td className="px-3 py-2.5 text-sm text-gray-300 max-w-[200px] truncate">{r.rec_desc || '—'}</td>
-                    <td className="px-3 py-2.5 text-sm text-gray-400">{r.category || '—'}</td>
-                    <td className="px-3 py-2.5 text-sm text-gray-300 tabular-nums">{fmtCurrency(r.cost_ex_gst)}</td>
+                  <tr key={r.id} className="border-t border-gray-200 hover:bg-gray-50/40 group">
+                    <td className="px-3 py-2.5 text-sm text-gray-600 whitespace-nowrap">{fmtDate(r.date)}</td>
+                    <td className="px-3 py-2.5 text-sm text-gray-600">{r.job_id || r.client || '—'}</td>
+                    <td className="px-3 py-2.5 text-sm text-gray-600">{r.supplier || '—'}</td>
+                    <td className="px-3 py-2.5 text-sm text-gray-600 max-w-[200px] truncate">{r.rec_desc || '—'}</td>
+                    <td className="px-3 py-2.5 text-sm text-gray-500">{r.category || '—'}</td>
+                    <td className="px-3 py-2.5 text-sm text-gray-600 tabular-nums">{fmtCurrency(r.cost_ex_gst)}</td>
                     <td className="px-3 py-2.5 text-sm text-green-400 tabular-nums">{fmtCurrency(r.gst)}</td>
-                    <td className="px-3 py-2.5 text-sm font-semibold text-white tabular-nums">{fmtCurrency(r.total_inc_gst)}</td>
+                    <td className="px-3 py-2.5 text-sm font-semibold text-gray-900 tabular-nums">{fmtCurrency(r.total_inc_gst)}</td>
                     <td className="px-3 py-2.5 text-right">
                       <div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                        <button onClick={() => openEdit(r)} className="text-gray-500 hover:text-yellow-400"><Edit2 size={13} /></button>
+                        <button onClick={() => openEdit(r)} className="text-gray-500 hover:text-blue-600"><Edit2 size={13} /></button>
                         <button onClick={() => { if (confirm('Delete this receipt?')) del.mutate(r.id) }} className="text-gray-500 hover:text-red-400"><Trash2 size={13} /></button>
                       </div>
                     </td>
@@ -186,11 +186,11 @@ export default function Receipts() {
               </tbody>
               {filtered.length > 0 && (
                 <tfoot>
-                  <tr className="border-t-2 border-gray-700">
+                  <tr className="border-t-2 border-gray-200">
                     <td colSpan={5} className="px-3 py-2.5 text-xs text-gray-500 font-semibold uppercase tracking-wide">Totals</td>
-                    <td className="px-3 py-2.5 text-sm font-semibold text-white tabular-nums">{fmtCurrency(filtered.reduce((s, r) => s + (r.cost_ex_gst ?? 0), 0))}</td>
+                    <td className="px-3 py-2.5 text-sm font-semibold text-gray-900 tabular-nums">{fmtCurrency(filtered.reduce((s, r) => s + (r.cost_ex_gst ?? 0), 0))}</td>
                     <td className="px-3 py-2.5 text-sm font-semibold text-green-400 tabular-nums">{fmtCurrency(totalGST)}</td>
-                    <td className="px-3 py-2.5 text-sm font-semibold text-white tabular-nums">{fmtCurrency(totalIncGST)}</td>
+                    <td className="px-3 py-2.5 text-sm font-semibold text-gray-900 tabular-nums">{fmtCurrency(totalIncGST)}</td>
                     <td />
                   </tr>
                 </tfoot>
@@ -206,9 +206,9 @@ export default function Receipts() {
           <div className="grid grid-cols-2 gap-3">
             <Input label="Date" type="date" value={form.date || ''} onChange={ef('date')} />
             <div className="flex flex-col gap-1">
-              <label className="text-xs font-medium text-gray-400">Job (optional)</label>
+              <label className="text-xs font-medium text-gray-500">Job (optional)</label>
               <select value={form.job_id || ''} onChange={ef('job_id')}
-                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-yellow-400 cursor-pointer">
+                className="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-1 focus:ring-blue-500 cursor-pointer">
                 <option value="">— No job —</option>
                 {jobs.map(j => <option key={j.id} value={j.id}>{j.id} {j.client || ''}</option>)}
               </select>
@@ -226,7 +226,7 @@ export default function Receipts() {
           </div>
           <TextArea label="Notes" value={form.notes || ''} onChange={ef('notes')} />
         </div>
-        <div className="flex justify-between mt-5 pt-4 border-t border-gray-800">
+        <div className="flex justify-between mt-5 pt-4 border-t border-gray-200">
           <div>
             {form.id && (
               <button onClick={() => { if (confirm('Delete?')) { del.mutate(form.id); setOpen(false) } }}
@@ -236,8 +236,8 @@ export default function Receipts() {
             )}
           </div>
           <div className="flex gap-2">
-            <button onClick={() => setOpen(false)} className="text-sm px-4 py-2 rounded-lg bg-gray-800 text-gray-400 hover:text-white">Cancel</button>
-            <button onClick={save} disabled={saving} className="flex items-center gap-1.5 text-sm px-5 py-2 rounded-lg bg-yellow-400 hover:bg-yellow-300 text-gray-900 font-semibold disabled:opacity-50">
+            <button onClick={() => setOpen(false)} className="text-sm px-4 py-2 rounded-lg bg-gray-50 text-gray-500 hover:text-gray-900">Cancel</button>
+            <button onClick={save} disabled={saving} className="flex items-center gap-1.5 text-sm px-5 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-gray-900 font-semibold disabled:opacity-50">
               {saving && <Loader2 size={13} className="animate-spin" />} Save
             </button>
           </div>

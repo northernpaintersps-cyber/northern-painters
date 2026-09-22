@@ -3,13 +3,13 @@ import { cn } from '@/lib/utils'
 type Variant = 'green' | 'blue' | 'amber' | 'red' | 'purple' | 'gray' | 'teal'
 
 const variants: Record<Variant, string> = {
-  green:  'bg-green-500/20 text-green-400',
-  blue:   'bg-blue-500/20 text-blue-400',
-  amber:  'bg-amber-500/20 text-amber-400',
-  red:    'bg-red-500/20 text-red-400',
-  purple: 'bg-purple-500/20 text-purple-400',
-  gray:   'bg-gray-500/20 text-gray-400',
-  teal:   'bg-teal-500/20 text-teal-400',
+  green:  'bg-green-100 text-green-800',
+  blue:   'bg-blue-100 text-blue-800',
+  amber:  'bg-amber-100 text-amber-800',
+  red:    'bg-red-100 text-red-800',
+  purple: 'bg-purple-100 text-purple-800',
+  gray:   'bg-gray-100 text-gray-600',
+  teal:   'bg-teal-100 text-teal-800',
 }
 
 export const STATUS_VARIANT: Record<string, Variant> = {

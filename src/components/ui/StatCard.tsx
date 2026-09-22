@@ -11,13 +11,13 @@ interface StatCardProps {
 }
 
 const colors = {
-  default: 'text-white',
+  default: 'text-gray-900',
   green:   'text-green-400',
   red:     'text-red-400',
   amber:   'text-amber-400',
   blue:    'text-blue-400',
   purple:  'text-purple-400',
-  gray:    'text-gray-400',
+  gray:    'text-gray-500',
 }
 
 export function StatCard({ label, value, sub, icon: Icon, color = 'default', onClick }: StatCardProps) {
@@ -25,7 +25,7 @@ export function StatCard({ label, value, sub, icon: Icon, color = 'default', onC
     <div
       onClick={onClick}
       className={cn(
-        'bg-gray-900 border border-gray-800 rounded-xl p-4',
+        'bg-white border border-gray-200 rounded-xl p-4',
         onClick && 'cursor-pointer hover:border-gray-600 transition-colors'
       )}
     >
@@ -36,8 +36,8 @@ export function StatCard({ label, value, sub, icon: Icon, color = 'default', onC
           {sub && <p className="text-xs text-gray-500 mt-1">{sub}</p>}
         </div>
         {Icon && (
-          <div className="shrink-0 w-9 h-9 rounded-lg bg-gray-800 flex items-center justify-center">
-            <Icon size={16} className="text-gray-400" />
+          <div className="shrink-0 w-9 h-9 rounded-lg bg-gray-50 flex items-center justify-center">
+            <Icon size={16} className="text-gray-500" />
           </div>
         )}
       </div>

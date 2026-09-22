@@ -118,29 +118,29 @@ function ItemRow({ item, onChange, onDelete }: {
   const n = (k: keyof QuoteItem) => (e: React.ChangeEvent<HTMLInputElement>) => set(k, parseFloat(e.target.value) || 0)
   const s = (k: keyof QuoteItem) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => set(k, e.target.value)
 
-  const INP = 'bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm text-white focus:outline-none focus:ring-1 focus:ring-yellow-400'
+  const INP = 'bg-gray-50 border border-gray-200 rounded px-2 py-1.5 text-sm text-gray-900 focus:outline-none focus:ring-1 focus:ring-blue-500'
   const SEL = `${INP} cursor-pointer`
 
   return (
-    <div className="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden">
+    <div className="bg-gray-50 rounded-xl border border-gray-200 overflow-hidden">
       {/* Summary row */}
       <div className="flex items-center gap-3 p-3 cursor-pointer" onClick={() => setExpanded(v => !v)}>
         <div className="flex-1 min-w-0 grid grid-cols-2 md:grid-cols-4 gap-x-4 gap-y-1">
           <div>
             <p className="text-xs text-gray-500">Area / room</p>
-            <p className="text-sm font-medium text-white truncate">{item.area_name || 'Unnamed'}</p>
+            <p className="text-sm font-medium text-gray-900 truncate">{item.area_name || 'Unnamed'}</p>
           </div>
           <div>
             <p className="text-xs text-gray-500">Surface</p>
-            <p className="text-sm text-gray-300">{item.surface_type}</p>
+            <p className="text-sm text-gray-600">{item.surface_type}</p>
           </div>
           <div>
             <p className="text-xs text-gray-500">Sqm · {item.coats} coats</p>
-            <p className="text-sm text-gray-300">{calc.sqm.toFixed(1)} m²</p>
+            <p className="text-sm text-gray-600">{calc.sqm.toFixed(1)} m²</p>
           </div>
           <div>
             <p className="text-xs text-gray-500">Item total</p>
-            <p className="text-sm font-bold text-yellow-400">{fmtCurrency(calc.total)}</p>
+            <p className="text-sm font-bold text-blue-600">{fmtCurrency(calc.total)}</p>
           </div>
         </div>
         <div className="flex items-center gap-1 shrink-0">
@@ -151,20 +151,20 @@ function ItemRow({ item, onChange, onDelete }: {
 
       {/* Detail panel */}
       {expanded && (
-        <div className="border-t border-gray-700 p-4 space-y-4 bg-gray-850">
+        <div className="border-t border-gray-200 p-4 space-y-4 bg-gray-850">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <div className="md:col-span-2 flex flex-col gap-1">
-              <label className="text-xs text-gray-400">Area / room name</label>
+              <label className="text-xs text-gray-500">Area / room name</label>
               <input value={item.area_name} onChange={s('area_name')} placeholder="e.g. Living room walls" className={`${INP} w-full`} />
             </div>
             <div className="flex flex-col gap-1">
-              <label className="text-xs text-gray-400">Surface type</label>
+              <label className="text-xs text-gray-500">Surface type</label>
               <select value={item.surface_type} onChange={s('surface_type') as any} className={`${SEL} w-full`}>
                 {SURFACE_TYPES.map(t => <option key={t}>{t}</option>)}
               </select>
             </div>
             <div className="flex flex-col gap-1">
-              <label className="text-xs text-gray-400">Prep level</label>
+              <label className="text-xs text-gray-500">Prep level</label>
               <select value={item.prep_level} onChange={s('prep_level') as any} className={`${SEL} w-full`}>
                 {PREP_LEVELS.map(p => <option key={p} value={p}>{p.charAt(0).toUpperCase() + p.slice(1)}</option>)}
               </select>
@@ -173,44 +173,44 @@ function ItemRow({ item, onChange, onDelete }: {
 
           <div className="grid grid-cols-3 md:grid-cols-6 gap-3">
             <div className="flex flex-col gap-1">
-              <label className="text-xs text-gray-400">Length (m)</label>
+              <label className="text-xs text-gray-500">Length (m)</label>
               <input type="number" value={item.length || ''} onChange={n('length')} min={0} step={0.1} className={`${INP} w-full`} />
             </div>
             <div className="flex flex-col gap-1">
-              <label className="text-xs text-gray-400">Height (m)</label>
+              <label className="text-xs text-gray-500">Height (m)</label>
               <input type="number" value={item.height || ''} onChange={n('height')} min={0} step={0.1} className={`${INP} w-full`} />
             </div>
             <div className="flex flex-col gap-1">
-              <label className="text-xs text-gray-400">Qty (walls)</label>
+              <label className="text-xs text-gray-500">Qty (walls)</label>
               <input type="number" value={item.quantity || ''} onChange={n('quantity')} min={1} step={1} className={`${INP} w-full`} />
             </div>
             <div className="flex flex-col gap-1">
-              <label className="text-xs text-gray-400">Coats</label>
+              <label className="text-xs text-gray-500">Coats</label>
               <input type="number" value={item.coats || ''} onChange={n('coats')} min={1} max={4} step={1} className={`${INP} w-full`} />
             </div>
             <div className="flex flex-col gap-1">
-              <label className="text-xs text-gray-400">Labour $/hr</label>
+              <label className="text-xs text-gray-500">Labour $/hr</label>
               <input type="number" value={item.labour_rate || ''} onChange={n('labour_rate')} min={0} className={`${INP} w-full`} />
             </div>
             <div className="flex flex-col gap-1">
-              <label className="text-xs text-gray-400">Paint $/L</label>
+              <label className="text-xs text-gray-500">Paint $/L</label>
               <input type="number" value={item.paint_cost_per_litre || ''} onChange={n('paint_cost_per_litre')} min={0} step={0.5} className={`${INP} w-full`} />
             </div>
           </div>
 
           <div className="flex items-center gap-6">
             <div className="flex flex-col gap-1">
-              <label className="text-xs text-gray-400">Markup %</label>
+              <label className="text-xs text-gray-500">Markup %</label>
               <input type="number" value={item.markup_pct || ''} onChange={n('markup_pct')} min={0} max={100} className={`${INP} w-24`} />
             </div>
             <div className="flex flex-col gap-1">
-              <label className="text-xs text-gray-400">Notes</label>
+              <label className="text-xs text-gray-500">Notes</label>
               <input value={item.notes} onChange={s('notes')} className={`${INP} w-64`} placeholder="e.g. include feature wall" />
             </div>
           </div>
 
           {/* Calc breakdown */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 bg-gray-900 rounded-lg p-3">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 bg-white rounded-lg p-3">
             {[
               ['Area', `${calc.sqm.toFixed(1)} m²`],
               ['Paint needed', `${calc.paintLitres.toFixed(1)} L`],
@@ -223,7 +223,7 @@ function ItemRow({ item, onChange, onDelete }: {
             ].map(([label, value]) => (
               <div key={String(label)}>
                 <p className="text-xs text-gray-500">{label}</p>
-                <p className={`text-sm font-semibold ${label === 'Item total (ex GST)' ? 'text-yellow-400' : 'text-white'}`}>{value}</p>
+                <p className={`text-sm font-semibold ${label === 'Item total (ex GST)' ? 'text-blue-600' : 'text-gray-900'}`}>{value}</p>
               </div>
             ))}
           </div>
@@ -429,19 +429,19 @@ export default function QuotingTool() {
   }, [items])
 
   const se = (k: string) => (e: React.ChangeEvent<any>) => setSettings(p => ({ ...p, [k]: e.target.value }))
-  const INP = 'w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-yellow-400'
+  const INP = 'w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-1 focus:ring-blue-500'
 
   return (
     <div className="p-6 space-y-5">
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-lg font-bold text-white">Quote Builder</h1>
+          <h1 className="text-lg font-bold text-gray-900">Quote Builder</h1>
           <p className="text-xs text-gray-500 mt-0.5">Measurement-based quote calculator</p>
         </div>
         <div className="flex items-center gap-2">
           <button onClick={() => setSettingsOpen(v => !v)}
-            className="text-xs px-3 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-gray-400 hover:text-white transition-colors">
+            className="text-xs px-3 py-1.5 rounded-lg bg-gray-50 border border-gray-200 text-gray-500 hover:text-gray-900 transition-colors">
             Quote settings
           </button>
           {selJob && (
@@ -452,11 +452,11 @@ export default function QuotingTool() {
                 {aiWriting ? 'Writing…' : 'AI scope'}
               </button>
               <button onClick={printQuote}
-                className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-gray-300 hover:text-white transition-colors">
+                className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-gray-50 border border-gray-200 text-gray-600 hover:text-gray-900 transition-colors">
                 <Printer size={13} /> Print / PDF
               </button>
               <button onClick={handleSave} disabled={saving}
-                className="flex items-center gap-1.5 text-sm px-4 py-1.5 rounded-lg bg-yellow-400 hover:bg-yellow-300 text-gray-900 font-semibold disabled:opacity-50 transition-colors">
+                className="flex items-center gap-1.5 text-sm px-4 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-gray-900 font-semibold disabled:opacity-50 transition-colors">
                 {saving ? <Loader2 size={13} className="animate-spin" /> : saved ? '✓ Saved' : 'Save quote'}
               </button>
             </>
@@ -485,32 +485,32 @@ export default function QuotingTool() {
 
       {/* Quote settings panel */}
       {settingsOpen && (
-        <div className="bg-gray-900 rounded-xl border border-gray-700 p-5 space-y-3">
-          <p className="text-sm font-semibold text-white">Quote settings (printed on quote)</p>
+        <div className="bg-white rounded-xl border border-gray-200 p-5 space-y-3">
+          <p className="text-sm font-semibold text-gray-900">Quote settings (printed on quote)</p>
           <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-            <div><label className="text-xs text-gray-400 block mb-1">ABN</label><input value={settings.abn} onChange={se('abn')} className={INP} /></div>
-            <div><label className="text-xs text-gray-400 block mb-1">Business address</label><input value={settings.address} onChange={se('address')} className={INP} /></div>
-            <div><label className="text-xs text-gray-400 block mb-1">Phone</label><input value={settings.phone} onChange={se('phone')} className={INP} /></div>
-            <div><label className="text-xs text-gray-400 block mb-1">Email</label><input value={settings.email} onChange={se('email')} className={INP} /></div>
-            <div><label className="text-xs text-gray-400 block mb-1">Valid for (days)</label><input type="number" value={settings.valid_days} onChange={se('valid_days')} className={INP} /></div>
+            <div><label className="text-xs text-gray-500 block mb-1">ABN</label><input value={settings.abn} onChange={se('abn')} className={INP} /></div>
+            <div><label className="text-xs text-gray-500 block mb-1">Business address</label><input value={settings.address} onChange={se('address')} className={INP} /></div>
+            <div><label className="text-xs text-gray-500 block mb-1">Phone</label><input value={settings.phone} onChange={se('phone')} className={INP} /></div>
+            <div><label className="text-xs text-gray-500 block mb-1">Email</label><input value={settings.email} onChange={se('email')} className={INP} /></div>
+            <div><label className="text-xs text-gray-500 block mb-1">Valid for (days)</label><input type="number" value={settings.valid_days} onChange={se('valid_days')} className={INP} /></div>
           </div>
-          <div><label className="text-xs text-gray-400 block mb-1">Notes (printed on quote)</label>
+          <div><label className="text-xs text-gray-500 block mb-1">Notes (printed on quote)</label>
             <textarea value={settings.notes} onChange={se('notes')} rows={2} className={`${INP} resize-none`} /></div>
-          <div><label className="text-xs text-gray-400 block mb-1">Payment terms</label>
+          <div><label className="text-xs text-gray-500 block mb-1">Payment terms</label>
             <textarea value={settings.payment_terms} onChange={se('payment_terms')} rows={2} className={`${INP} resize-none`} /></div>
         </div>
       )}
 
       {/* Job selector */}
-      <div className="bg-gray-900 rounded-xl border border-gray-800 p-4 space-y-3">
-        <p className="text-sm font-semibold text-white">Select job</p>
+      <div className="bg-white rounded-xl border border-gray-200 p-4 space-y-3">
+        <p className="text-sm font-semibold text-gray-900">Select job</p>
         {isLoading
-          ? <div className="flex justify-center py-4"><Loader2 size={16} className="animate-spin text-yellow-400" /></div>
+          ? <div className="flex justify-center py-4"><Loader2 size={16} className="animate-spin text-blue-600" /></div>
           : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <div>
                 <select value={selJobId} onChange={e => loadJob(e.target.value)}
-                  className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-yellow-400 cursor-pointer">
+                  className="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-1 focus:ring-blue-500 cursor-pointer">
                   <option value="">— Select a job to build quote —</option>
                   {jobs.map(j => (
                     <option key={j.id} value={j.id}>{j.id} · {j.client || 'No client'} {j.address ? `— ${j.address}` : ''}</option>
@@ -518,9 +518,9 @@ export default function QuotingTool() {
                 </select>
               </div>
               {selJob && (
-                <div className="flex items-center gap-4 text-sm text-gray-400">
+                <div className="flex items-center gap-4 text-sm text-gray-500">
                   <span className="font-mono text-gray-500 text-xs">{selJob.id}</span>
-                  <span className="text-white">{selJob.client}</span>
+                  <span className="text-gray-900">{selJob.client}</span>
                   {selJob.address && <span className="text-gray-500 truncate">{selJob.address}</span>}
                 </div>
               )}
@@ -533,9 +533,9 @@ export default function QuotingTool() {
       {selJobId && (
         <>
           <div className="flex items-center justify-between">
-            <p className="text-sm font-semibold text-white">Quote line items</p>
+            <p className="text-sm font-semibold text-gray-900">Quote line items</p>
             <button onClick={addItem}
-              className="flex items-center gap-1.5 text-sm bg-yellow-400 hover:bg-yellow-300 text-gray-900 font-semibold px-3 py-1.5 rounded-lg transition-colors">
+              className="flex items-center gap-1.5 text-sm bg-blue-600 hover:bg-blue-700 text-gray-900 font-semibold px-3 py-1.5 rounded-lg transition-colors">
               <Plus size={14} /> Add area
             </button>
           </div>
@@ -548,7 +548,7 @@ export default function QuotingTool() {
               />
             ))}
             {!items.length && (
-              <div className="text-center py-8 text-gray-500 text-sm border-2 border-dashed border-gray-800 rounded-xl">
+              <div className="text-center py-8 text-gray-500 text-sm border-2 border-dashed border-gray-200 rounded-xl">
                 Click "Add area" to start building the quote
               </div>
             )}
@@ -556,7 +556,7 @@ export default function QuotingTool() {
 
           {/* Totals */}
           {items.length > 0 && (
-            <div className="bg-gray-900 rounded-xl border border-gray-700 p-5">
+            <div className="bg-white rounded-xl border border-gray-200 p-5">
               <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
                 <div className="space-y-1 flex-1">
                   <p className="text-xs text-gray-500 font-semibold uppercase tracking-wide mb-3">Summary</p>
@@ -567,25 +567,25 @@ export default function QuotingTool() {
                       { label: 'Total paint', value: `${items.reduce((s, it) => s + calcItem(it).paintLitres, 0).toFixed(1)} L` },
                       { label: 'Items', value: items.length },
                     ].map(({ label, value }) => (
-                      <div key={label} className="bg-gray-800 rounded-lg p-3">
+                      <div key={label} className="bg-gray-50 rounded-lg p-3">
                         <p className="text-xs text-gray-500">{label}</p>
-                        <p className="text-sm font-semibold text-white">{value}</p>
+                        <p className="text-sm font-semibold text-gray-900">{value}</p>
                       </div>
                     ))}
                   </div>
                 </div>
                 <div className="space-y-1 text-right min-w-[200px]">
-                  <div className="flex justify-between text-sm text-gray-400">
+                  <div className="flex justify-between text-sm text-gray-500">
                     <span>Subtotal ex GST</span>
-                    <span className="font-semibold text-white tabular-nums">{fmtCurrency(totals.exGST)}</span>
+                    <span className="font-semibold text-gray-900 tabular-nums">{fmtCurrency(totals.exGST)}</span>
                   </div>
-                  <div className="flex justify-between text-sm text-gray-400">
+                  <div className="flex justify-between text-sm text-gray-500">
                     <span>GST (10%)</span>
-                    <span className="font-semibold text-white tabular-nums">{fmtCurrency(totals.gst)}</span>
+                    <span className="font-semibold text-gray-900 tabular-nums">{fmtCurrency(totals.gst)}</span>
                   </div>
-                  <div className="flex justify-between text-base font-bold border-t border-gray-700 pt-2 mt-2">
-                    <span className="text-white">TOTAL inc GST</span>
-                    <span className="text-yellow-400 tabular-nums">{fmtCurrency(totals.incGST)}</span>
+                  <div className="flex justify-between text-base font-bold border-t border-gray-200 pt-2 mt-2">
+                    <span className="text-gray-900">TOTAL inc GST</span>
+                    <span className="text-blue-600 tabular-nums">{fmtCurrency(totals.incGST)}</span>
                   </div>
                 </div>
               </div>

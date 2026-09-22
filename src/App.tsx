@@ -17,12 +17,15 @@ import Receipts from '@/pages/Receipts'
 import AdsSpend from '@/pages/AdsSpend'
 import QuotingTool from '@/pages/QuotingTool'
 import Materials from '@/pages/Materials'
+import Pipeline from '@/pages/Pipeline'
+import Clients from '@/pages/Clients'
+import LegalDocs from '@/pages/LegalDocs'
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const { session, loading } = useAuth()
   if (loading) return (
-    <div className="min-h-screen bg-gray-950 flex items-center justify-center">
-      <div className="w-6 h-6 border-2 border-yellow-400 border-t-transparent rounded-full animate-spin" />
+    <div className="min-h-screen bg-[#f5f4f0] flex items-center justify-center">
+      <div className="w-6 h-6 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
     </div>
   )
   return session ? <>{children}</> : <Navigate to="/login" replace />
@@ -48,6 +51,9 @@ export default function App() {
         <Route path="/ads" element={<AdsSpend />} />
         <Route path="/quotes" element={<QuotingTool />} />
         <Route path="/materials" element={<Materials />} />
+        <Route path="/pipeline" element={<Pipeline />} />
+        <Route path="/clients" element={<Clients />} />
+        <Route path="/legal" element={<LegalDocs />} />
         <Route path="/settings" element={<SettingsPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/dashboard" replace />} />

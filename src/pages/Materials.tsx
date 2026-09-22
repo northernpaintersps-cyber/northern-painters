@@ -198,10 +198,10 @@ export default function Materials() {
     <div className="p-6 space-y-5">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-bold text-white">Materials</h1>
+          <h1 className="text-xl font-bold text-gray-900">Materials</h1>
           <p className="text-xs text-gray-500 mt-0.5">All paint and material purchases, linked to jobs</p>
         </div>
-        <button onClick={openNew} className="flex items-center gap-1.5 bg-yellow-400 hover:bg-yellow-300 text-gray-900 font-semibold text-sm px-3 py-1.5 rounded-lg transition-colors">
+        <button onClick={openNew} className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-gray-900 font-semibold text-sm px-3 py-1.5 rounded-lg transition-colors">
           <Plus size={14} /> Add material
         </button>
       </div>
@@ -211,29 +211,29 @@ export default function Materials() {
         <div className="relative flex-1 min-w-48">
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
           <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search materials…"
-            className="w-full pl-8 pr-3 py-2 bg-gray-900 border border-gray-800 rounded-lg text-sm text-gray-200 placeholder-gray-600 focus:outline-none focus:ring-1 focus:ring-yellow-400" />
+            className="w-full pl-8 pr-3 py-2 bg-white border border-gray-200 rounded-lg text-sm text-gray-200 placeholder-gray-600 focus:outline-none focus:ring-1 focus:ring-blue-500" />
         </div>
         <select value={catFilter} onChange={e => setCatFilter(e.target.value)}
-          className="bg-gray-900 border border-gray-800 rounded-lg px-3 py-2 text-sm text-gray-300 focus:outline-none focus:ring-1 focus:ring-yellow-400">
+          className="bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-600 focus:outline-none focus:ring-1 focus:ring-blue-500">
           <option value="All">All categories</option>
           {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
         </select>
         <select value={jobFilter} onChange={e => setJobFilter(e.target.value)}
-          className="bg-gray-900 border border-gray-800 rounded-lg px-3 py-2 text-sm text-gray-300 focus:outline-none focus:ring-1 focus:ring-yellow-400">
+          className="bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-600 focus:outline-none focus:ring-1 focus:ring-blue-500">
           <option value="All">All jobs</option>
           {jobs.map(j => <option key={j.id} value={j.id}>{j.id} – {j.client}</option>)}
         </select>
       </div>
 
       {/* Table */}
-      <div className="bg-gray-900 rounded-xl border border-gray-800 overflow-hidden">
+      <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
         {isLoading ? (
-          <div className="flex justify-center py-12"><Loader2 size={20} className="animate-spin text-yellow-400" /></div>
+          <div className="flex justify-center py-12"><Loader2 size={20} className="animate-spin text-blue-600" /></div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-gray-800 text-xs text-gray-500">
+                <tr className="border-b border-gray-200 text-xs text-gray-500">
                   <th className="text-left px-4 py-3 font-medium">Date</th>
                   <th className="text-left px-4 py-3 font-medium">Job</th>
                   <th className="text-left px-4 py-3 font-medium">Description</th>
@@ -251,21 +251,21 @@ export default function Materials() {
                   <tr><td colSpan={10} className="text-center py-10 text-gray-600">No materials found</td></tr>
                 )}
                 {filtered.map(m => (
-                  <tr key={m.id} className="border-b border-gray-800/50 hover:bg-gray-800/30 transition-colors">
-                    <td className="px-4 py-3 text-gray-400 whitespace-nowrap">{fmtDate(m.date)}</td>
+                  <tr key={m.id} className="border-b border-gray-200/50 hover:bg-gray-50/30 transition-colors">
+                    <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{fmtDate(m.date)}</td>
                     <td className="px-4 py-3">
                       {m.job_id ? <span className="text-xs bg-blue-500/20 text-blue-300 px-2 py-0.5 rounded">{m.job_id}</span> : <span className="text-gray-600">—</span>}
                     </td>
                     <td className="px-4 py-3 text-gray-200 max-w-xs truncate">{m.mat_desc}</td>
-                    <td className="px-4 py-3 text-gray-400">{m.supplier || '—'}</td>
-                    <td className="px-4 py-3 text-gray-400">{m.category || '—'}</td>
-                    <td className="px-4 py-3 text-gray-400">{m.billing_type || '—'}</td>
-                    <td className="px-4 py-3 text-right text-gray-300 font-mono">{fmtCurrency(m.cost_ex_gst ?? 0)}</td>
+                    <td className="px-4 py-3 text-gray-500">{m.supplier || '—'}</td>
+                    <td className="px-4 py-3 text-gray-500">{m.category || '—'}</td>
+                    <td className="px-4 py-3 text-gray-500">{m.billing_type || '—'}</td>
+                    <td className="px-4 py-3 text-right text-gray-600 font-mono">{fmtCurrency(m.cost_ex_gst ?? 0)}</td>
                     <td className="px-4 py-3 text-right text-gray-500 font-mono">{fmtCurrency(m.gst ?? 0)}</td>
-                    <td className="px-4 py-3 text-right text-white font-mono font-medium">{fmtCurrency(m.total_inc_gst ?? 0)}</td>
+                    <td className="px-4 py-3 text-right text-gray-900 font-mono font-medium">{fmtCurrency(m.total_inc_gst ?? 0)}</td>
                     <td className="px-4 py-3">
                       <div className="flex gap-1">
-                        <button onClick={() => openEdit(m)} className="p-1 text-gray-600 hover:text-yellow-400 transition-colors"><Edit2 size={13} /></button>
+                        <button onClick={() => openEdit(m)} className="p-1 text-gray-600 hover:text-blue-600 transition-colors"><Edit2 size={13} /></button>
                         <button onClick={() => { if (confirm('Delete this material?')) del.mutate(m.id) }} className="p-1 text-gray-600 hover:text-red-400 transition-colors"><Trash2 size={13} /></button>
                       </div>
                     </td>
@@ -273,11 +273,11 @@ export default function Materials() {
                 ))}
               </tbody>
               <tfoot>
-                <tr className="border-t border-gray-700 bg-gray-800/40">
+                <tr className="border-t border-gray-200 bg-gray-50/40">
                   <td colSpan={6} className="px-4 py-3 text-xs text-gray-500 font-medium">{filtered.length} entries</td>
-                  <td className="px-4 py-3 text-right text-gray-300 font-mono font-medium">{fmtCurrency(totals.ex)}</td>
+                  <td className="px-4 py-3 text-right text-gray-600 font-mono font-medium">{fmtCurrency(totals.ex)}</td>
                   <td className="px-4 py-3 text-right text-gray-500 font-mono">{fmtCurrency(totals.gst)}</td>
-                  <td className="px-4 py-3 text-right text-white font-mono font-bold">{fmtCurrency(totals.inc)}</td>
+                  <td className="px-4 py-3 text-right text-gray-900 font-mono font-bold">{fmtCurrency(totals.inc)}</td>
                   <td></td>
                 </tr>
               </tfoot>
@@ -289,9 +289,9 @@ export default function Materials() {
       {/* Modal */}
       <Modal open={modalOpen} onClose={() => setModalOpen(false)} size="lg">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-base font-semibold text-white">{form.id ? 'Edit material' : 'Add material'}</h2>
+          <h2 className="text-base font-semibold text-gray-900">{form.id ? 'Edit material' : 'Add material'}</h2>
           <label className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border transition-colors cursor-pointer
-            ${scanning ? 'border-yellow-400/50 bg-yellow-400/10 text-yellow-400' : 'border-gray-700 bg-gray-800 text-gray-400 hover:text-white hover:border-gray-600'}`}>
+            ${scanning ? 'border-blue-500/50 bg-blue-600/10 text-blue-600' : 'border-gray-200 bg-gray-50 text-gray-500 hover:text-gray-900 hover:border-gray-600'}`}>
             <input ref={scanInputRef} type="file" accept="image/*" className="hidden" onChange={handleScan} disabled={scanning} />
             {scanning ? <Loader2 size={12} className="animate-spin" /> : <Scan size={12} />}
             {scanning ? 'Scanning…' : 'Scan invoice'}
@@ -307,9 +307,9 @@ export default function Materials() {
           <div className="grid grid-cols-2 gap-3">
             <Input label="Date" type="date" value={form.date} onChange={ef('date')} />
             <div className="flex flex-col gap-1">
-              <label className="text-xs font-medium text-gray-400">Job</label>
+              <label className="text-xs font-medium text-gray-500">Job</label>
               <select value={form.job_id} onChange={ef('job_id')}
-                className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-yellow-400">
+                className="bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-1 focus:ring-blue-500">
                 <option value="">No job / overhead</option>
                 {jobs.map(j => <option key={j.id} value={j.id}>{j.id} – {j.client} – {j.address}</option>)}
               </select>
@@ -331,7 +331,7 @@ export default function Materials() {
           </div>
           <TextArea label="Notes" value={form.notes} onChange={ef('notes')} />
         </div>
-        <div className="flex justify-between mt-5 pt-4 border-t border-gray-800">
+        <div className="flex justify-between mt-5 pt-4 border-t border-gray-200">
           <div>
             {form.id && (
               <button onClick={() => { if (confirm('Delete?')) { del.mutate(form.id); setModalOpen(false) } }}
@@ -341,8 +341,8 @@ export default function Materials() {
             )}
           </div>
           <div className="flex gap-2">
-            <button onClick={() => setModalOpen(false)} className="text-sm px-4 py-2 rounded-lg bg-gray-800 text-gray-400 hover:text-white">Cancel</button>
-            <button onClick={save} disabled={saving} className="flex items-center gap-1.5 text-sm px-5 py-2 rounded-lg bg-yellow-400 hover:bg-yellow-300 text-gray-900 font-semibold disabled:opacity-50">
+            <button onClick={() => setModalOpen(false)} className="text-sm px-4 py-2 rounded-lg bg-gray-50 text-gray-500 hover:text-gray-900">Cancel</button>
+            <button onClick={save} disabled={saving} className="flex items-center gap-1.5 text-sm px-5 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-gray-900 font-semibold disabled:opacity-50">
               {saving && <Loader2 size={13} className="animate-spin" />} Save
             </button>
           </div>

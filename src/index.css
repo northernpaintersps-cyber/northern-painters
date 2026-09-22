@@ -1,1 +1,9 @@
 @import "tailwindcss";
+
+body {
+  background: #f5f4f0;
+  color: #1a1a18;
+}
+
+/* Ensure select options are readable */
+select option { background: #fff; color: #1a1a18; }

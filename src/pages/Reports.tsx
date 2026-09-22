@@ -63,8 +63,8 @@ const TOOLTIP_STYLE = {
 // ── Chart card wrapper ─────────────────────────────────────────
 function ChartCard({ title, children, className = '' }: { title: string; children: React.ReactNode; className?: string }) {
   return (
-    <div className={`bg-gray-900 rounded-xl border border-gray-800 p-5 ${className}`}>
-      <h3 className="text-sm font-semibold text-white mb-4">{title}</h3>
+    <div className={`bg-white rounded-xl border border-gray-200 p-5 ${className}`}>
+      <h3 className="text-sm font-semibold text-gray-900 mb-4">{title}</h3>
       {children}
     </div>
   )
@@ -73,9 +73,9 @@ function ChartCard({ title, children, className = '' }: { title: string; childre
 // ── KPI tile ───────────────────────────────────────────────────
 function KPI({ label, value, sub, trend }: { label: string; value: string; sub?: string; trend?: 'up' | 'down' | null }) {
   return (
-    <div className="bg-gray-900 rounded-xl border border-gray-800 p-4">
-      <p className="text-xs text-gray-400 mb-1">{label}</p>
-      <p className="text-xl font-bold text-white tabular-nums">{value}</p>
+    <div className="bg-white rounded-xl border border-gray-200 p-4">
+      <p className="text-xs text-gray-500 mb-1">{label}</p>
+      <p className="text-xl font-bold text-gray-900 tabular-nums">{value}</p>
       {sub && (
         <p className={`text-xs mt-1 flex items-center gap-1 ${trend === 'up' ? 'text-green-400' : trend === 'down' ? 'text-red-400' : 'text-gray-500'}`}>
           {trend === 'up' && <TrendingUp size={11} />}
@@ -217,7 +217,7 @@ export default function Reports() {
   if (loading) {
     return (
       <div className="flex-1 flex items-center justify-center p-12">
-        <Loader2 size={24} className="animate-spin text-yellow-400" />
+        <Loader2 size={24} className="animate-spin text-blue-600" />
       </div>
     )
   }
@@ -226,11 +226,11 @@ export default function Reports() {
     <div className="p-6 space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
-        <h1 className="text-lg font-bold text-white">Reports & Insights</h1>
+        <h1 className="text-lg font-bold text-gray-900">Reports & Insights</h1>
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-sm text-gray-400">Year</span>
+          <span className="text-sm text-gray-500">Year</span>
           <select value={selYear} onChange={e => setSelYear(Number(e.target.value))}
-            className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:ring-1 focus:ring-yellow-400">
+            className="bg-gray-50 border border-gray-200 rounded-lg px-3 py-1.5 text-sm text-gray-900 focus:outline-none focus:ring-1 focus:ring-blue-500">
             {years.map(y => <option key={y}>{y}</option>)}
           </select>
           {/* CSV exports */}
@@ -258,7 +258,7 @@ export default function Reports() {
                 { key: 'amount_ex_gst', label: 'Ex GST' }, { key: 'gst', label: 'GST' }, { key: 'job_id', label: 'Job' },
               ]), `expenses-${selYear}.csv`) },
             ].map(({ label, fn }) => (
-              <button key={label} onClick={fn} className="flex items-center gap-1 text-xs bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 px-2.5 py-1.5 rounded-lg transition-colors">
+              <button key={label} onClick={fn} className="flex items-center gap-1 text-xs bg-gray-50 hover:bg-gray-100 border border-gray-200 text-gray-600 px-2.5 py-1.5 rounded-lg transition-colors">
                 <Download size={11} /> {label}
               </button>
             ))}
@@ -369,12 +369,12 @@ export default function Reports() {
             const colors = ['bg-blue-500', 'bg-purple-500', 'bg-amber-400', 'bg-green-500']
             return (
               <div key={stage.name} className="flex items-center gap-3">
-                <span className="text-xs text-gray-400 w-20 shrink-0">{stage.name}</span>
-                <div className="flex-1 h-6 bg-gray-800 rounded-full overflow-hidden">
+                <span className="text-xs text-gray-500 w-20 shrink-0">{stage.name}</span>
+                <div className="flex-1 h-6 bg-gray-50 rounded-full overflow-hidden">
                   <div className={`h-full ${colors[i]} rounded-full transition-all duration-500`}
                     style={{ width: `${pct}%` }} />
                 </div>
-                <span className="text-sm font-semibold text-white w-6 text-right">{stage.value}</span>
+                <span className="text-sm font-semibold text-gray-900 w-6 text-right">{stage.value}</span>
               </div>
             )
           })}
@@ -393,9 +393,9 @@ export default function Reports() {
             return (
               <div key={label} className="space-y-1">
                 <div className={`text-lg font-bold ${color}`}>{fmtCurrency(value)}</div>
-                <div className="text-xs text-gray-400">{label}</div>
+                <div className="text-xs text-gray-500">{label}</div>
                 <div className="text-xs text-gray-500">{pct}% of revenue</div>
-                <div className="h-1.5 bg-gray-800 rounded-full overflow-hidden mt-2">
+                <div className="h-1.5 bg-gray-50 rounded-full overflow-hidden mt-2">
                   <div className={`h-full ${bg} rounded-full`}
                     style={{ width: totalRevenue > 0 ? `${Math.min(100, (value / totalRevenue) * 100)}%` : '0%' }} />
                 </div>

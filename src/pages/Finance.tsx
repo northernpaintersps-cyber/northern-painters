@@ -86,11 +86,11 @@ function useInvoices() {
 }
 
 // ── Job select helper (value+label options) ───────────────────
-const SEL_BASE = 'w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-yellow-400 focus:border-yellow-400 cursor-pointer'
+const SEL_BASE = 'w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 cursor-pointer'
 function JobSelect({ label, value, onChange, jobs }: { label: string; value: string; onChange: (e: React.ChangeEvent<HTMLSelectElement>) => void; jobs: any[] }) {
   return (
     <div className="flex flex-col gap-1">
-      <label className="text-xs font-medium text-gray-400">{label}</label>
+      <label className="text-xs font-medium text-gray-500">{label}</label>
       <select value={value} onChange={onChange} className={SEL_BASE}>
         <option value="">— No job —</option>
         {jobs.map(j => <option key={j.id} value={j.id}>{j.id} {j.client || ''}</option>)}
@@ -102,11 +102,11 @@ function JobSelect({ label, value, onChange, jobs }: { label: string; value: str
 // ── Small row components ──────────────────────────────────────
 function Row({ cells, onEdit, onDelete }: { cells: React.ReactNode[]; onEdit: () => void; onDelete: () => void }) {
   return (
-    <tr className="border-t border-gray-800 hover:bg-gray-800/40 group">
-      {cells.map((c, i) => <td key={i} className="px-3 py-2.5 text-sm text-gray-300 whitespace-nowrap">{c}</td>)}
+    <tr className="border-t border-gray-200 hover:bg-gray-50/40 group">
+      {cells.map((c, i) => <td key={i} className="px-3 py-2.5 text-sm text-gray-600 whitespace-nowrap">{c}</td>)}
       <td className="px-3 py-2.5 text-right">
         <div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-          <button onClick={onEdit} className="text-gray-500 hover:text-yellow-400"><Edit2 size={13} /></button>
+          <button onClick={onEdit} className="text-gray-500 hover:text-blue-600"><Edit2 size={13} /></button>
           <button onClick={onDelete} className="text-gray-500 hover:text-red-400"><Trash2 size={13} /></button>
         </div>
       </td>
@@ -163,15 +163,15 @@ function LabourTab({ jobs }: { jobs: any[] }) {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <div className="text-sm text-gray-400">Total labour cost: <span className="text-white font-semibold">{fmtCurrency(total)}</span></div>
-        <button onClick={openNew} className="flex items-center gap-1.5 bg-yellow-400 hover:bg-yellow-300 text-gray-900 font-semibold text-sm px-3 py-1.5 rounded-lg">
+        <div className="text-sm text-gray-500">Total labour cost: <span className="text-gray-900 font-semibold">{fmtCurrency(total)}</span></div>
+        <button onClick={openNew} className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-gray-900 font-semibold text-sm px-3 py-1.5 rounded-lg">
           <Plus size={14} /> Add entry
         </button>
       </div>
       {isLoading
-        ? <div className="flex justify-center py-12"><Loader2 size={20} className="animate-spin text-yellow-400" /></div>
+        ? <div className="flex justify-center py-12"><Loader2 size={20} className="animate-spin text-blue-600" /></div>
         : (
-          <div className="overflow-x-auto rounded-xl border border-gray-800">
+          <div className="overflow-x-auto rounded-xl border border-gray-200">
             <table className="w-full">
               <THead cols={['Date','Job','Sub / Worker','Hours','Rate','Cost','Type','Paid']} />
               <tbody>
@@ -214,13 +214,13 @@ function LabourTab({ jobs }: { jobs: any[] }) {
           </div>
           <div className="flex items-center gap-2">
             <input type="checkbox" id="lbpaid" checked={!!form.paid} onChange={e => setForm((p: any) => ({ ...p, paid: e.target.checked }))} className="accent-yellow-400" />
-            <label htmlFor="lbpaid" className="text-sm text-gray-300">Paid</label>
+            <label htmlFor="lbpaid" className="text-sm text-gray-600">Paid</label>
           </div>
           <TextArea label="Notes" value={form.notes || ''} onChange={ef('notes')} />
         </div>
-        <div className="flex justify-end gap-2 mt-5 pt-4 border-t border-gray-800">
-          <button onClick={() => setOpen(false)} className="text-sm px-4 py-2 rounded-lg bg-gray-800 text-gray-400 hover:text-white">Cancel</button>
-          <button onClick={save} disabled={saving} className="flex items-center gap-1.5 text-sm px-5 py-2 rounded-lg bg-yellow-400 hover:bg-yellow-300 text-gray-900 font-semibold disabled:opacity-50">
+        <div className="flex justify-end gap-2 mt-5 pt-4 border-t border-gray-200">
+          <button onClick={() => setOpen(false)} className="text-sm px-4 py-2 rounded-lg bg-gray-50 text-gray-500 hover:text-gray-900">Cancel</button>
+          <button onClick={save} disabled={saving} className="flex items-center gap-1.5 text-sm px-5 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-gray-900 font-semibold disabled:opacity-50">
             {saving && <Loader2 size={13} className="animate-spin" />} Save
           </button>
         </div>
@@ -267,15 +267,15 @@ function MaterialsTab({ jobs }: { jobs: any[] }) {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <div className="text-sm text-gray-400">Total materials (inc GST): <span className="text-white font-semibold">{fmtCurrency(total)}</span></div>
-        <button onClick={openNew} className="flex items-center gap-1.5 bg-yellow-400 hover:bg-yellow-300 text-gray-900 font-semibold text-sm px-3 py-1.5 rounded-lg">
+        <div className="text-sm text-gray-500">Total materials (inc GST): <span className="text-gray-900 font-semibold">{fmtCurrency(total)}</span></div>
+        <button onClick={openNew} className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-gray-900 font-semibold text-sm px-3 py-1.5 rounded-lg">
           <Plus size={14} /> Add entry
         </button>
       </div>
       {isLoading
-        ? <div className="flex justify-center py-12"><Loader2 size={20} className="animate-spin text-yellow-400" /></div>
+        ? <div className="flex justify-center py-12"><Loader2 size={20} className="animate-spin text-blue-600" /></div>
         : (
-          <div className="overflow-x-auto rounded-xl border border-gray-800">
+          <div className="overflow-x-auto rounded-xl border border-gray-200">
             <table className="w-full">
               <THead cols={['Date','Job','Supplier','Description','Category','Ex GST','GST','Inc GST']} />
               <tbody>
@@ -320,9 +320,9 @@ function MaterialsTab({ jobs }: { jobs: any[] }) {
           <Input label="Receipt no." value={form.receipt_no || ''} onChange={ef('receipt_no')} />
           <TextArea label="Notes" value={form.notes || ''} onChange={ef('notes')} />
         </div>
-        <div className="flex justify-end gap-2 mt-5 pt-4 border-t border-gray-800">
-          <button onClick={() => setOpen(false)} className="text-sm px-4 py-2 rounded-lg bg-gray-800 text-gray-400 hover:text-white">Cancel</button>
-          <button onClick={save} disabled={saving} className="flex items-center gap-1.5 text-sm px-5 py-2 rounded-lg bg-yellow-400 hover:bg-yellow-300 text-gray-900 font-semibold disabled:opacity-50">
+        <div className="flex justify-end gap-2 mt-5 pt-4 border-t border-gray-200">
+          <button onClick={() => setOpen(false)} className="text-sm px-4 py-2 rounded-lg bg-gray-50 text-gray-500 hover:text-gray-900">Cancel</button>
+          <button onClick={save} disabled={saving} className="flex items-center gap-1.5 text-sm px-5 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-gray-900 font-semibold disabled:opacity-50">
             {saving && <Loader2 size={13} className="animate-spin" />} Save
           </button>
         </div>
@@ -368,19 +368,19 @@ function ExpensesTab({ jobs }: { jobs: any[] }) {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <div className="text-sm text-gray-400">
-          Total ex GST: <span className="text-white font-semibold">{fmtCurrency(totalEx)}</span>
+        <div className="text-sm text-gray-500">
+          Total ex GST: <span className="text-gray-900 font-semibold">{fmtCurrency(totalEx)}</span>
           <span className="mx-2 text-gray-600">·</span>
           GST claimable: <span className="text-green-400 font-semibold">{fmtCurrency(totalGST)}</span>
         </div>
-        <button onClick={openNew} className="flex items-center gap-1.5 bg-yellow-400 hover:bg-yellow-300 text-gray-900 font-semibold text-sm px-3 py-1.5 rounded-lg">
+        <button onClick={openNew} className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-gray-900 font-semibold text-sm px-3 py-1.5 rounded-lg">
           <Plus size={14} /> Add expense
         </button>
       </div>
       {isLoading
-        ? <div className="flex justify-center py-12"><Loader2 size={20} className="animate-spin text-yellow-400" /></div>
+        ? <div className="flex justify-center py-12"><Loader2 size={20} className="animate-spin text-blue-600" /></div>
         : (
-          <div className="overflow-x-auto rounded-xl border border-gray-800">
+          <div className="overflow-x-auto rounded-xl border border-gray-200">
             <table className="w-full">
               <THead cols={['Date','Job','Description','Category','Ex GST','GST']} />
               <tbody>
@@ -418,9 +418,9 @@ function ExpensesTab({ jobs }: { jobs: any[] }) {
           </div>
           <TextArea label="Notes" value={form.notes || ''} onChange={ef('notes')} />
         </div>
-        <div className="flex justify-end gap-2 mt-5 pt-4 border-t border-gray-800">
-          <button onClick={() => setOpen(false)} className="text-sm px-4 py-2 rounded-lg bg-gray-800 text-gray-400 hover:text-white">Cancel</button>
-          <button onClick={save} disabled={saving} className="flex items-center gap-1.5 text-sm px-5 py-2 rounded-lg bg-yellow-400 hover:bg-yellow-300 text-gray-900 font-semibold disabled:opacity-50">
+        <div className="flex justify-end gap-2 mt-5 pt-4 border-t border-gray-200">
+          <button onClick={() => setOpen(false)} className="text-sm px-4 py-2 rounded-lg bg-gray-50 text-gray-500 hover:text-gray-900">Cancel</button>
+          <button onClick={save} disabled={saving} className="flex items-center gap-1.5 text-sm px-5 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-gray-900 font-semibold disabled:opacity-50">
             {saving && <Loader2 size={13} className="animate-spin" />} Save
           </button>
         </div>
@@ -483,19 +483,19 @@ function PaySchedulesTab({ jobs }: { jobs: any[] }) {
   return (
     <div className="space-y-5">
       {/* Labour by worker summary */}
-      <div className="bg-gray-900 rounded-xl border border-gray-800 overflow-hidden">
+      <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
         <button
           onClick={() => setShowSummary(v => !v)}
-          className="w-full flex items-center justify-between px-4 py-3 text-sm font-semibold text-white hover:bg-gray-800/50 transition-colors">
+          className="w-full flex items-center justify-between px-4 py-3 text-sm font-semibold text-gray-900 hover:bg-gray-50/50 transition-colors">
           <span>Labour owed by worker</span>
           {showSummary ? <ChevronUp size={14} className="text-gray-500" /> : <ChevronDown size={14} className="text-gray-500" />}
         </button>
         {showSummary && (
-          <div className="divide-y divide-gray-800">
+          <div className="divide-y divide-gray-200">
             {workerSummary.map(([name, data]) => (
               <div key={name} className="flex items-center gap-4 px-4 py-3">
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-white">{name}</p>
+                  <p className="text-sm font-medium text-gray-900">{name}</p>
                   <p className="text-xs text-gray-500">{data.entries.length} entries · all time total {fmtCurrency(data.total)}</p>
                 </div>
                 <div className="text-right">
@@ -521,15 +521,15 @@ function PaySchedulesTab({ jobs }: { jobs: any[] }) {
 
       {/* Pay schedules table */}
       <div className="flex items-center justify-between">
-        <p className="text-sm font-semibold text-white">Pay schedules</p>
-        <button onClick={openNew} className="flex items-center gap-1.5 bg-yellow-400 hover:bg-yellow-300 text-gray-900 font-semibold text-sm px-3 py-1.5 rounded-lg">
+        <p className="text-sm font-semibold text-gray-900">Pay schedules</p>
+        <button onClick={openNew} className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-gray-900 font-semibold text-sm px-3 py-1.5 rounded-lg">
           <Plus size={14} /> Add schedule
         </button>
       </div>
       {isLoading
-        ? <div className="flex justify-center py-12"><Loader2 size={20} className="animate-spin text-yellow-400" /></div>
+        ? <div className="flex justify-center py-12"><Loader2 size={20} className="animate-spin text-blue-600" /></div>
         : (
-          <div className="overflow-x-auto rounded-xl border border-gray-800">
+          <div className="overflow-x-auto rounded-xl border border-gray-200">
             <table className="w-full">
               <THead cols={['Worker','Job','Period start','Period end','Amount','Paid']} />
               <tbody>
@@ -564,13 +564,13 @@ function PaySchedulesTab({ jobs }: { jobs: any[] }) {
           <Input label="Amount ($)" type="number" value={form.amount ?? ''} onChange={ef('amount')} />
           <div className="flex items-center gap-2">
             <input type="checkbox" id="pspaid" checked={!!form.paid} onChange={e => setForm((p: any) => ({ ...p, paid: e.target.checked }))} className="accent-yellow-400" />
-            <label htmlFor="pspaid" className="text-sm text-gray-300">Paid</label>
+            <label htmlFor="pspaid" className="text-sm text-gray-600">Paid</label>
           </div>
           <TextArea label="Notes / milestones" value={form.notes || ''} onChange={ef('notes')} />
         </div>
-        <div className="flex justify-end gap-2 mt-5 pt-4 border-t border-gray-800">
-          <button onClick={() => setOpen(false)} className="text-sm px-4 py-2 rounded-lg bg-gray-800 text-gray-400 hover:text-white">Cancel</button>
-          <button onClick={save} disabled={saving} className="flex items-center gap-1.5 text-sm px-5 py-2 rounded-lg bg-yellow-400 hover:bg-yellow-300 text-gray-900 font-semibold disabled:opacity-50">
+        <div className="flex justify-end gap-2 mt-5 pt-4 border-t border-gray-200">
+          <button onClick={() => setOpen(false)} className="text-sm px-4 py-2 rounded-lg bg-gray-50 text-gray-500 hover:text-gray-900">Cancel</button>
+          <button onClick={save} disabled={saving} className="flex items-center gap-1.5 text-sm px-5 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-gray-900 font-semibold disabled:opacity-50">
             {saving && <Loader2 size={13} className="animate-spin" />} Save
           </button>
         </div>
@@ -645,16 +645,16 @@ function BasTab({ invoices, labour, materials, expenses }: { invoices: any[]; la
       {/* Period selector */}
       <div className="flex items-center gap-3 flex-wrap">
         <div className="flex items-center gap-2">
-          <span className="text-sm text-gray-400">FY</span>
-          <button onClick={() => setYear(y => y - 1)} className="p-1 rounded bg-gray-800 text-gray-400 hover:text-white"><ChevronDown size={14} /></button>
-          <span className="text-sm font-semibold text-white w-20 text-center">{year}–{String(year + 1).slice(2)}</span>
-          <button onClick={() => setYear(y => y + 1)} className="p-1 rounded bg-gray-800 text-gray-400 hover:text-white"><ChevronUp size={14} /></button>
+          <span className="text-sm text-gray-500">FY</span>
+          <button onClick={() => setYear(y => y - 1)} className="p-1 rounded bg-gray-50 text-gray-500 hover:text-gray-900"><ChevronDown size={14} /></button>
+          <span className="text-sm font-semibold text-gray-900 w-20 text-center">{year}–{String(year + 1).slice(2)}</span>
+          <button onClick={() => setYear(y => y + 1)} className="p-1 rounded bg-gray-50 text-gray-500 hover:text-gray-900"><ChevronUp size={14} /></button>
         </div>
         <div className="flex gap-1">
           {BAS_QUARTERS.map(bq => (
             <button key={bq.q} onClick={() => setSelQ(bq)}
               className={`text-xs px-3 py-1.5 rounded-lg font-medium transition-colors
-                ${selQ.q === bq.q ? 'bg-yellow-400 text-gray-900' : 'bg-gray-800 text-gray-400 hover:text-white'}`}>
+                ${selQ.q === bq.q ? 'bg-blue-600 text-gray-900' : 'bg-gray-50 text-gray-500 hover:text-gray-900'}`}>
               {bq.label}
             </button>
           ))}
@@ -670,8 +670,8 @@ function BasTab({ invoices, labour, materials, expenses }: { invoices: any[]; la
       </div>
 
       {/* BAS summary box */}
-      <div className="bg-gray-900 rounded-xl border border-gray-800 p-5 space-y-3">
-        <h3 className="text-sm font-semibold text-white">BAS summary — {selQ.label} {year}–{String(year + 1).slice(2)}</h3>
+      <div className="bg-white rounded-xl border border-gray-200 p-5 space-y-3">
+        <h3 className="text-sm font-semibold text-gray-900">BAS summary — {selQ.label} {year}–{String(year + 1).slice(2)}</h3>
         <div className="grid grid-cols-2 gap-x-8 gap-y-2 text-sm">
           {[
             ['G1 Total sales (inc GST)', fmtCurrency(revenue)],
@@ -682,21 +682,21 @@ function BasTab({ invoices, labour, materials, expenses }: { invoices: any[]; la
             ['1B GST on purchases', fmtCurrency(totalGSTPaid)],
             ['Net GST payable (1A − 1B)', fmtCurrency(netGST)],
           ].map(([k, v]) => (
-            <div key={String(k)} className="flex justify-between border-b border-gray-800 pb-1.5">
-              <span className="text-gray-400">{k}</span>
+            <div key={String(k)} className="flex justify-between border-b border-gray-200 pb-1.5">
+              <span className="text-gray-500">{k}</span>
               <span className={`font-mono font-semibold ${k === 'Net GST payable (1A − 1B)' ? (netGST > 0 ? 'text-red-400' : 'text-green-400') : 'text-gray-200'}`}>{v}</span>
             </div>
           ))}
         </div>
-        <div className="pt-1 border-t border-gray-800 flex justify-between text-sm">
-          <span className="text-gray-400">Estimated net profit (ex GST)</span>
+        <div className="pt-1 border-t border-gray-200 flex justify-between text-sm">
+          <span className="text-gray-500">Estimated net profit (ex GST)</span>
           <span className={`font-mono font-semibold ${netProfit >= 0 ? 'text-green-400' : 'text-red-400'}`}>{fmtCurrency(netProfit)}</span>
         </div>
       </div>
 
       {/* Annual revenue chart */}
-      <div className="bg-gray-900 rounded-xl border border-gray-800 p-5">
-        <h3 className="text-sm font-semibold text-white mb-4">Monthly revenue (ex GST) — FY {year}–{String(year + 1).slice(2)}</h3>
+      <div className="bg-white rounded-xl border border-gray-200 p-5">
+        <h3 className="text-sm font-semibold text-gray-900 mb-4">Monthly revenue (ex GST) — FY {year}–{String(year + 1).slice(2)}</h3>
         <ResponsiveContainer width="100%" height={180}>
           <BarChart data={chartData} margin={{ top: 4, right: 8, left: -10, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
@@ -745,7 +745,7 @@ export default function Finance() {
 
   return (
     <div className="p-6 space-y-6">
-      <h1 className="text-lg font-bold text-white">Finance</h1>
+      <h1 className="text-lg font-bold text-gray-900">Finance</h1>
 
       {/* Summary KPIs */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
@@ -757,11 +757,11 @@ export default function Finance() {
       </div>
 
       {/* Tabs */}
-      <div className="border-b border-gray-800 flex gap-1 overflow-x-auto">
+      <div className="border-b border-gray-200 flex gap-1 overflow-x-auto">
         {TABS.map(t => (
           <button key={t.key} onClick={() => setTab(t.key)}
             className={`px-4 py-2.5 text-sm font-medium whitespace-nowrap transition-colors border-b-2 -mb-px
-              ${tab === t.key ? 'text-yellow-400 border-yellow-400' : 'text-gray-400 border-transparent hover:text-white'}`}>
+              ${tab === t.key ? 'text-blue-600 border-blue-500' : 'text-gray-500 border-transparent hover:text-gray-900'}`}>
             {t.label}
           </button>
         ))}

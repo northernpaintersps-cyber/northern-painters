@@ -136,9 +136,9 @@ function Field({ label, value, onChange, type = 'text', placeholder = '' }: {
 }) {
   return (
     <div className="flex flex-col gap-1">
-      <label className="text-xs font-medium text-gray-400">{label}</label>
+      <label className="text-xs font-medium text-gray-500">{label}</label>
       <input type={type} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
-        className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-yellow-400 placeholder-gray-600" />
+        className="bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-1 focus:ring-blue-500 placeholder-gray-600" />
     </div>
   )
 }
@@ -146,9 +146,9 @@ function Field({ label, value, onChange, type = 'text', placeholder = '' }: {
 function TextAreaField({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
   return (
     <div className="flex flex-col gap-1">
-      <label className="text-xs font-medium text-gray-400">{label}</label>
+      <label className="text-xs font-medium text-gray-500">{label}</label>
       <textarea value={value} onChange={e => onChange(e.target.value)} rows={2}
-        className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-yellow-400 resize-none" />
+        className="bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-1 focus:ring-blue-500 resize-none" />
     </div>
   )
 }
@@ -242,17 +242,17 @@ export default function SettingsPage() {
 
   return (
     <div className="p-6 max-w-3xl mx-auto space-y-8">
-      <h1 className="text-xl font-bold text-white">Settings</h1>
+      <h1 className="text-xl font-bold text-gray-900">Settings</h1>
 
       {/* ── Business Profile ─────────────────────────────────── */}
-      <section className="bg-gray-900 rounded-xl border border-gray-800 p-6 space-y-5">
+      <section className="bg-white rounded-xl border border-gray-200 p-6 space-y-5">
         <div className="flex items-center justify-between">
           <div>
-            <h2 className="text-base font-semibold text-white">Business profile</h2>
+            <h2 className="text-base font-semibold text-gray-900">Business profile</h2>
             <p className="text-xs text-gray-500 mt-0.5">Used on invoices, quotes, and printed documents</p>
           </div>
           <button onClick={handleSaveBiz} disabled={bizSaving}
-            className="flex items-center gap-1.5 text-sm bg-yellow-400 hover:bg-yellow-300 disabled:opacity-50 text-gray-900 font-semibold px-4 py-1.5 rounded-lg transition-colors">
+            className="flex items-center gap-1.5 text-sm bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-gray-900 font-semibold px-4 py-1.5 rounded-lg transition-colors">
             {bizSaving ? <Loader2 size={13} className="animate-spin" /> : bizSaved ? <CheckCircle size={13} /> : <Save size={13} />}
             {bizSaved ? 'Saved' : 'Save'}
           </button>
@@ -273,7 +273,7 @@ export default function SettingsPage() {
           <Field label="Address" value={biz.address} onChange={set('address')} placeholder="123 Street, City NSW 2000" />
         </div>
 
-        <div className="space-y-3 pt-2 border-t border-gray-800">
+        <div className="space-y-3 pt-2 border-t border-gray-200">
           <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Bank account (for invoices)</p>
           <div className="grid grid-cols-3 gap-3">
             <Field label="BSB" value={biz.bsb} onChange={set('bsb')} placeholder="067-873" />
@@ -282,7 +282,7 @@ export default function SettingsPage() {
           </div>
         </div>
 
-        <div className="space-y-3 pt-2 border-t border-gray-800">
+        <div className="space-y-3 pt-2 border-t border-gray-200">
           <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Defaults</p>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <Field label="Default labour rate ($/hr)" value={biz.default_labour_rate} onChange={set('default_labour_rate')} type="number" />
@@ -292,7 +292,7 @@ export default function SettingsPage() {
           </div>
         </div>
 
-        <div className="space-y-3 pt-2 border-t border-gray-800">
+        <div className="space-y-3 pt-2 border-t border-gray-200">
           <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Labour rates</p>
           <div className="grid grid-cols-3 md:grid-cols-6 gap-3">
             <Field label="Standard ($/hr)" value={biz.rates.standard} onChange={setRate('standard')} type="number" />
@@ -304,7 +304,7 @@ export default function SettingsPage() {
           </div>
         </div>
 
-        <div className="space-y-3 pt-2 border-t border-gray-800">
+        <div className="space-y-3 pt-2 border-t border-gray-200">
           <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Document footers</p>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <TextAreaField label="Quote footer / scope notes" value={biz.quote_footer} onChange={set('quote_footer')} />
@@ -314,11 +314,11 @@ export default function SettingsPage() {
       </section>
 
       {/* ── AI API Key ───────────────────────────────────────── */}
-      <section className="bg-gray-900 rounded-xl border border-gray-800 p-6 space-y-4">
+      <section className="bg-white rounded-xl border border-gray-200 p-6 space-y-4">
         <div className="flex items-center gap-2">
-          <Key size={16} className="text-yellow-400" />
+          <Key size={16} className="text-blue-600" />
           <div>
-            <h2 className="text-base font-semibold text-white">AI API key</h2>
+            <h2 className="text-base font-semibold text-gray-900">AI API key</h2>
             <p className="text-xs text-gray-500 mt-0.5">Used for AI quote builder and invoice reader. Key is stored locally in your Supabase account only.</p>
           </div>
         </div>
@@ -329,32 +329,32 @@ export default function SettingsPage() {
               value={biz.ai_api_key}
               onChange={e => setBiz(p => ({ ...p, ai_api_key: e.target.value }))}
               placeholder="sk-..."
-              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-yellow-400 placeholder-gray-600 font-mono"
+              className="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-1 focus:ring-blue-500 placeholder-gray-600 font-mono"
             />
           </div>
-          <button onClick={() => setShowKey(v => !v)} className="px-3 py-2 bg-gray-800 rounded-lg text-xs text-gray-400 hover:text-white border border-gray-700">
+          <button onClick={() => setShowKey(v => !v)} className="px-3 py-2 bg-gray-50 rounded-lg text-xs text-gray-500 hover:text-gray-900 border border-gray-200">
             {showKey ? 'Hide' : 'Show'}
           </button>
-          <button onClick={handleSaveBiz} disabled={bizSaving} className="flex items-center gap-1.5 text-sm bg-yellow-400 hover:bg-yellow-300 disabled:opacity-50 text-gray-900 font-semibold px-4 py-2 rounded-lg">
+          <button onClick={handleSaveBiz} disabled={bizSaving} className="flex items-center gap-1.5 text-sm bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-gray-900 font-semibold px-4 py-2 rounded-lg">
             {bizSaving ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />} Save
           </button>
         </div>
       </section>
 
       {/* ── Paint products ───────────────────────────────────── */}
-      <section className="bg-gray-900 rounded-xl border border-gray-800 p-6 space-y-4">
+      <section className="bg-white rounded-xl border border-gray-200 p-6 space-y-4">
         <div className="flex items-center justify-between">
           <div>
-            <h2 className="text-base font-semibold text-white">Paint products</h2>
+            <h2 className="text-base font-semibold text-gray-900">Paint products</h2>
             <p className="text-xs text-gray-500 mt-0.5">Products used in the quote builder and paint calculator. Edit your cost price and coverage.</p>
           </div>
           <div className="flex gap-2">
             <button onClick={() => setNewProduct({ cat: 'interior', size: '15L', coverage: 12 })}
-              className="flex items-center gap-1.5 text-xs bg-gray-800 border border-gray-700 hover:border-yellow-400/50 text-gray-300 px-3 py-1.5 rounded-lg">
+              className="flex items-center gap-1.5 text-xs bg-gray-50 border border-gray-200 hover:border-blue-500/50 text-gray-600 px-3 py-1.5 rounded-lg">
               <Plus size={12} /> Add product
             </button>
             <button onClick={handleSaveBiz} disabled={bizSaving}
-              className="flex items-center gap-1.5 text-sm bg-yellow-400 hover:bg-yellow-300 disabled:opacity-50 text-gray-900 font-semibold px-4 py-1.5 rounded-lg">
+              className="flex items-center gap-1.5 text-sm bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-gray-900 font-semibold px-4 py-1.5 rounded-lg">
               {bizSaving ? <Loader2 size={13} className="animate-spin" /> : bizSaved ? <CheckCircle size={13} /> : <Save size={13} />}
               {bizSaved ? 'Saved' : 'Save'}
             </button>
@@ -362,13 +362,13 @@ export default function SettingsPage() {
         </div>
 
         {newProduct && (
-          <div className="bg-gray-800/60 rounded-lg p-3 grid grid-cols-2 md:grid-cols-4 gap-2 border border-yellow-400/30">
+          <div className="bg-gray-50/60 rounded-lg p-3 grid grid-cols-2 md:grid-cols-4 gap-2 border border-blue-500/30">
             <Field label="Product name" value={newProduct.product ?? ''} onChange={v => setNewProduct(p => ({ ...p, product: v }))} />
             <Field label="Use / surface" value={newProduct.use ?? ''} onChange={v => setNewProduct(p => ({ ...p, use: v }))} />
             <div className="flex flex-col gap-1">
-              <label className="text-xs font-medium text-gray-400">Category</label>
+              <label className="text-xs font-medium text-gray-500">Category</label>
               <select value={newProduct.cat ?? 'interior'} onChange={e => setNewProduct(p => ({ ...p, cat: e.target.value as any }))}
-                className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-yellow-400">
+                className="bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-1 focus:ring-blue-500">
                 <option value="interior">Interior</option>
                 <option value="exterior">Exterior</option>
                 <option value="specialty">Specialty</option>
@@ -380,8 +380,8 @@ export default function SettingsPage() {
             <Field label="RRP ($)" value={newProduct.rrp ?? ''} onChange={v => setNewProduct(p => ({ ...p, rrp: v as any }))} type="number" />
             <Field label="Your cost ($)" value={newProduct.yours ?? ''} onChange={v => setNewProduct(p => ({ ...p, yours: v as any }))} type="number" />
             <div className="col-span-2 md:col-span-4 flex gap-2 justify-end pt-1">
-              <button onClick={() => setNewProduct(null)} className="text-xs px-3 py-1.5 rounded-lg bg-gray-700 text-gray-400 hover:text-white">Cancel</button>
-              <button onClick={saveProduct} className="text-xs px-4 py-1.5 rounded-lg bg-yellow-400 hover:bg-yellow-300 text-gray-900 font-semibold">Add</button>
+              <button onClick={() => setNewProduct(null)} className="text-xs px-3 py-1.5 rounded-lg bg-gray-200 text-gray-500 hover:text-gray-900">Cancel</button>
+              <button onClick={saveProduct} className="text-xs px-4 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-gray-900 font-semibold">Add</button>
             </div>
           </div>
         )}
@@ -389,7 +389,7 @@ export default function SettingsPage() {
         <div className="overflow-x-auto">
           <table className="w-full text-xs">
             <thead>
-              <tr className="text-gray-500 border-b border-gray-800">
+              <tr className="text-gray-500 border-b border-gray-200">
                 <th className="text-left py-2 pr-3 font-medium">Product</th>
                 <th className="text-left py-2 pr-3 font-medium">Use</th>
                 <th className="text-left py-2 pr-3 font-medium">Cat</th>
@@ -402,18 +402,18 @@ export default function SettingsPage() {
             </thead>
             <tbody>
               {biz.paint_products.map(p => (
-                <tr key={p.id} className="border-b border-gray-800/50 hover:bg-gray-800/30">
+                <tr key={p.id} className="border-b border-gray-200/50 hover:bg-gray-50/30">
                   <td className="py-2 pr-3 text-gray-200 font-medium">{p.product}</td>
-                  <td className="py-2 pr-3 text-gray-400">{p.use}</td>
+                  <td className="py-2 pr-3 text-gray-500">{p.use}</td>
                   <td className="py-2 pr-3">
                     <span className={`px-1.5 py-0.5 rounded text-xs ${p.cat === 'interior' ? 'bg-blue-500/20 text-blue-300' : p.cat === 'exterior' ? 'bg-green-500/20 text-green-300' : 'bg-purple-500/20 text-purple-300'}`}>
                       {p.cat}
                     </span>
                   </td>
-                  <td className="py-2 pr-3 text-gray-400">{p.size}</td>
-                  <td className="py-2 pr-3 text-right text-gray-300">{p.coverage} m²/L</td>
-                  <td className="py-2 pr-3 text-right text-gray-400">${p.rrp}</td>
-                  <td className="py-2 pr-3 text-right text-yellow-300 font-medium">${p.yours}</td>
+                  <td className="py-2 pr-3 text-gray-500">{p.size}</td>
+                  <td className="py-2 pr-3 text-right text-gray-600">{p.coverage} m²/L</td>
+                  <td className="py-2 pr-3 text-right text-gray-500">${p.rrp}</td>
+                  <td className="py-2 pr-3 text-right text-blue-500 font-medium">${p.yours}</td>
                   <td className="py-2">
                     <button onClick={() => deleteProduct(p.id)} className="text-gray-600 hover:text-red-400 transition-colors">
                       <Trash2 size={13} />
@@ -427,10 +427,10 @@ export default function SettingsPage() {
       </section>
 
       {/* ── Data Import ──────────────────────────────────────── */}
-      <section className="bg-gray-900 rounded-xl border border-gray-800 p-6 space-y-4">
+      <section className="bg-white rounded-xl border border-gray-200 p-6 space-y-4">
         <div>
-          <h2 className="text-base font-semibold text-white">Import V16 backup</h2>
-          <p className="text-sm text-gray-400 mt-1">
+          <h2 className="text-base font-semibold text-gray-900">Import V16 backup</h2>
+          <p className="text-sm text-gray-500 mt-1">
             Upload a JSON backup file exported from the previous app. All existing records
             with matching IDs will be updated; new records will be added. No data will be deleted.
           </p>
@@ -438,15 +438,15 @@ export default function SettingsPage() {
 
         <label
           className={`flex flex-col items-center justify-center gap-3 w-full h-36 rounded-xl border-2 border-dashed cursor-pointer transition-colors
-            ${importing ? 'border-yellow-400/40 bg-yellow-400/5' : 'border-gray-700 hover:border-yellow-400/50 hover:bg-gray-800/60'}`}
+            ${importing ? 'border-blue-500/40 bg-blue-600/5' : 'border-gray-200 hover:border-blue-500/50 hover:bg-gray-50/60'}`}
         >
           <input ref={fileRef} type="file" accept=".json" className="hidden" onChange={handleFile} disabled={importing} />
           {importing
-            ? <Loader2 size={24} className="animate-spin text-yellow-400" />
+            ? <Loader2 size={24} className="animate-spin text-blue-600" />
             : <Upload size={24} className="text-gray-500" />
           }
           <div className="text-center">
-            <p className="text-sm font-medium text-gray-300">
+            <p className="text-sm font-medium text-gray-600">
               {importing ? 'Importing…' : 'Click to choose a JSON backup file'}
             </p>
             <p className="text-xs text-gray-500 mt-0.5">Only .json files exported from the V16 app</p>
@@ -454,11 +454,11 @@ export default function SettingsPage() {
         </label>
 
         {progress.length > 0 && (
-          <div className="bg-gray-950 rounded-lg p-3 max-h-40 overflow-y-auto space-y-1">
+          <div className="bg-[#f5f4f0] rounded-lg p-3 max-h-40 overflow-y-auto space-y-1">
             {progress.map((msg, i) => (
-              <p key={i} className="text-xs text-gray-400 font-mono">{msg}</p>
+              <p key={i} className="text-xs text-gray-500 font-mono">{msg}</p>
             ))}
-            {importing && <p className="text-xs text-yellow-400 font-mono animate-pulse">Processing…</p>}
+            {importing && <p className="text-xs text-blue-600 font-mono animate-pulse">Processing…</p>}
           </div>
         )}
 
@@ -477,7 +477,7 @@ export default function SettingsPage() {
             )}
             <button
               onClick={() => setShowCounts(v => !v)}
-              className="flex items-center gap-1 text-xs text-gray-400 hover:text-white mt-1"
+              className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-900 mt-1"
             >
               {showCounts ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
               Breakdown by table
@@ -486,7 +486,7 @@ export default function SettingsPage() {
               <div className="grid grid-cols-2 gap-x-6 gap-y-1 pt-1">
                 {Object.entries(result.counts).filter(([, v]) => v > 0).map(([k, v]) => (
                   <div key={k} className="flex justify-between text-xs">
-                    <span className="text-gray-400">{k}</span>
+                    <span className="text-gray-500">{k}</span>
                     <span className="text-gray-200 font-mono">{v}</span>
                   </div>
                 ))}
@@ -507,11 +507,11 @@ export default function SettingsPage() {
       </section>
 
       {/* ── Account ──────────────────────────────────────────── */}
-      <section className="bg-gray-900 rounded-xl border border-gray-800 p-6 space-y-3">
-        <h2 className="text-base font-semibold text-white">Account</h2>
+      <section className="bg-white rounded-xl border border-gray-200 p-6 space-y-3">
+        <h2 className="text-base font-semibold text-gray-900">Account</h2>
         <div className="flex items-center justify-between">
           <div>
-            <p className="text-sm text-gray-300">{user?.email}</p>
+            <p className="text-sm text-gray-600">{user?.email}</p>
             <p className="text-xs text-gray-500 mt-0.5">Logged in</p>
           </div>
         </div>

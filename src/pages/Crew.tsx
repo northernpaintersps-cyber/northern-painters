@@ -196,19 +196,19 @@ export default function Crew() {
   return (
     <div className="h-full flex flex-col">
       {/* Header */}
-      <div className="px-6 py-4 border-b border-gray-800 space-y-3 shrink-0">
+      <div className="px-6 py-4 border-b border-gray-200 space-y-3 shrink-0">
         <div className="flex items-center justify-between">
-          <h1 className="text-lg font-bold text-white">Crew & Assignments</h1>
+          <h1 className="text-lg font-bold text-gray-900">Crew & Assignments</h1>
           <button
             onClick={() => tab === 'crew' ? openNewCrew() : openNewAsn()}
-            className="flex items-center gap-1.5 bg-yellow-400 hover:bg-yellow-300 text-gray-900 font-semibold text-sm px-3 py-1.5 rounded-lg transition-colors">
+            className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-gray-900 font-semibold text-sm px-3 py-1.5 rounded-lg transition-colors">
             <Plus size={14} /> {tab === 'crew' ? 'Add crew' : 'New assignment'}
           </button>
         </div>
-        <div className="flex gap-1 bg-gray-800 p-1 rounded-lg">
+        <div className="flex gap-1 bg-gray-50 p-1 rounded-lg">
           {(['crew', 'schedule', 'assignments'] as const).map(t => (
             <button key={t} onClick={() => setTab(t)}
-              className={`flex-1 text-xs py-1.5 rounded-md font-medium capitalize transition-colors ${tab === t ? 'bg-gray-700 text-white' : 'text-gray-400 hover:text-white'}`}>
+              className={`flex-1 text-xs py-1.5 rounded-md font-medium capitalize transition-colors ${tab === t ? 'bg-gray-200 text-gray-900' : 'text-gray-500 hover:text-gray-900'}`}>
               {t === 'crew' ? `Crew (${crew.length})` : t === 'schedule' ? 'Schedule' : `Assignments (${assignments.length})`}
             </button>
           ))}
@@ -216,29 +216,29 @@ export default function Crew() {
         <div className="relative">
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
           <input value={search} onChange={e => setSearch(e.target.value)} placeholder={`Search ${tab}…`}
-            className="w-full bg-gray-800 border border-gray-700 rounded-lg pl-8 pr-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-yellow-400" />
+            className="w-full bg-gray-50 border border-gray-200 rounded-lg pl-8 pr-3 py-2 text-sm text-gray-900 placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-blue-500" />
         </div>
       </div>
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto">
-        {isLoading && <div className="flex items-center justify-center py-16"><Loader2 size={20} className="animate-spin text-yellow-400" /></div>}
+        {isLoading && <div className="flex items-center justify-center py-16"><Loader2 size={20} className="animate-spin text-blue-600" /></div>}
 
         {tab === 'crew' && (
-          <div className="divide-y divide-gray-800">
+          <div className="divide-y divide-gray-200">
             {filteredCrew.length === 0 && !isLoading && <div className="text-center py-16 text-gray-500 text-sm">No crew members yet</div>}
             {filteredCrew.map(c => {
               const stats = crewStats(c)
               return (
-                <div key={c.id} className="px-6 py-4 hover:bg-gray-800/30 transition-colors">
+                <div key={c.id} className="px-6 py-4 hover:bg-gray-50/30 transition-colors">
                   <div className="flex items-start justify-between gap-3">
                     <div className="flex items-start gap-3">
-                      <div className="w-10 h-10 rounded-full bg-gray-700 flex items-center justify-center shrink-0">
-                        <User size={16} className="text-gray-400" />
+                      <div className="w-10 h-10 rounded-full bg-gray-200 flex items-center justify-center shrink-0">
+                        <User size={16} className="text-gray-500" />
                       </div>
                       <div>
-                        <div className="text-sm font-semibold text-white">{c.name}</div>
-                        <div className="text-xs text-gray-400">{c.role} · {c.payment_type}</div>
+                        <div className="text-sm font-semibold text-gray-900">{c.name}</div>
+                        <div className="text-xs text-gray-500">{c.role} · {c.payment_type}</div>
                         <div className="flex items-center gap-3 mt-1">
                           {c.rate && <span className="text-xs text-gray-500">Cost {fmtCurrency(c.rate)}/hr</span>}
                           {c.charge_rate && <span className="text-xs text-gray-500">Charge {fmtCurrency(c.charge_rate)}/hr</span>}
@@ -252,11 +252,11 @@ export default function Crew() {
                     </div>
                     <div className="flex gap-1.5 shrink-0">
                       <button onClick={() => openNewAsn(c)}
-                        className="text-xs px-2.5 py-1 rounded-lg bg-gray-700 text-gray-300 hover:text-white hover:bg-gray-600 transition-colors">
+                        className="text-xs px-2.5 py-1 rounded-lg bg-gray-200 text-gray-600 hover:text-gray-900 hover:bg-gray-600 transition-colors">
                         + Assign
                       </button>
                       <button onClick={() => openEditCrew(c)}
-                        className="text-xs px-2.5 py-1 rounded-lg bg-gray-700 text-gray-300 hover:text-white hover:bg-gray-600 transition-colors">
+                        className="text-xs px-2.5 py-1 rounded-lg bg-gray-200 text-gray-600 hover:text-gray-900 hover:bg-gray-600 transition-colors">
                         Edit
                       </button>
                     </div>
@@ -297,28 +297,28 @@ export default function Crew() {
             <div className="p-4 space-y-3 overflow-x-auto">
               {/* Week navigation */}
               <div className="flex items-center gap-3 mb-2">
-                <button onClick={() => setWeekOffset(o => o - 1)} className="p-1.5 rounded-lg bg-gray-800 text-gray-400 hover:text-white transition-colors"><ChevronLeft size={14} /></button>
-                <span className="text-sm text-white font-medium min-w-[160px] text-center">
+                <button onClick={() => setWeekOffset(o => o - 1)} className="p-1.5 rounded-lg bg-gray-50 text-gray-500 hover:text-gray-900 transition-colors"><ChevronLeft size={14} /></button>
+                <span className="text-sm text-gray-900 font-medium min-w-[160px] text-center">
                   {new Date(days[0]).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' })}
                   {' – '}
                   {new Date(days[6]).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' })}
                 </span>
-                <button onClick={() => setWeekOffset(o => o + 1)} className="p-1.5 rounded-lg bg-gray-800 text-gray-400 hover:text-white transition-colors"><ChevronRight size={14} /></button>
+                <button onClick={() => setWeekOffset(o => o + 1)} className="p-1.5 rounded-lg bg-gray-50 text-gray-500 hover:text-gray-900 transition-colors"><ChevronRight size={14} /></button>
                 {weekOffset !== 0 && (
-                  <button onClick={() => setWeekOffset(0)} className="text-xs text-yellow-400 hover:text-yellow-300 ml-1">Today</button>
+                  <button onClick={() => setWeekOffset(0)} className="text-xs text-blue-600 hover:text-blue-500 ml-1">Today</button>
                 )}
               </div>
 
               {schedCrew.length === 0
                 ? <p className="text-sm text-gray-500 py-8 text-center">No crew members yet</p>
                 : (
-                  <div className="rounded-xl border border-gray-800 overflow-hidden">
+                  <div className="rounded-xl border border-gray-200 overflow-hidden">
                     <table className="w-full min-w-[700px]">
                       <thead>
-                        <tr className="bg-gray-900">
-                          <th className="px-3 py-2.5 text-left text-xs font-semibold text-gray-500 w-28 sticky left-0 bg-gray-900 z-10">Crew</th>
+                        <tr className="bg-white">
+                          <th className="px-3 py-2.5 text-left text-xs font-semibold text-gray-500 w-28 sticky left-0 bg-white z-10">Crew</th>
                           {days.map((d, i) => (
-                            <th key={d} className={`px-2 py-2.5 text-center text-xs font-semibold min-w-[90px] ${d === todayStr ? 'text-yellow-400 bg-yellow-400/5' : 'text-gray-500'}`}>
+                            <th key={d} className={`px-2 py-2.5 text-center text-xs font-semibold min-w-[90px] ${d === todayStr ? 'text-blue-600 bg-blue-600/5' : 'text-gray-500'}`}>
                               <div>{DAY_LABELS[i]}</div>
                               <div className="font-normal text-gray-600">{new Date(d).getDate()}</div>
                             </th>
@@ -327,8 +327,8 @@ export default function Crew() {
                       </thead>
                       <tbody>
                         {schedCrew.map(c => (
-                          <tr key={c.id} className="border-t border-gray-800">
-                            <td className="px-3 py-2 text-xs font-medium text-white whitespace-nowrap sticky left-0 bg-gray-950 z-10">
+                          <tr key={c.id} className="border-t border-gray-200">
+                            <td className="px-3 py-2 text-xs font-medium text-gray-900 whitespace-nowrap sticky left-0 bg-[#f5f4f0] z-10">
                               {c.name}
                               <div className="text-gray-500 font-normal">{c.role}</div>
                             </td>
@@ -336,7 +336,7 @@ export default function Crew() {
                               const cell = asnMap[`${d}__${c.name}`] || []
                               const isToday = d === todayStr
                               return (
-                                <td key={d} className={`px-1 py-1.5 text-center align-top ${isToday ? 'bg-yellow-400/5' : ''}`}>
+                                <td key={d} className={`px-1 py-1.5 text-center align-top ${isToday ? 'bg-blue-600/5' : ''}`}>
                                   {cell.length > 0
                                     ? cell.map(a => {
                                         const job = jobs.find(j => j.id === a.job_id)
@@ -351,7 +351,7 @@ export default function Crew() {
                                       })
                                     : (
                                       <button onClick={() => { setAsnForm({ date: d, time_slot: 'full', crew_name: c.name }); setSelectedAsnId(null); setAsnModalOpen(true) }}
-                                        className="w-full h-8 rounded border border-dashed border-gray-800 hover:border-gray-600 transition-colors text-gray-700 hover:text-gray-500 text-xs">
+                                        className="w-full h-8 rounded border border-dashed border-gray-200 hover:border-gray-600 transition-colors text-gray-700 hover:text-gray-500 text-xs">
                                         +
                                       </button>
                                     )
@@ -371,31 +371,31 @@ export default function Crew() {
         })()}
 
         {tab === 'assignments' && (
-          <div className="divide-y divide-gray-800">
+          <div className="divide-y divide-gray-200">
             {filteredAsn.length === 0 && !isLoading && <div className="text-center py-16 text-gray-500 text-sm">No assignments yet</div>}
             {filteredAsn.map(a => {
               const job = jobs.find(j => j.id === a.job_id)
               const isPast = a.date < today()
               return (
                 <button key={a.id} onClick={() => openEditAsn(a)}
-                  className="w-full text-left px-6 py-3.5 hover:bg-gray-800/30 transition-colors">
+                  className="w-full text-left px-6 py-3.5 hover:bg-gray-50/30 transition-colors">
                   <div className="flex items-center justify-between gap-3">
                     <div className="min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-sm font-semibold text-white">{a.crew_name}</span>
-                        <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${a.time_slot === 'full' ? 'bg-blue-500/20 text-blue-400' : 'bg-gray-700 text-gray-300'}`}>
+                        <span className="text-sm font-semibold text-gray-900">{a.crew_name}</span>
+                        <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${a.time_slot === 'full' ? 'bg-blue-500/20 text-blue-400' : 'bg-gray-200 text-gray-600'}`}>
                           {a.time_slot}
                         </span>
                         {isPast && <span className="text-xs text-gray-600">past</span>}
                       </div>
-                      <div className="text-xs text-gray-400 mt-0.5">
+                      <div className="text-xs text-gray-500 mt-0.5">
                         {job ? `${a.job_id} — ${job.client}` : a.job_id}
                       </div>
                       {a.notes && <div className="text-xs text-gray-500 mt-0.5 truncate">{a.notes}</div>}
                     </div>
                     <div className="text-right shrink-0">
-                      <div className="text-sm font-semibold text-white">{fmtDate(a.date)}</div>
-                      {a.hours && <div className="text-xs text-gray-400">{a.hours}h</div>}
+                      <div className="text-sm font-semibold text-gray-900">{fmtDate(a.date)}</div>
+                      {a.hours && <div className="text-xs text-gray-500">{a.hours}h</div>}
                     </div>
                   </div>
                 </button>
@@ -417,11 +417,11 @@ export default function Crew() {
           <Input label="Email" type="email" value={crewForm.email || ''} onChange={cf('email')} />
           <TextArea label="Notes" value={crewForm.notes || ''} onChange={cf('notes')} wrapperClassName="col-span-2" />
         </div>
-        <div className="flex justify-between mt-5 pt-4 border-t border-gray-800">
+        <div className="flex justify-between mt-5 pt-4 border-t border-gray-200">
           <div>{selectedCrewId && <button onClick={handleDeleteCrew} className="flex items-center gap-1.5 text-sm text-red-400 hover:text-red-300"><Trash2 size={14} /> Delete</button>}</div>
           <div className="flex gap-2">
-            <button onClick={() => setCrewModalOpen(false)} className="text-sm px-4 py-2 rounded-lg bg-gray-800 text-gray-400 hover:text-white">Cancel</button>
-            <button onClick={saveCrew} disabled={saving} className="flex items-center gap-1.5 text-sm px-5 py-2 rounded-lg bg-yellow-400 hover:bg-yellow-300 text-gray-900 font-semibold disabled:opacity-50">
+            <button onClick={() => setCrewModalOpen(false)} className="text-sm px-4 py-2 rounded-lg bg-gray-50 text-gray-500 hover:text-gray-900">Cancel</button>
+            <button onClick={saveCrew} disabled={saving} className="flex items-center gap-1.5 text-sm px-5 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-gray-900 font-semibold disabled:opacity-50">
               {saving && <Loader2 size={13} className="animate-spin" />} Save
             </button>
           </div>
@@ -432,17 +432,17 @@ export default function Crew() {
       <Modal open={asnModalOpen} onClose={() => setAsnModalOpen(false)} title={selectedAsnId ? 'Edit assignment' : 'New assignment'}>
         <div className="grid grid-cols-2 gap-3">
           <div className="col-span-2">
-            <label className="block text-xs font-medium text-gray-400 mb-1">Crew member</label>
+            <label className="block text-xs font-medium text-gray-500 mb-1">Crew member</label>
             <select value={asnForm.crew_name || ''} onChange={af('crew_name')}
-              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-yellow-400">
+              className="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-1 focus:ring-blue-500">
               <option value="">— Select crew —</option>
               {crew.map(c => <option key={c.id} value={c.name}>{c.name} ({c.role})</option>)}
             </select>
           </div>
           <div className="col-span-2">
-            <label className="block text-xs font-medium text-gray-400 mb-1">Job</label>
+            <label className="block text-xs font-medium text-gray-500 mb-1">Job</label>
             <select value={asnForm.job_id || ''} onChange={af('job_id')}
-              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-yellow-400">
+              className="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-1 focus:ring-blue-500">
               <option value="">— Select job —</option>
               {jobs.filter(j => ['Not Started','Scheduled','In Progress','Hourly Rate Accepted'].includes(j.status)).map(j => (
                 <option key={j.id} value={j.id}>{j.id} — {j.client}</option>
@@ -454,11 +454,11 @@ export default function Crew() {
           <Input label="Hours" type="number" value={asnForm.hours || ''} onChange={e => setAsnForm(prev => ({ ...prev, hours: parseFloat(e.target.value) || null }))} min={0} step={0.5} />
           <TextArea label="Notes" value={asnForm.notes || ''} onChange={af('notes')} wrapperClassName="col-span-2" />
         </div>
-        <div className="flex justify-between mt-5 pt-4 border-t border-gray-800">
+        <div className="flex justify-between mt-5 pt-4 border-t border-gray-200">
           <div>{selectedAsnId && <button onClick={handleDeleteAsn} className="flex items-center gap-1.5 text-sm text-red-400 hover:text-red-300"><Trash2 size={14} /> Delete</button>}</div>
           <div className="flex gap-2">
-            <button onClick={() => setAsnModalOpen(false)} className="text-sm px-4 py-2 rounded-lg bg-gray-800 text-gray-400 hover:text-white">Cancel</button>
-            <button onClick={saveAsn} disabled={saving} className="flex items-center gap-1.5 text-sm px-5 py-2 rounded-lg bg-yellow-400 hover:bg-yellow-300 text-gray-900 font-semibold disabled:opacity-50">
+            <button onClick={() => setAsnModalOpen(false)} className="text-sm px-4 py-2 rounded-lg bg-gray-50 text-gray-500 hover:text-gray-900">Cancel</button>
+            <button onClick={saveAsn} disabled={saving} className="flex items-center gap-1.5 text-sm px-5 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-gray-900 font-semibold disabled:opacity-50">
               {saving && <Loader2 size={13} className="animate-spin" />} Save
             </button>
           </div>

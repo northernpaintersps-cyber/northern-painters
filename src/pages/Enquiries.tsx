@@ -56,28 +56,28 @@ function useDeleteEnquiry() {
 function EnqCard({ enq, onEdit, onDelete, onMove, onConvert }: { enq: any; onEdit: () => void; onDelete: () => void; onMove: (status: string) => void; onConvert: () => void }) {
   const nextStatus = STATUSES[STATUSES.indexOf(enq.enq_status) + 1]
   return (
-    <div className="bg-gray-800 rounded-xl border border-gray-700 p-3 space-y-2 hover:border-gray-600 transition-colors group">
+    <div className="bg-gray-50 rounded-xl border border-gray-200 p-3 space-y-2 hover:border-gray-600 transition-colors group">
       <div className="flex items-start justify-between gap-2">
-        <div className="font-medium text-sm text-white leading-tight">{enq.client || 'Unknown'}</div>
+        <div className="font-medium text-sm text-gray-900 leading-tight">{enq.client || 'Unknown'}</div>
         <div className="flex gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
-          <button onClick={onEdit} className="text-gray-500 hover:text-yellow-400"><Edit2 size={12} /></button>
+          <button onClick={onEdit} className="text-gray-500 hover:text-blue-600"><Edit2 size={12} /></button>
           <button onClick={onDelete} className="text-gray-500 hover:text-red-400"><Trash2 size={12} /></button>
         </div>
       </div>
 
       {enq.address && (
-        <div className="flex items-center gap-1 text-xs text-gray-400 truncate">
+        <div className="flex items-center gap-1 text-xs text-gray-500 truncate">
           <MapPin size={10} className="shrink-0" /> {enq.address}
         </div>
       )}
       <div className="flex items-center gap-2 flex-wrap">
         {enq.phone && (
-          <a href={`tel:${enq.phone}`} className="flex items-center gap-1 text-xs text-gray-400 hover:text-white">
+          <a href={`tel:${enq.phone}`} className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-900">
             <Phone size={10} /> {enq.phone}
           </a>
         )}
         {enq.email && (
-          <a href={`mailto:${enq.email}`} className="flex items-center gap-1 text-xs text-gray-400 hover:text-white truncate">
+          <a href={`mailto:${enq.email}`} className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-900 truncate">
             <Mail size={10} /> {enq.email}
           </a>
         )}
@@ -98,7 +98,7 @@ function EnqCard({ enq, onEdit, onDelete, onMove, onConvert }: { enq: any; onEdi
           {enq.job_id && <span className="text-xs text-green-500 font-mono">{enq.job_id}</span>}
           {nextStatus && !['Lost','Spam'].includes(nextStatus) && (
             <button onClick={() => onMove(nextStatus)}
-              className="flex items-center gap-0.5 text-xs text-gray-500 hover:text-yellow-400 transition-colors">
+              className="flex items-center gap-0.5 text-xs text-gray-500 hover:text-blue-600 transition-colors">
               {nextStatus} <ArrowRight size={10} />
             </button>
           )}
@@ -121,13 +121,13 @@ function Column({ status, enqs, onEdit, onDelete, onMove, onConvert }: {
     'Quote Sent': 'text-amber-400 border-amber-800',
     'Booked':     'text-green-400 border-green-800',
     'Lost':       'text-red-400 border-red-800',
-    'Spam':       'text-gray-400 border-gray-700',
+    'Spam':       'text-gray-500 border-gray-200',
   }
   return (
     <div className="flex flex-col min-w-[220px] w-[220px]">
-      <div className={`flex items-center justify-between mb-3 pb-2 border-b ${COLORS[status] || 'text-gray-400 border-gray-700'}`}>
+      <div className={`flex items-center justify-between mb-3 pb-2 border-b ${COLORS[status] || 'text-gray-500 border-gray-200'}`}>
         <span className="text-xs font-semibold uppercase tracking-wide">{status}</span>
-        <span className="text-xs font-mono bg-gray-800 px-1.5 py-0.5 rounded">{enqs.length}</span>
+        <span className="text-xs font-mono bg-gray-50 px-1.5 py-0.5 rounded">{enqs.length}</span>
       </div>
       <div className="space-y-2 flex-1 overflow-y-auto max-h-[calc(100vh-280px)] pr-0.5">
         {enqs.map(e => (
@@ -139,7 +139,7 @@ function Column({ status, enqs, onEdit, onDelete, onMove, onConvert }: {
           />
         ))}
         {!enqs.length && (
-          <div className="rounded-lg border border-dashed border-gray-700 p-3 text-xs text-gray-600 text-center">Empty</div>
+          <div className="rounded-lg border border-dashed border-gray-200 p-3 text-xs text-gray-600 text-center">Empty</div>
         )}
       </div>
     </div>
@@ -149,16 +149,16 @@ function Column({ status, enqs, onEdit, onDelete, onMove, onConvert }: {
 // ── List view row ─────────────────────────────────────────────
 function ListRow({ enq, onEdit, onDelete }: { enq: any; onEdit: () => void; onDelete: () => void }) {
   return (
-    <tr className="border-t border-gray-800 hover:bg-gray-800/40 group">
-      <td className="px-3 py-2.5 text-sm text-white font-medium">{enq.client || '—'}</td>
-      <td className="px-3 py-2.5 text-sm text-gray-400 max-w-[180px] truncate">{enq.address || '—'}</td>
-      <td className="px-3 py-2.5 text-sm text-gray-400">{enq.phone || '—'}</td>
-      <td className="px-3 py-2.5 text-sm text-gray-400">{fmtDate(enq.date)}</td>
+    <tr className="border-t border-gray-200 hover:bg-gray-50/40 group">
+      <td className="px-3 py-2.5 text-sm text-gray-900 font-medium">{enq.client || '—'}</td>
+      <td className="px-3 py-2.5 text-sm text-gray-500 max-w-[180px] truncate">{enq.address || '—'}</td>
+      <td className="px-3 py-2.5 text-sm text-gray-500">{enq.phone || '—'}</td>
+      <td className="px-3 py-2.5 text-sm text-gray-500">{fmtDate(enq.date)}</td>
       <td className="px-3 py-2.5"><Badge label={enq.enq_status || 'New'} /></td>
-      <td className="px-3 py-2.5 text-sm text-gray-400">{enq.source || '—'}</td>
+      <td className="px-3 py-2.5 text-sm text-gray-500">{enq.source || '—'}</td>
       <td className="px-3 py-2.5 text-right">
         <div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-          <button onClick={onEdit} className="text-gray-500 hover:text-yellow-400"><Edit2 size={13} /></button>
+          <button onClick={onEdit} className="text-gray-500 hover:text-blue-600"><Edit2 size={13} /></button>
           <button onClick={onDelete} className="text-gray-500 hover:text-red-400"><Trash2 size={13} /></button>
         </div>
       </td>
@@ -253,9 +253,9 @@ export default function Enquiries() {
     <div className="p-6 space-y-5">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <h1 className="text-lg font-bold text-white">Enquiries</h1>
+        <h1 className="text-lg font-bold text-gray-900">Enquiries</h1>
         <button onClick={openNew}
-          className="flex items-center gap-1.5 bg-yellow-400 hover:bg-yellow-300 text-gray-900 font-semibold text-sm px-3 py-1.5 rounded-lg transition-colors">
+          className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-gray-900 font-semibold text-sm px-3 py-1.5 rounded-lg transition-colors">
           <Plus size={14} /> New enquiry
         </button>
       </div>
@@ -263,13 +263,13 @@ export default function Enquiries() {
       {/* Stats strip */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {[
-          { label: 'Total', value: enquiries.length, color: 'text-white' },
+          { label: 'Total', value: enquiries.length, color: 'text-gray-900' },
           { label: 'New', value: newCount, color: 'text-blue-400' },
           { label: 'Booked', value: bookedCount, color: 'text-green-400' },
           { label: 'Conversion', value: `${convRate}%`, color: convRate >= 50 ? 'text-green-400' : 'text-amber-400' },
         ].map(s => (
-          <div key={s.label} className="bg-gray-900 rounded-xl border border-gray-800 p-3 flex items-center justify-between">
-            <span className="text-xs text-gray-400">{s.label}</span>
+          <div key={s.label} className="bg-white rounded-xl border border-gray-200 p-3 flex items-center justify-between">
+            <span className="text-xs text-gray-500">{s.label}</span>
             <span className={`text-xl font-bold ${s.color}`}>{s.value}</span>
           </div>
         ))}
@@ -281,20 +281,20 @@ export default function Enquiries() {
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
           <input value={search} onChange={e => setSearch(e.target.value)}
             placeholder="Search…"
-            className="w-full bg-gray-900 border border-gray-700 rounded-lg pl-8 pr-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-yellow-400/50" />
+            className="w-full bg-white border border-gray-200 rounded-lg pl-8 pr-3 py-2 text-sm text-gray-900 placeholder-gray-500 focus:outline-none focus:border-blue-500/50" />
         </div>
         <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)}
-          className="bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-300 focus:outline-none focus:border-yellow-400/50">
+          className="bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-600 focus:outline-none focus:border-blue-500/50">
           <option value="">All statuses</option>
           {STATUSES.map(s => <option key={s}>{s}</option>)}
         </select>
         <div className="flex gap-1 ml-auto">
           <button onClick={() => setView('kanban')}
-            className={`text-xs px-3 py-1.5 rounded-lg font-medium transition-colors ${view === 'kanban' ? 'bg-yellow-400 text-gray-900' : 'bg-gray-800 text-gray-400 hover:text-white'}`}>
+            className={`text-xs px-3 py-1.5 rounded-lg font-medium transition-colors ${view === 'kanban' ? 'bg-blue-600 text-gray-900' : 'bg-gray-50 text-gray-500 hover:text-gray-900'}`}>
             Kanban
           </button>
           <button onClick={() => setView('list')}
-            className={`text-xs px-3 py-1.5 rounded-lg font-medium transition-colors ${view === 'list' ? 'bg-yellow-400 text-gray-900' : 'bg-gray-800 text-gray-400 hover:text-white'}`}>
+            className={`text-xs px-3 py-1.5 rounded-lg font-medium transition-colors ${view === 'list' ? 'bg-blue-600 text-gray-900' : 'bg-gray-50 text-gray-500 hover:text-gray-900'}`}>
             List
           </button>
         </div>
@@ -302,7 +302,7 @@ export default function Enquiries() {
 
       {/* Content */}
       {isLoading
-        ? <div className="flex justify-center py-16"><Loader2 size={20} className="animate-spin text-yellow-400" /></div>
+        ? <div className="flex justify-center py-16"><Loader2 size={20} className="animate-spin text-blue-600" /></div>
         : view === 'kanban'
           ? (
             <div className="overflow-x-auto">
@@ -319,7 +319,7 @@ export default function Enquiries() {
             </div>
           )
           : (
-            <div className="overflow-x-auto rounded-xl border border-gray-800">
+            <div className="overflow-x-auto rounded-xl border border-gray-200">
               <table className="w-full">
                 <thead>
                   <tr>
@@ -365,7 +365,7 @@ export default function Enquiries() {
             <Input label="Converted to job ID (optional)" value={form.job_id || ''} onChange={ef('job_id')} placeholder="e.g. NP-0042" />
           )}
         </div>
-        <div className="flex justify-between mt-5 pt-4 border-t border-gray-800">
+        <div className="flex justify-between mt-5 pt-4 border-t border-gray-200">
           <div className="flex items-center gap-3">
             {form.id && (
               <button onClick={() => { if (confirm('Delete this enquiry?')) { del.mutate(form.id); setOpen(false) } }}
@@ -384,8 +384,8 @@ export default function Enquiries() {
             {form.job_id && (
               <span className="flex items-center gap-1 text-xs text-green-400 px-3"><Briefcase size={12} /> {form.job_id}</span>
             )}
-            <button onClick={() => setOpen(false)} className="text-sm px-4 py-2 rounded-lg bg-gray-800 text-gray-400 hover:text-white">Cancel</button>
-            <button onClick={save} disabled={saving} className="flex items-center gap-1.5 text-sm px-5 py-2 rounded-lg bg-yellow-400 hover:bg-yellow-300 text-gray-900 font-semibold disabled:opacity-50">
+            <button onClick={() => setOpen(false)} className="text-sm px-4 py-2 rounded-lg bg-gray-50 text-gray-500 hover:text-gray-900">Cancel</button>
+            <button onClick={save} disabled={saving} className="flex items-center gap-1.5 text-sm px-5 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-gray-900 font-semibold disabled:opacity-50">
               {saving && <Loader2 size={13} className="animate-spin" />} Save
             </button>
           </div>

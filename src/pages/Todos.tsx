@@ -75,19 +75,19 @@ function TodoRow({ todo, onToggle, onEdit, onDelete }: {
   return (
     <div className={`flex items-start gap-3 p-3.5 rounded-xl border transition-colors group
       ${todo.done
-        ? 'border-gray-800 bg-gray-900/40 opacity-60'
+        ? 'border-gray-200 bg-white/40 opacity-60'
         : overdue
           ? 'border-red-800/50 bg-red-900/10 hover:bg-red-900/20'
-          : 'border-gray-800 bg-gray-900 hover:bg-gray-800/60'}`}>
+          : 'border-gray-200 bg-white hover:bg-gray-50/60'}`}>
 
       {/* Checkbox */}
-      <button onClick={onToggle} className={`mt-0.5 shrink-0 transition-colors ${todo.done ? 'text-green-500' : 'text-gray-600 hover:text-yellow-400'}`}>
+      <button onClick={onToggle} className={`mt-0.5 shrink-0 transition-colors ${todo.done ? 'text-green-500' : 'text-gray-600 hover:text-blue-600'}`}>
         {todo.done ? <CheckCircle2 size={18} /> : <Circle size={18} />}
       </button>
 
       {/* Content */}
       <div className="flex-1 min-w-0">
-        <p className={`text-sm leading-snug ${todo.done ? 'line-through text-gray-500' : 'text-white'}`}>
+        <p className={`text-sm leading-snug ${todo.done ? 'line-through text-gray-500' : 'text-gray-900'}`}>
           {todo.todo_text || '—'}
         </p>
         <div className="flex items-center gap-3 mt-1 flex-wrap">
@@ -109,7 +109,7 @@ function TodoRow({ todo, onToggle, onEdit, onDelete }: {
 
       {/* Actions */}
       <div className="flex gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
-        <button onClick={onEdit} className="text-gray-500 hover:text-yellow-400"><Edit2 size={13} /></button>
+        <button onClick={onEdit} className="text-gray-500 hover:text-blue-600"><Edit2 size={13} /></button>
         <button onClick={onDelete} className="text-gray-500 hover:text-red-400"><Trash2 size={13} /></button>
       </div>
     </div>
@@ -182,14 +182,14 @@ export default function Todos() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-lg font-bold text-white">To-do</h1>
+          <h1 className="text-lg font-bold text-gray-900">To-do</h1>
           <p className="text-xs text-gray-500 mt-0.5">
             {todos.length - doneCount} open · {doneCount} done
             {overdueCount > 0 && <span className="text-red-400"> · {overdueCount} overdue</span>}
           </p>
         </div>
         <button onClick={openNew}
-          className="flex items-center gap-1.5 bg-yellow-400 hover:bg-yellow-300 text-gray-900 font-semibold text-sm px-3 py-1.5 rounded-lg transition-colors">
+          className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-gray-900 font-semibold text-sm px-3 py-1.5 rounded-lg transition-colors">
           <Plus size={14} /> Add task
         </button>
       </div>
@@ -216,23 +216,23 @@ export default function Todos() {
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
           <input value={search} onChange={e => setSearch(e.target.value)}
             placeholder="Search tasks…"
-            className="w-full bg-gray-900 border border-gray-700 rounded-lg pl-8 pr-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-yellow-400/50" />
+            className="w-full bg-white border border-gray-200 rounded-lg pl-8 pr-3 py-2 text-sm text-gray-900 placeholder-gray-500 focus:outline-none focus:border-blue-500/50" />
         </div>
         <select value={filterPriority} onChange={e => setFilterPriority(e.target.value)}
-          className="bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-300 focus:outline-none focus:border-yellow-400/50">
+          className="bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-600 focus:outline-none focus:border-blue-500/50">
           <option value="">All priorities</option>
           {PRIORITIES.map(p => <option key={p}>{p}</option>)}
         </select>
         <button onClick={() => setShowDone(v => !v)}
           className={`text-xs px-3 py-2 rounded-lg font-medium transition-colors whitespace-nowrap
-            ${showDone ? 'bg-gray-700 text-white' : 'bg-gray-900 border border-gray-700 text-gray-400 hover:text-white'}`}>
+            ${showDone ? 'bg-gray-200 text-gray-900' : 'bg-white border border-gray-200 text-gray-500 hover:text-gray-900'}`}>
           {showDone ? 'Hide done' : 'Show done'}
         </button>
       </div>
 
       {/* List */}
       {isLoading
-        ? <div className="flex justify-center py-16"><Loader2 size={20} className="animate-spin text-yellow-400" /></div>
+        ? <div className="flex justify-center py-16"><Loader2 size={20} className="animate-spin text-blue-600" /></div>
         : (
           <div className="space-y-2">
             {filtered.map(t => (
@@ -260,19 +260,19 @@ export default function Todos() {
             <Input label="Due date" type="date" value={form.due || ''} onChange={ef('due')} />
           </div>
           <div className="flex flex-col gap-1">
-            <label className="text-xs font-medium text-gray-400">Job (optional)</label>
+            <label className="text-xs font-medium text-gray-500">Job (optional)</label>
             <select value={form.job_id || ''} onChange={ef('job_id')}
-              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-yellow-400 cursor-pointer">
+              className="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-1 focus:ring-blue-500 cursor-pointer">
               <option value="">— No job —</option>
               {jobs.map(j => <option key={j.id} value={j.id}>{j.id} {j.client || ''}</option>)}
             </select>
           </div>
           <div className="flex items-center gap-2">
             <input type="checkbox" id="tddone" checked={!!form.done} onChange={e => setForm((p: any) => ({ ...p, done: e.target.checked }))} className="accent-yellow-400" />
-            <label htmlFor="tddone" className="text-sm text-gray-300">Mark as done</label>
+            <label htmlFor="tddone" className="text-sm text-gray-600">Mark as done</label>
           </div>
         </div>
-        <div className="flex justify-between mt-5 pt-4 border-t border-gray-800">
+        <div className="flex justify-between mt-5 pt-4 border-t border-gray-200">
           <div>
             {form.id && (
               <button onClick={() => { if (confirm('Delete?')) { del.mutate(form.id); setOpen(false) } }}
@@ -282,8 +282,8 @@ export default function Todos() {
             )}
           </div>
           <div className="flex gap-2">
-            <button onClick={() => setOpen(false)} className="text-sm px-4 py-2 rounded-lg bg-gray-800 text-gray-400 hover:text-white">Cancel</button>
-            <button onClick={save} disabled={saving} className="flex items-center gap-1.5 text-sm px-5 py-2 rounded-lg bg-yellow-400 hover:bg-yellow-300 text-gray-900 font-semibold disabled:opacity-50">
+            <button onClick={() => setOpen(false)} className="text-sm px-4 py-2 rounded-lg bg-gray-50 text-gray-500 hover:text-gray-900">Cancel</button>
+            <button onClick={save} disabled={saving} className="flex items-center gap-1.5 text-sm px-5 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-gray-900 font-semibold disabled:opacity-50">
               {saving && <Loader2 size={13} className="animate-spin" />} Save
             </button>
           </div>

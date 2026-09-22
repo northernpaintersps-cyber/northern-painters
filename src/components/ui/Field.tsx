@@ -1,6 +1,6 @@
 import { cn } from '@/lib/utils'
 
-const base = 'w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-yellow-400 focus:border-yellow-400'
+const base = 'w-full bg-white border border-black/20 rounded-lg px-3 py-2 text-[13px] text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500'
 
 interface FieldProps {
   label: string
@@ -12,7 +12,7 @@ interface FieldProps {
 export function FieldWrapper({ label, error, className, children }: FieldProps) {
   return (
     <div className={cn('flex flex-col gap-1', className)}>
-      <label className="text-xs font-medium text-gray-400">{label}</label>
+      <label className="text-xs font-medium text-gray-500">{label}</label>
       {children}
       {error && <p className="text-xs text-red-400">{error}</p>}
     </div>

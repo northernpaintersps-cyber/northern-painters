@@ -11,15 +11,15 @@ const MONTHS = ['January','February','March','April','May','June','July','August
 const DAYS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat']
 const EVENT_TYPES = ['Quote Visit','Client Meeting','Builder Meeting','Follow Up','Site Visit','Other']
 const EVENT_COLORS: Record<string, string> = {
-  'Quote Visit':     'bg-blue-500/20 text-blue-300 border-l-2 border-blue-500',
-  'Client Meeting':  'bg-green-500/20 text-green-300 border-l-2 border-green-500',
-  'Builder Meeting': 'bg-purple-500/20 text-purple-300 border-l-2 border-purple-500',
-  'Follow Up':       'bg-amber-500/20 text-amber-300 border-l-2 border-amber-500',
-  'Site Visit':      'bg-teal-500/20 text-teal-300 border-l-2 border-teal-500',
-  'Other':           'bg-gray-500/20 text-gray-300 border-l-2 border-gray-500',
+  'Quote Visit':     'bg-blue-100 text-blue-800 border-l-2 border-blue-500',
+  'Client Meeting':  'bg-green-100 text-green-800 border-l-2 border-green-500',
+  'Builder Meeting': 'bg-purple-100 text-purple-800 border-l-2 border-purple-500',
+  'Follow Up':       'bg-amber-100 text-amber-800 border-l-2 border-amber-500',
+  'Site Visit':      'bg-teal-100 text-teal-800 border-l-2 border-teal-500',
+  'Other':           'bg-gray-100 text-gray-600 border-l-2 border-gray-400',
 }
-const JOB_SCHEDULED_COLOR = 'bg-blue-600/30 text-blue-200 border-l-2 border-blue-500 font-medium'
-const JOB_ACTIVE_COLOR    = 'bg-green-600/30 text-green-200 border-l-2 border-green-500 font-medium'
+const JOB_SCHEDULED_COLOR = 'bg-blue-100 text-blue-900 border-l-2 border-blue-500 font-medium'
+const JOB_ACTIVE_COLOR    = 'bg-green-100 text-green-900 border-l-2 border-green-500 font-medium'
 
 function useCalendarEvents() {
   const { user } = useAuth()
@@ -175,14 +175,14 @@ export default function CalendarPage() {
     <div className="h-full flex flex-col p-6">
       {/* Header */}
       <div className="flex items-center justify-between mb-4 shrink-0">
-        <h1 className="text-lg font-bold text-white">Calendar</h1>
+        <h1 className="text-lg font-bold text-gray-900">Calendar</h1>
         <div className="flex items-center gap-2">
-          <button onClick={goToday} className="text-xs px-3 py-1.5 rounded-lg bg-gray-800 text-gray-300 hover:text-white transition-colors">Today</button>
-          <button onClick={prev} className="p-1.5 rounded-lg bg-gray-800 text-gray-400 hover:text-white transition-colors"><ChevronLeft size={16} /></button>
-          <span className="text-sm font-semibold text-white w-36 text-center">{MONTHS[month]} {year}</span>
-          <button onClick={next} className="p-1.5 rounded-lg bg-gray-800 text-gray-400 hover:text-white transition-colors"><ChevronRight size={16} /></button>
+          <button onClick={goToday} className="text-xs px-3 py-1.5 rounded-lg bg-gray-50 text-gray-600 hover:text-gray-900 transition-colors">Today</button>
+          <button onClick={prev} className="p-1.5 rounded-lg bg-gray-50 text-gray-500 hover:text-gray-900 transition-colors"><ChevronLeft size={16} /></button>
+          <span className="text-sm font-semibold text-gray-900 w-36 text-center">{MONTHS[month]} {year}</span>
+          <button onClick={next} className="p-1.5 rounded-lg bg-gray-50 text-gray-500 hover:text-gray-900 transition-colors"><ChevronRight size={16} /></button>
           <button onClick={() => { setForm({ date: todayStr, color: 'Other' }); setSelectedEvent(null); setSelectedDate(todayStr); setModalOpen(true) }}
-            className="flex items-center gap-1.5 bg-yellow-400 hover:bg-yellow-300 text-gray-900 font-semibold text-sm px-3 py-1.5 rounded-lg transition-colors ml-2">
+            className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-gray-900 font-semibold text-sm px-3 py-1.5 rounded-lg transition-colors ml-2">
             <Plus size={14} /> Add event
           </button>
         </div>
@@ -190,10 +190,10 @@ export default function CalendarPage() {
 
       {/* Legend */}
       <div className="flex gap-3 mb-3 flex-wrap shrink-0">
-        <div className="flex items-center gap-1.5 text-xs text-gray-400"><div className="w-3 h-3 rounded-sm bg-blue-600/50 border-l-2 border-blue-500" />Scheduled job</div>
-        <div className="flex items-center gap-1.5 text-xs text-gray-400"><div className="w-3 h-3 rounded-sm bg-green-600/50 border-l-2 border-green-500" />Active job</div>
+        <div className="flex items-center gap-1.5 text-xs text-gray-500"><div className="w-3 h-3 rounded-sm bg-blue-600/50 border-l-2 border-blue-500" />Scheduled job</div>
+        <div className="flex items-center gap-1.5 text-xs text-gray-500"><div className="w-3 h-3 rounded-sm bg-green-600/50 border-l-2 border-green-500" />Active job</div>
         {Object.entries(EVENT_COLORS).slice(0, 3).map(([k, v]) => (
-          <div key={k} className="flex items-center gap-1.5 text-xs text-gray-400">
+          <div key={k} className="flex items-center gap-1.5 text-xs text-gray-500">
             <div className={`w-3 h-3 rounded-sm ${v.split(' ')[0]}`} />{k}
           </div>
         ))}
@@ -208,7 +208,7 @@ export default function CalendarPage() {
 
       {/* Grid */}
       {isLoading
-        ? <div className="flex-1 flex items-center justify-center"><Loader2 size={20} className="animate-spin text-yellow-400" /></div>
+        ? <div className="flex-1 flex items-center justify-center"><Loader2 size={20} className="animate-spin text-blue-600" /></div>
         : (
           <div className="grid grid-cols-7 gap-1 flex-1 overflow-hidden">
             {cells.map(({ date, isCurrentMonth }) => {
@@ -217,9 +217,9 @@ export default function CalendarPage() {
               return (
                 <div key={date} onClick={() => openCell(date)}
                   className={`rounded-lg p-1.5 cursor-pointer min-h-0 overflow-hidden flex flex-col transition-colors
-                    ${isCurrentMonth ? 'bg-gray-900 hover:bg-gray-800' : 'bg-gray-900/40 opacity-50 hover:opacity-70'}
-                    ${isToday ? 'ring-2 ring-yellow-400' : 'border border-gray-800'}`}>
-                  <div className={`text-xs font-medium mb-1 ${isToday ? 'text-yellow-400' : isCurrentMonth ? 'text-gray-300' : 'text-gray-600'}`}>
+                    ${isCurrentMonth ? 'bg-white hover:bg-gray-50' : 'bg-white/40 opacity-50 hover:opacity-70'}
+                    ${isToday ? 'ring-2 ring-blue-500' : 'border border-gray-200'}`}>
+                  <div className={`text-xs font-medium mb-1 ${isToday ? 'text-blue-600' : isCurrentMonth ? 'text-gray-600' : 'text-gray-600'}`}>
                     {new Date(date + 'T12:00:00').getDate()}
                   </div>
                   <div className="space-y-0.5 overflow-hidden">
@@ -253,11 +253,11 @@ export default function CalendarPage() {
           <Input label="End date (optional)" type="date" value={form.end_date || ''} onChange={ef('end_date')} />
           <TextArea label="Notes" value={form.notes || ''} onChange={ef('notes')} />
         </div>
-        <div className="flex justify-between mt-5 pt-4 border-t border-gray-800">
+        <div className="flex justify-between mt-5 pt-4 border-t border-gray-200">
           <div>{selectedEvent && <button onClick={handleDeleteEvent} className="flex items-center gap-1.5 text-sm text-red-400 hover:text-red-300"><Trash2 size={14} /> Delete</button>}</div>
           <div className="flex gap-2">
-            <button onClick={() => setModalOpen(false)} className="text-sm px-4 py-2 rounded-lg bg-gray-800 text-gray-400 hover:text-white">Cancel</button>
-            <button onClick={saveEvent} disabled={saving} className="flex items-center gap-1.5 text-sm px-5 py-2 rounded-lg bg-yellow-400 hover:bg-yellow-300 text-gray-900 font-semibold disabled:opacity-50">
+            <button onClick={() => setModalOpen(false)} className="text-sm px-4 py-2 rounded-lg bg-gray-50 text-gray-500 hover:text-gray-900">Cancel</button>
+            <button onClick={saveEvent} disabled={saving} className="flex items-center gap-1.5 text-sm px-5 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-gray-900 font-semibold disabled:opacity-50">
               {saving && <Loader2 size={13} className="animate-spin" />} Save
             </button>
           </div>

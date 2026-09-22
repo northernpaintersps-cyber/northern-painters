@@ -104,19 +104,19 @@ export default function AdsSpend() {
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-lg font-bold text-white">Advertising Spend</h1>
-          <p className="text-xs text-gray-500 mt-0.5">All time: <span className="text-white">{fmtCurrency(totalAll)}</span></p>
+          <h1 className="text-lg font-bold text-gray-900">Advertising Spend</h1>
+          <p className="text-xs text-gray-500 mt-0.5">All time: <span className="text-gray-900">{fmtCurrency(totalAll)}</span></p>
         </div>
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2">
-            <span className="text-sm text-gray-400">Year</span>
+            <span className="text-sm text-gray-500">Year</span>
             <select value={selYear} onChange={e => setSelYear(Number(e.target.value))}
-              className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:ring-1 focus:ring-yellow-400">
+              className="bg-gray-50 border border-gray-200 rounded-lg px-3 py-1.5 text-sm text-gray-900 focus:outline-none focus:ring-1 focus:ring-blue-500">
               {years.map(y => <option key={y}>{y}</option>)}
             </select>
           </div>
           <button onClick={openNew}
-            className="flex items-center gap-1.5 bg-yellow-400 hover:bg-yellow-300 text-gray-900 font-semibold text-sm px-3 py-1.5 rounded-lg transition-colors">
+            className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-gray-900 font-semibold text-sm px-3 py-1.5 rounded-lg transition-colors">
             <Plus size={14} /> Add entry
           </button>
         </div>
@@ -124,28 +124,28 @@ export default function AdsSpend() {
 
       {/* KPIs */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <div className="bg-gray-900 rounded-xl border border-gray-800 p-3 flex flex-col gap-1">
-          <span className="text-xs text-gray-400">{selYear} total</span>
-          <span className="text-xl font-bold text-white tabular-nums">{fmtCurrency(totalYear)}</span>
+        <div className="bg-white rounded-xl border border-gray-200 p-3 flex flex-col gap-1">
+          <span className="text-xs text-gray-500">{selYear} total</span>
+          <span className="text-xl font-bold text-gray-900 tabular-nums">{fmtCurrency(totalYear)}</span>
         </div>
-        <div className="bg-gray-900 rounded-xl border border-gray-800 p-3 flex flex-col gap-1">
-          <span className="text-xs text-gray-400">Monthly avg</span>
-          <span className="text-xl font-bold text-white tabular-nums">{fmtCurrency(totalYear / 12)}</span>
+        <div className="bg-white rounded-xl border border-gray-200 p-3 flex flex-col gap-1">
+          <span className="text-xs text-gray-500">Monthly avg</span>
+          <span className="text-xl font-bold text-gray-900 tabular-nums">{fmtCurrency(totalYear / 12)}</span>
         </div>
-        <div className="bg-gray-900 rounded-xl border border-gray-800 p-3 flex flex-col gap-1">
-          <span className="text-xs text-gray-400">Entries {selYear}</span>
-          <span className="text-xl font-bold text-white">{yearEntries.length}</span>
+        <div className="bg-white rounded-xl border border-gray-200 p-3 flex flex-col gap-1">
+          <span className="text-xs text-gray-500">Entries {selYear}</span>
+          <span className="text-xl font-bold text-gray-900">{yearEntries.length}</span>
         </div>
-        <div className="bg-gray-900 rounded-xl border border-gray-800 p-3 flex flex-col gap-1">
-          <span className="text-xs text-gray-400">Top platform</span>
-          <span className="text-sm font-bold text-yellow-400 truncate">{byPlatform[0]?.name ?? '—'}</span>
+        <div className="bg-white rounded-xl border border-gray-200 p-3 flex flex-col gap-1">
+          <span className="text-xs text-gray-500">Top platform</span>
+          <span className="text-sm font-bold text-blue-600 truncate">{byPlatform[0]?.name ?? '—'}</span>
         </div>
       </div>
 
       {/* Charts */}
       <div className="grid md:grid-cols-2 gap-4">
-        <div className="bg-gray-900 rounded-xl border border-gray-800 p-4">
-          <h3 className="text-sm font-semibold text-white mb-3">Monthly spend — {selYear}</h3>
+        <div className="bg-white rounded-xl border border-gray-200 p-4">
+          <h3 className="text-sm font-semibold text-gray-900 mb-3">Monthly spend — {selYear}</h3>
           <ResponsiveContainer width="100%" height={160}>
             <BarChart data={byMonth} margin={{ top: 0, right: 8, left: -15, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
@@ -161,17 +161,17 @@ export default function AdsSpend() {
           </ResponsiveContainer>
         </div>
 
-        <div className="bg-gray-900 rounded-xl border border-gray-800 p-4">
-          <h3 className="text-sm font-semibold text-white mb-3">By platform — {selYear}</h3>
+        <div className="bg-white rounded-xl border border-gray-200 p-4">
+          <h3 className="text-sm font-semibold text-gray-900 mb-3">By platform — {selYear}</h3>
           <div className="space-y-2">
             {byPlatform.map((p, i) => (
               <div key={p.name} className="flex items-center gap-3">
-                <span className="text-xs text-gray-400 w-28 truncate shrink-0">{p.name}</span>
-                <div className="flex-1 h-5 bg-gray-800 rounded-full overflow-hidden">
+                <span className="text-xs text-gray-500 w-28 truncate shrink-0">{p.name}</span>
+                <div className="flex-1 h-5 bg-gray-50 rounded-full overflow-hidden">
                   <div className="h-full rounded-full transition-all duration-500"
                     style={{ width: `${byPlatform[0]?.value ? (p.value / byPlatform[0].value) * 100 : 0}%`, backgroundColor: COLORS[i % COLORS.length] }} />
                 </div>
-                <span className="text-xs font-semibold text-white tabular-nums w-16 text-right shrink-0">{fmtCurrency(p.value)}</span>
+                <span className="text-xs font-semibold text-gray-900 tabular-nums w-16 text-right shrink-0">{fmtCurrency(p.value)}</span>
               </div>
             ))}
             {!byPlatform.length && <p className="text-sm text-gray-500 text-center py-4">No data for {selYear}</p>}
@@ -181,9 +181,9 @@ export default function AdsSpend() {
 
       {/* Table */}
       {isLoading
-        ? <div className="flex justify-center py-10"><Loader2 size={20} className="animate-spin text-yellow-400" /></div>
+        ? <div className="flex justify-center py-10"><Loader2 size={20} className="animate-spin text-blue-600" /></div>
         : (
-          <div className="overflow-x-auto rounded-xl border border-gray-800">
+          <div className="overflow-x-auto rounded-xl border border-gray-200">
             <table className="w-full">
               <thead>
                 <tr>
@@ -194,14 +194,14 @@ export default function AdsSpend() {
               </thead>
               <tbody>
                 {entries.map(e => (
-                  <tr key={e.id} className="border-t border-gray-800 hover:bg-gray-800/40 group">
-                    <td className="px-3 py-2.5 text-sm text-gray-300 whitespace-nowrap">{fmtDate(e.date)}</td>
-                    <td className="px-3 py-2.5 text-sm text-gray-300">{e.platform || '—'}</td>
-                    <td className="px-3 py-2.5 text-sm font-semibold text-white tabular-nums">{fmtCurrency(e.amount)}</td>
-                    <td className="px-3 py-2.5 text-sm text-gray-400 max-w-[240px] truncate">{e.notes || '—'}</td>
+                  <tr key={e.id} className="border-t border-gray-200 hover:bg-gray-50/40 group">
+                    <td className="px-3 py-2.5 text-sm text-gray-600 whitespace-nowrap">{fmtDate(e.date)}</td>
+                    <td className="px-3 py-2.5 text-sm text-gray-600">{e.platform || '—'}</td>
+                    <td className="px-3 py-2.5 text-sm font-semibold text-gray-900 tabular-nums">{fmtCurrency(e.amount)}</td>
+                    <td className="px-3 py-2.5 text-sm text-gray-500 max-w-[240px] truncate">{e.notes || '—'}</td>
                     <td className="px-3 py-2.5 text-right">
                       <div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                        <button onClick={() => openEdit(e)} className="text-gray-500 hover:text-yellow-400"><Edit2 size={13} /></button>
+                        <button onClick={() => openEdit(e)} className="text-gray-500 hover:text-blue-600"><Edit2 size={13} /></button>
                         <button onClick={() => { if (confirm('Delete?')) del.mutate(e.id) }} className="text-gray-500 hover:text-red-400"><Trash2 size={13} /></button>
                       </div>
                     </td>
@@ -224,7 +224,7 @@ export default function AdsSpend() {
           <Select label="Platform" value={form.platform || ''} onChange={ef('platform')} options={PLATFORMS} />
           <TextArea label="Notes / campaign" value={form.notes || ''} onChange={ef('notes')} />
         </div>
-        <div className="flex justify-between mt-5 pt-4 border-t border-gray-800">
+        <div className="flex justify-between mt-5 pt-4 border-t border-gray-200">
           <div>
             {form.id && (
               <button onClick={() => { if (confirm('Delete?')) { del.mutate(form.id); setOpen(false) } }}
@@ -234,8 +234,8 @@ export default function AdsSpend() {
             )}
           </div>
           <div className="flex gap-2">
-            <button onClick={() => setOpen(false)} className="text-sm px-4 py-2 rounded-lg bg-gray-800 text-gray-400 hover:text-white">Cancel</button>
-            <button onClick={save} disabled={saving} className="flex items-center gap-1.5 text-sm px-5 py-2 rounded-lg bg-yellow-400 hover:bg-yellow-300 text-gray-900 font-semibold disabled:opacity-50">
+            <button onClick={() => setOpen(false)} className="text-sm px-4 py-2 rounded-lg bg-gray-50 text-gray-500 hover:text-gray-900">Cancel</button>
+            <button onClick={save} disabled={saving} className="flex items-center gap-1.5 text-sm px-5 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-gray-900 font-semibold disabled:opacity-50">
               {saving && <Loader2 size={13} className="animate-spin" />} Save
             </button>
           </div>
