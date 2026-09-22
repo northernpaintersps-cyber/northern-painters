@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/lib/auth'
@@ -10,8 +11,8 @@ import {
   getJobScheduledDates, today
 } from '@/lib/utils'
 import {
-  Plus, Search, Loader2,
-  Trash2, Calendar, Edit2
+  Plus, Loader2, Trash2, Edit2,
+  Bell, Copy, Check, CalendarPlus, Camera, ArrowUpDown, X, Info,
 } from 'lucide-react'
 
 const VAR_STATUSES = ['Pending','Approved','Rejected']
@@ -148,6 +149,11 @@ const JOB_TYPES = [
   'Interior repaint','Exterior repaint','Full repaint','Deck/timber coating',
   'Hourly rate','New build - exterior','New build - interior','Limewash / specialty','Other'
 ]
+// V16 .ii / .is — borderless inline table inputs
+const II = 'border-none bg-transparent text-[12.5px] font-inherit text-inherit w-full focus:outline-none focus:bg-blue-50/60 rounded px-0.5'
+const IS = 'border-none bg-transparent text-xs font-inherit text-inherit cursor-pointer focus:outline-none'
+const BTN = 'ml-1 px-1.5 py-1 rounded-md bg-white border border-black/20 hover:bg-[#f5f4f0] align-middle'
+
 const JOB_STATUSES = ['Not Started','Scheduled','In Progress','Hourly Rate Accepted','Finished','Closed']
 const QUOTE_STATUSES = [
   'Info Collected','Site Visit','Quote Created','Sent','Negotiating',
@@ -366,15 +372,58 @@ function CostTrackerTab({ job, jobId }: { job: any; jobId: string | null }) {
 }
 
 // ── Main component ────────────────────────────────────────────
+// All variations (for the "N var" badge on each row)
+function useAllVariations() {
+  const { user } = useAuth()
+  return useQuery({
+    queryKey: ['np_variations', user?.id],
+    queryFn: async () => {
+      const { data } = await supabase.from('np_variations').select('job_id').eq('user_id', user!.id)
+      return (data ?? []) as any[]
+    },
+    enabled: !!user,
+  })
+}
+
+// V16 qe() — inline field edit, saves instantly
+function useQuickEdit() {
+  const qc = useQueryClient()
+  const { user } = useAuth()
+  return useMutation({
+    mutationFn: async ({ job, field, value }: { job: any; field: string; value: any }) => {
+      const patch: Record<string, any> = { [field]: value, updated_at: new Date().toISOString() }
+      // V16 recomputes scheduled dates when start/days change
+      if (field === 'sched_start' || field === 'est_days') {
+        patch.scheduled_dates = getJobScheduledDates({ ...job, ...patch })
+      }
+      const { error } = await (supabase.from('np_jobs') as any)
+        .update(patch).eq('id', job.id).eq('user_id', user!.id)
+      if (error) throw error
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['np_jobs'] }),
+  })
+}
+
+const snoozedUntil = (j: any) => j?.extra?.follow_up_snoozed_until ?? null
+
+// V16 copyFollowUpMsg()
+function followUpMessage(j: any) {
+  return `Hi ${j.client},\n\nJust following up on the quote we sent for ${j.job_desc || j.type || 'your painting project'} at ${j.address}.\n\nQuote: ${fmtCurrency(j.quote_ex_gst)} ex GST (${fmtCurrency((j.quote_ex_gst || 0) * 1.1)} inc GST)\n\nHappy to answer any questions or adjust the scope if needed.\n\nLooking forward to hearing from you!\n\nNorthern Painters`
+}
+
 export default function Jobs() {
   const { data: jobs = [], isLoading } = useJobs()
+  const { data: allVariations = [] } = useAllVariations()
   const upsert = useUpsertJob()
   const del = useDeleteJob()
+  const quickEdit = useQuickEdit()
   const { user } = useAuth()
+  const nav = useNavigate()
 
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('All')
   const [quoteFilter, setQuoteFilter] = useState('All')
+  const [asc, setAsc] = useState(false)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [form, setForm] = useState<Job>(emptyForm())
   const [modalOpen, setModalOpen] = useState(false)
@@ -400,14 +449,59 @@ export default function Jobs() {
   }, [])
 
   const filtered = useMemo(() => {
-    return jobs.filter(j => {
+    const rows = jobs.filter(j => {
       const s = search.toLowerCase()
       const matchSearch = !s || [j.client, j.address, j.id, j.type, j.job_desc].some(v => v?.toLowerCase().includes(s))
       const matchStatus = statusFilter === 'All' || j.status === statusFilter
       const matchQuote = quoteFilter === 'All' || j.quote_status === quoteFilter
       return matchSearch && matchStatus && matchQuote
     })
-  }, [jobs, search, statusFilter, quoteFilter])
+    // V16 sorts by created date / id
+    return rows.sort((a, b) => {
+      const da = a.created_at || a.id || '', db = b.created_at || b.id || ''
+      return asc ? (da < db ? -1 : da > db ? 1 : 0) : (da > db ? -1 : da < db ? 1 : 0)
+    })
+  }, [jobs, search, statusFilter, quoteFilter, asc])
+
+  // V16 needFollowUp — quotes sent 7+ days ago, not snoozed
+  const todayStr = today()
+  const needFollowUp = useMemo(() => jobs.filter(j => {
+    if (j.quote_status !== 'Sent' || !j.quote_sent) return false
+    const snz = snoozedUntil(j)
+    if (snz && snz > todayStr) return false
+    const sent = normaliseDate(j.quote_sent)
+    if (!sent) return false
+    return Math.floor((Date.now() - new Date(sent).getTime()) / 864e5) >= 7
+  }), [jobs, todayStr])
+
+  const varCount = useMemo(() => {
+    const m: Record<string, number> = {}
+    allVariations.forEach(v => { if (v.job_id) m[v.job_id] = (m[v.job_id] || 0) + 1 })
+    return m
+  }, [allVariations])
+
+  async function copyFollowUp(j: any) {
+    const msg = followUpMessage(j)
+    try {
+      await navigator.clipboard.writeText(msg)
+      alert('Follow-up message copied!')
+    } catch {
+      prompt('Copy this message:', msg)
+    }
+  }
+
+  async function markFollowedUp(j: any) {
+    const until = new Date(Date.now() + 7 * 864e5).toISOString().slice(0, 10)
+    await quickEdit.mutateAsync({
+      job: j, field: 'extra',
+      value: { ...(j.extra ?? {}), follow_up_snoozed_until: until, last_follow_up: todayStr },
+    })
+  }
+
+  async function quickDelete(j: any) {
+    if (!confirm('Delete this job?')) return
+    await del.mutateAsync(j.id)
+  }
 
   function openNew() {
     setForm(emptyForm())
@@ -461,99 +555,176 @@ export default function Jobs() {
   return (
     <div className="h-full flex flex-col">
       {/* Header */}
-      <div className="px-6 py-4 border-b border-gray-200 space-y-3 shrink-0">
-        <div className="flex items-center justify-between">
-          <h1 className="text-lg font-bold text-gray-900">Jobs & Quotes</h1>
-          <button onClick={openNew} className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-gray-900 font-semibold text-sm px-3 py-1.5 rounded-lg transition-colors">
-            <Plus size={14} /> New job
+      <div className="px-5 pt-5 shrink-0">
+        <div className="flex items-center justify-between flex-wrap gap-2 mb-2">
+          <h2 className="text-[17px] font-semibold text-gray-900">Jobs &amp; Quotes</h2>
+          <button onClick={openNew}
+            className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white font-medium text-[13px] px-3 py-1.5 rounded-lg transition-colors">
+            <Plus size={14} /> New Job
           </button>
         </div>
-        <div className="relative">
-          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
-          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search client, address, job ID…"
-            className="w-full bg-gray-50 border border-gray-200 rounded-lg pl-8 pr-3 py-2 text-sm text-gray-900 placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-blue-500" />
+        <div className="text-[11px] text-[#666] mb-2 flex items-center gap-1">
+          <Info size={12} /> Edit inline — dropdowns save instantly. Click pencil for full edit.
         </div>
-        <div className="flex gap-2 overflow-x-auto pb-0.5">
-          <div className="flex gap-1 shrink-0">
-            {['All', ...JOB_STATUSES].map(s => (
-              <button key={s} onClick={() => setStatusFilter(s)}
-                className={`shrink-0 text-xs px-2.5 py-1 rounded-full transition-colors ${statusFilter === s ? 'bg-blue-600 text-gray-900 font-semibold' : 'bg-gray-50 text-gray-500 hover:text-gray-900'}`}>
-                {s}
-              </button>
-            ))}
-          </div>
-          <div className="w-px bg-gray-200 shrink-0" />
-          <div className="flex gap-1 shrink-0">
-            {['All', ...QUOTE_STATUSES].map(s => (
-              <button key={s} onClick={() => setQuoteFilter(s)}
-                className={`shrink-0 text-xs px-2.5 py-1 rounded-full transition-colors ${quoteFilter === s ? 'bg-blue-500 text-gray-900 font-semibold' : 'bg-gray-50 text-gray-500 hover:text-gray-900'}`}>
-                {s}
-              </button>
-            ))}
-          </div>
+
+        {/* V16 filter bar */}
+        <div className="flex gap-2 mb-3 flex-wrap items-center">
+          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search..."
+            className="w-[200px] px-2.5 py-1.5 text-[12.5px] bg-white border border-black/20 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500" />
+          <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
+            className="px-2.5 py-1.5 text-[12.5px] bg-white border border-black/20 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500">
+            <option value="All">All job statuses</option>
+            {JOB_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
+          </select>
+          <select value={quoteFilter} onChange={e => setQuoteFilter(e.target.value)}
+            className="px-2.5 py-1.5 text-[12.5px] bg-white border border-black/20 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500">
+            <option value="All">All quote statuses</option>
+            {QUOTE_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
+          </select>
+          <button onClick={() => setAsc(a => !a)}
+            className="flex items-center gap-1 px-2.5 py-1.5 text-[12.5px] bg-white border border-black/20 rounded-lg hover:bg-[#f5f4f0] whitespace-nowrap">
+            <ArrowUpDown size={13} /> {asc ? 'Oldest first' : 'Newest first'}
+          </button>
+          <button onClick={() => { setSearch(''); setStatusFilter('All'); setQuoteFilter('All'); setAsc(false) }}
+            title="Clear filters"
+            className="flex items-center gap-1 px-2.5 py-1.5 text-[12.5px] bg-white border border-black/20 rounded-lg hover:bg-[#f5f4f0] text-[#666]">
+            <X size={13} /> Clear
+          </button>
         </div>
-        <p className="text-xs text-gray-500">{filtered.length} of {jobs.length} jobs</p>
+
+        {/* Quote follow-up card */}
+        {needFollowUp.length > 0 && (
+          <div className="bg-white border border-black/[0.12] rounded-xl px-4 py-3.5 mb-3" style={{ borderLeft: '4px solid #f59e0b' }}>
+            <div className="mb-2.5">
+              <span className="text-[13px] font-bold text-[#92400e] inline-flex items-center gap-1.5">
+                <Bell size={14} /> Quote follow-up needed
+              </span>
+              <span className="text-[11px] text-[#666] ml-2">
+                {needFollowUp.length} quote{needFollowUp.length === 1 ? '' : 's'} sent 7+ days ago with no response
+              </span>
+            </div>
+            <div className="flex flex-col gap-1.5">
+              {needFollowUp.map(j => {
+                const sent = normaliseDate(j.quote_sent)!
+                const days = Math.floor((Date.now() - new Date(sent).getTime()) / 864e5)
+                return (
+                  <div key={j.id} className="flex items-center justify-between bg-[#fffbeb] rounded-lg px-3 py-2 flex-wrap gap-2">
+                    <div>
+                      <span className="font-semibold text-[13px]">{j.client}</span>
+                      <span className="text-[11px] text-[#666] ml-2">
+                        {j.id} · {j.type || ''} · {fmtCurrency(j.quote_ex_gst)} ex GST
+                      </span>
+                      <span className="text-[11px] text-[#92400e] ml-2 font-semibold">{days} days ago</span>
+                    </div>
+                    <div className="flex gap-1.5">
+                      <button onClick={() => copyFollowUp(j)}
+                        className="flex items-center gap-1 px-2 py-1 text-[11px] rounded-md bg-[#fef3c7] border border-[#fcd34d] text-[#92400e] hover:brightness-95">
+                        <Copy size={11} /> Copy message
+                      </button>
+                      <button onClick={() => markFollowedUp(j)}
+                        className="flex items-center gap-1 px-2 py-1 text-[11px] rounded-md bg-[#dcfce7] border border-[#86efac] text-[#166534] hover:brightness-95">
+                        <Check size={11} /> Mark followed up
+                      </button>
+                      <button onClick={() => openEdit(j)}
+                        className="flex items-center gap-1 px-2 py-1 text-[11px] rounded-md bg-blue-600 text-white hover:bg-blue-700">
+                        <Edit2 size={11} /> Open job
+                      </button>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )}
       </div>
 
-      {/* List */}
-      <div className="flex-1 overflow-y-auto divide-y divide-gray-200">
-        {isLoading && (
-          <div className="flex items-center justify-center py-16">
-            <Loader2 size={20} className="animate-spin text-blue-600" />
-          </div>
-        )}
-        {!isLoading && filtered.length === 0 && (
-          <div className="text-center py-16 text-gray-500 text-sm">No jobs found</div>
-        )}
-        {filtered.map(j => {
-          const dates = Array.isArray(j.scheduled_dates) ? j.scheduled_dates : []
-          return (
-            <div key={j.id} className="flex items-center hover:bg-gray-50/40 transition-colors group">
-              <button className="flex-1 text-left px-6 py-4 min-w-0" onClick={() => openEdit(j)}>
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2 mb-1 flex-wrap">
-                      <span className="text-xs text-gray-500 font-mono">{j.id}</span>
-                      {j.quote_status && <Badge label={j.quote_status} />}
-                    </div>
-                    <div className="text-sm font-semibold text-gray-900 truncate">{j.client || '—'}</div>
-                    <div className="text-xs text-gray-500 truncate mt-0.5">{j.address || '—'}</div>
-                    <div className="flex items-center gap-3 mt-1.5 flex-wrap">
-                      {j.type && <span className="text-xs text-gray-500">{j.type}</span>}
-                      {dates.length > 0 && (
-                        <span className="flex items-center gap-1 text-xs text-gray-500">
-                          <Calendar size={10} />
-                          {fmtDate(dates[0])}{dates.length > 1 ? ` +${dates.length - 1}d` : ''}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                  <div className="text-right shrink-0">
-                    <div className="text-sm font-bold text-gray-900">{fmtCurrency(j.agreed_ex_gst || j.quote_ex_gst)}</div>
-                    {j.agreed_ex_gst && j.quote_ex_gst && j.agreed_ex_gst !== j.quote_ex_gst && (
-                      <div className="text-xs text-gray-500">quoted {fmtCurrency(j.quote_ex_gst)}</div>
-                    )}
-                    <div className="text-xs text-gray-500 mt-0.5">{j.quote_no || ''}</div>
-                  </div>
-                </div>
-              </button>
-              {/* Quick status selector */}
-              <div className="pr-4 shrink-0">
-                <select
-                  value={j.status || ''}
-                  onClick={e => e.stopPropagation()}
-                  onChange={async e => {
-                    e.stopPropagation()
-                    await upsert.mutateAsync({ ...j, status: e.target.value })
-                  }}
-                  className="text-xs bg-gray-50 border border-gray-200 rounded-lg px-2 py-1 text-gray-600 focus:outline-none focus:ring-1 focus:ring-blue-500 cursor-pointer opacity-0 group-hover:opacity-100 transition-opacity"
-                >
-                  {JOB_STATUSES.map(s => <option key={s}>{s}</option>)}
-                </select>
-              </div>
+      {/* V16 inline-editable table */}
+      <div className="flex-1 overflow-hidden px-5 pb-5">
+        <div className="bg-white border border-black/[0.12] rounded-xl overflow-hidden h-full">
+          {isLoading ? (
+            <div className="flex items-center justify-center py-16">
+              <Loader2 size={20} className="animate-spin text-blue-600" />
             </div>
-          )
-        })}
+          ) : (
+            <div className="overflow-auto max-h-[70vh]">
+              <table className="w-full border-collapse text-[12.5px]">
+                <thead>
+                  <tr>
+                    {['ID','Client','Address','Agreed ex GST','Quote status','Job status','Start','Days',''].map((h, i) => (
+                      <th key={i} className="text-left px-2.5 py-[7px] border-b border-black/[0.12] text-[#666] font-medium whitespace-nowrap bg-[#fafaf8] sticky top-0 z-[2]">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {filtered.map(j => {
+                    const vc = varCount[j.id] || 0
+                    const scheduled = ['Scheduled','In Progress','Hourly Rate Accepted'].includes(j.status || '')
+                    return (
+                      <tr key={j.id} className="border-b border-black/[0.06] hover:bg-[#fafaf8]">
+                        <td className="px-2.5 py-[7px] text-[#2563eb] font-medium whitespace-nowrap">{j.id}</td>
+                        <td className="px-2.5 py-[7px]">
+                          <input defaultValue={j.client ?? ''} className={II}
+                            onBlur={e => { if (e.target.value !== (j.client ?? '')) quickEdit.mutate({ job: j, field: 'client', value: e.target.value }) }} />
+                        </td>
+                        <td className="px-2.5 py-[7px]">
+                          <input defaultValue={j.address ?? ''} className={II} style={{ maxWidth: 130 }}
+                            onBlur={e => { if (e.target.value !== (j.address ?? '')) quickEdit.mutate({ job: j, field: 'address', value: e.target.value }) }} />
+                        </td>
+                        <td className="px-2.5 py-[7px]">
+                          <input type="number" defaultValue={j.agreed_ex_gst ?? ''} placeholder="—" className={II} style={{ width: 90 }}
+                            onBlur={e => {
+                              const v = e.target.value === '' ? null : parseFloat(e.target.value)
+                              if (v !== (j.agreed_ex_gst ?? null)) quickEdit.mutate({ job: j, field: 'agreed_ex_gst', value: v })
+                            }} />
+                        </td>
+                        <td className="px-2.5 py-[7px] whitespace-nowrap">
+                          <select value={j.quote_status ?? ''} className={IS}
+                            onChange={e => quickEdit.mutate({ job: j, field: 'quote_status', value: e.target.value })}>
+                            <option value=""></option>
+                            {QUOTE_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
+                          </select>
+                          {vc > 0 && (
+                            <span className="ml-1 inline-block px-2 py-0.5 rounded-full text-[11px] font-medium bg-[#fef3c7] text-[#92400e]">{vc} var</span>
+                          )}
+                        </td>
+                        <td className="px-2.5 py-[7px]">
+                          <select value={j.status ?? ''} className={IS}
+                            onChange={e => quickEdit.mutate({ job: j, field: 'status', value: e.target.value })}>
+                            <option value=""></option>
+                            {JOB_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
+                          </select>
+                        </td>
+                        <td className="px-2.5 py-[7px]">
+                          <input type="date" defaultValue={normaliseDate(j.sched_start) ?? ''} className={II} style={{ width: 118 }}
+                            onBlur={e => { if (e.target.value !== (normaliseDate(j.sched_start) ?? '')) quickEdit.mutate({ job: j, field: 'sched_start', value: e.target.value || null }) }} />
+                        </td>
+                        <td className="px-2.5 py-[7px]">
+                          <input type="number" defaultValue={j.est_days ?? ''} placeholder="—" className={II} style={{ width: 44 }}
+                            onBlur={e => {
+                              const v = e.target.value === '' ? null : parseFloat(e.target.value)
+                              if (v !== (j.est_days ?? null)) quickEdit.mutate({ job: j, field: 'est_days', value: v })
+                            }} />
+                        </td>
+                        <td className="px-2.5 py-[7px] whitespace-nowrap">
+                          <button onClick={() => nav('/visits')} title="New site visit" className={BTN}><Camera size={13} /></button>
+                          <button onClick={() => nav('/crew')} title="Schedule to crew calendar"
+                            className={BTN} style={scheduled ? { color: '#059669' } : undefined}><CalendarPlus size={13} /></button>
+                          <button onClick={() => openEdit(j)} title="Edit"
+                            className="ml-1 px-1.5 py-1 rounded-md bg-blue-600 text-white hover:bg-blue-700 align-middle"><Edit2 size={13} /></button>
+                          <button onClick={() => quickDelete(j)} title="Delete"
+                            className={BTN} style={{ color: '#c0392b' }}><Trash2 size={13} /></button>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                  {filtered.length === 0 && (
+                    <tr><td colSpan={9} className="text-center py-16 text-[#666]">No jobs found</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Edit/New Modal */}
