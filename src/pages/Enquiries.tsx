@@ -6,7 +6,8 @@ import { Modal } from '@/components/ui/Modal'
 import { Input, Select, TextArea } from '@/components/ui/Field'
 import { Badge } from '@/components/ui/Badge'
 import { fmtDate, genId, today } from '@/lib/utils'
-import { Plus, Loader2, Trash2, Edit2, Search, Phone, Mail, MapPin, ArrowRight } from 'lucide-react'
+import { Plus, Loader2, Trash2, Edit2, Search, Phone, Mail, MapPin, ArrowRight, Briefcase } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
 
 const STATUSES = ['New','Contacted','Quote Sent','Booked','Lost','Spam']
 const SOURCES  = ['Word of mouth','Google','Facebook','Instagram','Flyer','Builder referral','Return client','Other']
@@ -52,7 +53,7 @@ function useDeleteEnquiry() {
 }
 
 // ── Kanban card ────────────────────────────────────────────────
-function EnqCard({ enq, onEdit, onDelete, onMove }: { enq: any; onEdit: () => void; onDelete: () => void; onMove: (status: string) => void }) {
+function EnqCard({ enq, onEdit, onDelete, onMove, onConvert }: { enq: any; onEdit: () => void; onDelete: () => void; onMove: (status: string) => void; onConvert: () => void }) {
   const nextStatus = STATUSES[STATUSES.indexOf(enq.enq_status) + 1]
   return (
     <div className="bg-gray-800 rounded-xl border border-gray-700 p-3 space-y-2 hover:border-gray-600 transition-colors group">
@@ -87,12 +88,21 @@ function EnqCard({ enq, onEdit, onDelete, onMove }: { enq: any; onEdit: () => vo
           <span className="text-xs text-gray-500">{fmtDate(enq.date)}</span>
           {enq.source && <span className="text-xs text-gray-500">· {enq.source}</span>}
         </div>
-        {nextStatus && !['Lost','Spam'].includes(nextStatus) && (
-          <button onClick={() => onMove(nextStatus)}
-            className="flex items-center gap-0.5 text-xs text-gray-500 hover:text-yellow-400 transition-colors">
-            {nextStatus} <ArrowRight size={10} />
-          </button>
-        )}
+        <div className="flex items-center gap-1.5">
+          {!enq.job_id && (
+            <button onClick={onConvert} title="Convert to job"
+              className="flex items-center gap-0.5 text-xs text-gray-600 hover:text-green-400 transition-colors">
+              <Briefcase size={10} /> Job
+            </button>
+          )}
+          {enq.job_id && <span className="text-xs text-green-500 font-mono">{enq.job_id}</span>}
+          {nextStatus && !['Lost','Spam'].includes(nextStatus) && (
+            <button onClick={() => onMove(nextStatus)}
+              className="flex items-center gap-0.5 text-xs text-gray-500 hover:text-yellow-400 transition-colors">
+              {nextStatus} <ArrowRight size={10} />
+            </button>
+          )}
+        </div>
       </div>
 
       {enq.notes && <p className="text-xs text-gray-500 line-clamp-2">{enq.notes}</p>}
@@ -101,9 +111,9 @@ function EnqCard({ enq, onEdit, onDelete, onMove }: { enq: any; onEdit: () => vo
 }
 
 // ── Kanban column ──────────────────────────────────────────────
-function Column({ status, enqs, onEdit, onDelete, onMove }: {
+function Column({ status, enqs, onEdit, onDelete, onMove, onConvert }: {
   status: string; enqs: any[];
-  onEdit: (e: any) => void; onDelete: (id: string) => void; onMove: (id: string, s: string) => void
+  onEdit: (e: any) => void; onDelete: (id: string) => void; onMove: (id: string, s: string) => void; onConvert: (e: any) => void
 }) {
   const COLORS: Record<string, string> = {
     'New':        'text-blue-400 border-blue-800',
@@ -125,6 +135,7 @@ function Column({ status, enqs, onEdit, onDelete, onMove }: {
             onEdit={() => onEdit(e)}
             onDelete={() => onDelete(e.id)}
             onMove={(s) => onMove(e.id, s)}
+            onConvert={() => onConvert(e)}
           />
         ))}
         {!enqs.length && (
@@ -160,6 +171,7 @@ export default function Enquiries() {
   const { data: enquiries = [], isLoading } = useEnquiries()
   const upsert = useUpsertEnquiry()
   const del = useDeleteEnquiry()
+  const navigate = useNavigate()
 
   const [view, setView] = useState<'kanban' | 'list'>('kanban')
   const [search, setSearch] = useState('')
@@ -180,6 +192,28 @@ export default function Enquiries() {
       await upsert.mutateAsync({ ...form, id: form.id || genId('enq') })
       setOpen(false)
     } finally { setSaving(false) }
+  }
+
+  async function convertToJob(enq: any) {
+    // Store enquiry data for Jobs page to pick up as a pre-filled new job
+    try {
+      sessionStorage.setItem('np_prefill_job', JSON.stringify({
+        client: enq.client || '',
+        address: enq.address || '',
+        phone: enq.phone || '',
+        email: enq.email || '',
+        lead_source: enq.source || '',
+        job_desc: enq.notes || '',
+        status: 'Not Started',
+        quote_status: 'Info Collected',
+        type: 'Interior repaint',
+        terms: 'Labour and materials',
+        on_books: 'Invoiced',
+        weather: 'None',
+        _enq_id: enq.id,
+      }))
+    } catch {}
+    navigate('/jobs?new=1')
   }
 
   async function moveStatus(id: string, status: string) {
@@ -278,6 +312,7 @@ export default function Enquiries() {
                     onEdit={openEdit}
                     onDelete={id => { if (confirm('Delete this enquiry?')) del.mutate(id) }}
                     onMove={moveStatus}
+                    onConvert={convertToJob}
                   />
                 ))}
               </div>
@@ -331,7 +366,7 @@ export default function Enquiries() {
           )}
         </div>
         <div className="flex justify-between mt-5 pt-4 border-t border-gray-800">
-          <div>
+          <div className="flex items-center gap-3">
             {form.id && (
               <button onClick={() => { if (confirm('Delete this enquiry?')) { del.mutate(form.id); setOpen(false) } }}
                 className="flex items-center gap-1.5 text-sm text-red-400 hover:text-red-300">
@@ -340,6 +375,15 @@ export default function Enquiries() {
             )}
           </div>
           <div className="flex gap-2">
+            {form.id && !form.job_id && (
+              <button onClick={() => { setOpen(false); convertToJob(form) }}
+                className="flex items-center gap-1.5 text-sm px-4 py-2 rounded-lg bg-green-500/20 text-green-400 hover:bg-green-500/30 font-medium transition-colors">
+                <Briefcase size={13} /> Convert to job
+              </button>
+            )}
+            {form.job_id && (
+              <span className="flex items-center gap-1 text-xs text-green-400 px-3"><Briefcase size={12} /> {form.job_id}</span>
+            )}
             <button onClick={() => setOpen(false)} className="text-sm px-4 py-2 rounded-lg bg-gray-800 text-gray-400 hover:text-white">Cancel</button>
             <button onClick={save} disabled={saving} className="flex items-center gap-1.5 text-sm px-5 py-2 rounded-lg bg-yellow-400 hover:bg-yellow-300 text-gray-900 font-semibold disabled:opacity-50">
               {saving && <Loader2 size={13} className="animate-spin" />} Save

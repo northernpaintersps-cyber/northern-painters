@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useCallback } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/lib/auth'
@@ -6,7 +6,8 @@ import { Modal } from '@/components/ui/Modal'
 import { Input, Select, TextArea } from '@/components/ui/Field'
 import { Badge } from '@/components/ui/Badge'
 import { fmtCurrency, fmtDate, genId, today } from '@/lib/utils'
-import { Plus, Search, Loader2, Trash2, User, Calendar, Clock } from 'lucide-react'
+import { Plus, Search, Loader2, Trash2, User, ChevronLeft, ChevronRight } from 'lucide-react'
+import { addDays } from '@/lib/utils'
 
 type CrewMember = Record<string, any>
 type Assignment = Record<string, any>
@@ -111,7 +112,8 @@ export default function Crew() {
   const upsertAssignment = useUpsertAssignment()
   const deleteAssignment = useDeleteAssignment()
 
-  const [tab, setTab] = useState<'crew' | 'assignments'>('crew')
+  const [tab, setTab] = useState<'crew' | 'schedule' | 'assignments'>('crew')
+  const [weekOffset, setWeekOffset] = useState(0)
   const [search, setSearch] = useState('')
   const [crewForm, setCrewForm] = useState<CrewMember>({})
   const [crewModalOpen, setCrewModalOpen] = useState(false)
@@ -204,10 +206,10 @@ export default function Crew() {
           </button>
         </div>
         <div className="flex gap-1 bg-gray-800 p-1 rounded-lg">
-          {(['crew', 'assignments'] as const).map(t => (
+          {(['crew', 'schedule', 'assignments'] as const).map(t => (
             <button key={t} onClick={() => setTab(t)}
-              className={`flex-1 text-sm py-1.5 rounded-md font-medium capitalize transition-colors ${tab === t ? 'bg-gray-700 text-white' : 'text-gray-400 hover:text-white'}`}>
-              {t} {t === 'crew' ? `(${crew.length})` : `(${assignments.length})`}
+              className={`flex-1 text-xs py-1.5 rounded-md font-medium capitalize transition-colors ${tab === t ? 'bg-gray-700 text-white' : 'text-gray-400 hover:text-white'}`}>
+              {t === 'crew' ? `Crew (${crew.length})` : t === 'schedule' ? 'Schedule' : `Assignments (${assignments.length})`}
             </button>
           ))}
         </div>
@@ -264,6 +266,109 @@ export default function Crew() {
             })}
           </div>
         )}
+
+        {tab === 'schedule' && (() => {
+          // Build 7-day window starting from Monday of current week + offset
+          const now = new Date()
+          const dayOfWeek = now.getDay() // 0=Sun
+          const monday = new Date(now)
+          monday.setDate(now.getDate() - (dayOfWeek === 0 ? 6 : dayOfWeek - 1) + weekOffset * 7)
+          monday.setHours(0,0,0,0)
+          const days = Array.from({ length: 7 }, (_, i) => {
+            const d = new Date(monday)
+            d.setDate(monday.getDate() + i)
+            return d.toISOString().slice(0, 10)
+          })
+          const DAY_LABELS = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun']
+          const todayStr = today()
+
+          // Map date+crewName → assignments
+          const asnMap: Record<string, any[]> = {}
+          assignments.forEach(a => {
+            const key = `${a.date}__${a.crew_name}`
+            if (!asnMap[key]) asnMap[key] = []
+            asnMap[key].push(a)
+          })
+
+          // Crew sorted alphabetically
+          const schedCrew = [...crew].sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+
+          return (
+            <div className="p-4 space-y-3 overflow-x-auto">
+              {/* Week navigation */}
+              <div className="flex items-center gap-3 mb-2">
+                <button onClick={() => setWeekOffset(o => o - 1)} className="p-1.5 rounded-lg bg-gray-800 text-gray-400 hover:text-white transition-colors"><ChevronLeft size={14} /></button>
+                <span className="text-sm text-white font-medium min-w-[160px] text-center">
+                  {new Date(days[0]).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' })}
+                  {' – '}
+                  {new Date(days[6]).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' })}
+                </span>
+                <button onClick={() => setWeekOffset(o => o + 1)} className="p-1.5 rounded-lg bg-gray-800 text-gray-400 hover:text-white transition-colors"><ChevronRight size={14} /></button>
+                {weekOffset !== 0 && (
+                  <button onClick={() => setWeekOffset(0)} className="text-xs text-yellow-400 hover:text-yellow-300 ml-1">Today</button>
+                )}
+              </div>
+
+              {schedCrew.length === 0
+                ? <p className="text-sm text-gray-500 py-8 text-center">No crew members yet</p>
+                : (
+                  <div className="rounded-xl border border-gray-800 overflow-hidden">
+                    <table className="w-full min-w-[700px]">
+                      <thead>
+                        <tr className="bg-gray-900">
+                          <th className="px-3 py-2.5 text-left text-xs font-semibold text-gray-500 w-28 sticky left-0 bg-gray-900 z-10">Crew</th>
+                          {days.map((d, i) => (
+                            <th key={d} className={`px-2 py-2.5 text-center text-xs font-semibold min-w-[90px] ${d === todayStr ? 'text-yellow-400 bg-yellow-400/5' : 'text-gray-500'}`}>
+                              <div>{DAY_LABELS[i]}</div>
+                              <div className="font-normal text-gray-600">{new Date(d).getDate()}</div>
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {schedCrew.map(c => (
+                          <tr key={c.id} className="border-t border-gray-800">
+                            <td className="px-3 py-2 text-xs font-medium text-white whitespace-nowrap sticky left-0 bg-gray-950 z-10">
+                              {c.name}
+                              <div className="text-gray-500 font-normal">{c.role}</div>
+                            </td>
+                            {days.map(d => {
+                              const cell = asnMap[`${d}__${c.name}`] || []
+                              const isToday = d === todayStr
+                              return (
+                                <td key={d} className={`px-1 py-1.5 text-center align-top ${isToday ? 'bg-yellow-400/5' : ''}`}>
+                                  {cell.length > 0
+                                    ? cell.map(a => {
+                                        const job = jobs.find(j => j.id === a.job_id)
+                                        return (
+                                          <button key={a.id} onClick={() => openEditAsn(a)}
+                                            className="block w-full text-left mb-1 bg-blue-500/20 hover:bg-blue-500/30 text-blue-300 rounded px-1.5 py-1 transition-colors">
+                                            <div className="text-xs font-medium truncate">{a.job_id || '—'}</div>
+                                            {job && <div className="text-xs text-blue-400/70 truncate">{job.client}</div>}
+                                            {a.time_slot !== 'full' && <div className="text-xs text-blue-400/50">{a.time_slot}</div>}
+                                          </button>
+                                        )
+                                      })
+                                    : (
+                                      <button onClick={() => { setAsnForm({ date: d, time_slot: 'full', crew_name: c.name }); setSelectedAsnId(null); setAsnModalOpen(true) }}
+                                        className="w-full h-8 rounded border border-dashed border-gray-800 hover:border-gray-600 transition-colors text-gray-700 hover:text-gray-500 text-xs">
+                                        +
+                                      </button>
+                                    )
+                                  }
+                                </td>
+                              )
+                            })}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )
+              }
+            </div>
+          )
+        })()}
 
         {tab === 'assignments' && (
           <div className="divide-y divide-gray-800">

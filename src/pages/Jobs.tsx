@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/lib/auth'
@@ -231,6 +231,24 @@ export default function Jobs() {
   const [modalOpen, setModalOpen] = useState(false)
   const [saving, setSaving] = useState(false)
   const [tab, setTab] = useState<'details'|'schedule'|'financials'|'variations'>('details')
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    if (params.get('new') !== '1') return
+    try {
+      const raw = sessionStorage.getItem('np_prefill_job')
+      if (raw) {
+        const prefill = JSON.parse(raw)
+        sessionStorage.removeItem('np_prefill_job')
+        setForm(f => ({ ...f, ...prefill }))
+      }
+    } catch {}
+    setSelectedId(null)
+    setTab('details')
+    setModalOpen(true)
+    // remove ?new=1 from URL without reload
+    window.history.replaceState({}, '', window.location.pathname)
+  }, [])
 
   const filtered = useMemo(() => {
     return jobs.filter(j => {
