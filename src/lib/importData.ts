@@ -1,9 +1,23 @@
 import { supabase } from './supabase'
 
 // Coerce empty strings / non-values to null for Postgres typed columns
+// Also normalises DD/MM/YYYY → YYYY-MM-DD
 function toDate(v: any): string | null {
   if (v == null || v === '' || v === 'null' || v === 'undefined') return null
-  return String(v)
+  const s = String(v).trim()
+  // DD/MM/YYYY or D/M/YYYY
+  const dmyMatch = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/)
+  if (dmyMatch) {
+    const [, d, m, y] = dmyMatch
+    return `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`
+  }
+  // DD-MM-YYYY
+  const dmyDash = s.match(/^(\d{1,2})-(\d{1,2})-(\d{4})$/)
+  if (dmyDash) {
+    const [, d, m, y] = dmyDash
+    return `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`
+  }
+  return s
 }
 function toNum(v: any): number | null {
   if (v == null || v === '' || v === 'null' || v === 'undefined') return null
@@ -291,10 +305,14 @@ function mapAdsSpend(a: any, userId: string) {
 // ── Batch upsert helper ───────────────────────────────────────
 async function batchUpsert(table: string, rows: any[], chunkSize = 50): Promise<{ count: number; errors: string[] }> {
   if (!rows.length) return { count: 0, errors: [] }
+  // Deduplicate by id — keep last occurrence (most complete data)
+  const seen = new Map<string, any>()
+  for (const r of rows) seen.set(r.id, r)
+  const deduped = Array.from(seen.values())
   const errors: string[] = []
   let count = 0
-  for (let i = 0; i < rows.length; i += chunkSize) {
-    const chunk = rows.slice(i, i + chunkSize)
+  for (let i = 0; i < deduped.length; i += chunkSize) {
+    const chunk = deduped.slice(i, i + chunkSize)
     const { error } = await (supabase.from(table as any) as any).upsert(chunk, { onConflict: 'id' })
     if (error) errors.push(`${table}: ${error.message}`)
     else count += chunk.length
