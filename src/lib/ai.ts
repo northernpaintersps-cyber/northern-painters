@@ -72,6 +72,44 @@ ${context}`
   return callClaude(apiKey, history, system, { model: 'claude-sonnet-4-6', maxTokens: 1500 })
 }
 
+// ── Bank statement reconciliation (V16 analyzeBankStatement) ──
+export interface ReconContext {
+  invoices: Array<Record<string, any>>
+  materials: Array<Record<string, any>>
+  expenses: Array<Record<string, any>>
+  companyName?: string
+  abn?: string
+}
+
+export async function reconcileBankStatement(
+  apiKey: string, statementText: string, ctx: ReconContext,
+): Promise<string> {
+  const money = (v: any) => Number(v || 0).toFixed(2)
+
+  const invSummary = ctx.invoices
+    .filter(i => (i.agreed_ex_gst || 0) > 0)
+    .map(i => `Invoice ${i.id || '?'} — ${i.client} — $${money(i.total_inc_gst || (i.agreed_ex_gst || 0) * 1.1)} inc GST (received: $${money(i.received)})`)
+    .join('\n')
+
+  const matSummary = ctx.materials
+    .map(m => `Material: ${m.supplier} — ${m.mat_desc} — $${money(m.total_inc_gst)} inc GST — ${m.date || '?'}`)
+    .join('\n')
+
+  const expSummary = ctx.expenses
+    .map(e => `Expense: ${e.supplier} — ${e.exp_desc} — $${money((e.amount_ex_gst || 0) + (e.gst || 0))} inc GST — ${e.date || '?'}`)
+    .join('\n')
+
+  const company = ctx.companyName || 'Northern Painters'
+  const abnPart = ctx.abn ? ` (ABN ${ctx.abn})` : ''
+
+  const system = `You are an Australian bookkeeper reconciling a bank statement for ${company}${abnPart}, a painting business in NSW. Analyse the bank CSV against the provided invoices, materials and expenses. Identify: matched credits (invoice payments received), matched debits (materials/expense purchases), unmatched credits, unmatched debits. Calculate GST position. Use Australian dollar formatting. Be concise and practical.`
+
+  const user = `BANK STATEMENT CSV:\n${statementText.slice(0, 8000)}\n\nINVOICES ON FILE:\n${invSummary || 'None'}\n\nMATERIALS/PURCHASES ON FILE:\n${matSummary || 'None'}\n\nEXPENSES ON FILE:\n${expSummary || 'None'}\n\nProvide: 1) Matched income vs invoices 2) Matched expenses vs materials/purchases 3) Unmatched transactions (flag for review) 4) GST collected vs paid reconciliation 5) Any discrepancies to investigate.`
+
+  return callClaude(apiKey, [{ role: 'user', content: user }], system,
+    { model: 'claude-sonnet-4-6', maxTokens: 4000 })
+}
+
 // ── Drawing / document quantity takeoff (V16 paint-calc extractor) ──
 export interface ExtractDoc {
   file: File

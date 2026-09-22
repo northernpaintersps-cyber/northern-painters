@@ -1,9 +1,13 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useRef } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/lib/auth'
 import { fmtCurrency, invStatus, today } from '@/lib/utils'
-import { Printer, Loader2, FileSpreadsheet, Download, ReceiptText, LineChart } from 'lucide-react'
+import { reconcileBankStatement } from '@/lib/ai'
+import {
+  Printer, Loader2, FileSpreadsheet, Download, ReceiptText, LineChart,
+  Landmark, Upload, X,
+} from 'lucide-react'
 import { useBusinessSettings } from '@/pages/SettingsPage'
 
 type Row = Record<string, any>
@@ -69,6 +73,32 @@ function StatementRows({ rows }: { rows: LineSpec[] }) {
   )
 }
 
+
+// Minimal markdown -> HTML for the reconciliation result
+function mdHTML(src: string): string {
+  const e = (t: string) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  const out: string[] = []
+  let inList = false
+  for (const raw of e(src).split('\n')) {
+    const line = raw
+      .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+      .replace(/`([^`]+)`/g, '<code style="background:rgba(0,0,0,.06);padding:1px 4px;border-radius:3px">$1</code>')
+    const li = line.match(/^\s*[-*\u2022]\s+(.*)$/)
+    const h = line.match(/^(#{1,4})\s+(.*)$/)
+    if (li) {
+      if (!inList) { out.push('<ul style="margin:4px 0;padding-left:18px">'); inList = true }
+      out.push(`<li style="margin:2px 0">${li[1]}</li>`)
+      continue
+    }
+    if (inList) { out.push('</ul>'); inList = false }
+    if (h) { out.push(`<div style="font-weight:700;margin:10px 0 4px">${h[2]}</div>`); continue }
+    if (!line.trim()) { out.push('<div style="height:6px"></div>'); continue }
+    out.push(`<div>${line}</div>`)
+  }
+  if (inList) out.push('</ul>')
+  return out.join('')
+}
+
 function csvRow(vals: (string | number)[]) {
   return vals.map(v => {
     const s = String(v ?? '')
@@ -96,6 +126,32 @@ export default function Tax() {
   const [basis, setBasis] = useState<'cash' | 'accrual'>('cash')
   const [year, setYear] = useState(curYear)
   const [quarter, setQuarter] = useState(Math.ceil((new Date().getMonth() + 1) / 3))
+
+  // ── AI bank reconciliation (V16 analyzeBankStatement) ────
+  const [recon, setRecon] = useState('')
+  const [reconBusy, setReconBusy] = useState(false)
+  const [reconErr, setReconErr] = useState('')
+  const bankRef = useRef<HTMLInputElement>(null)
+
+  async function analyseStatement(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    const apiKey = biz?.ai_api_key?.trim()
+    if (!apiKey) { setReconErr('No AI API key set. Add your Anthropic API key in Settings.'); return }
+    setReconBusy(true); setReconErr(''); setRecon('')
+    try {
+      const text = await file.text()
+      setRecon(await reconcileBankStatement(apiKey, text, {
+        invoices, materials, expenses,
+        companyName: biz?.company_name, abn: biz?.abn,
+      }))
+    } catch (err: any) {
+      setReconErr(err?.message ?? 'Reconciliation failed')
+    } finally {
+      setReconBusy(false)
+    }
+  }
 
   const fyYears = useMemo(() => {
     const ys = [...new Set(
@@ -404,6 +460,39 @@ h1{font-size:18px;margin-bottom:4px}h2{font-size:14px;margin:16px 0 8px;border-b
             <Download size={14} /> Export Both
           </button>
         </div>
+      </div>
+
+      {/* AI bank reconciliation */}
+      <div className="bg-white border border-black/[0.12] rounded-xl p-4 mt-3.5">
+        <div className="flex justify-between items-center mb-2 flex-wrap gap-2">
+          <div className="text-[13px] font-bold flex items-center gap-1.5"><Landmark size={14} /> Bank Reconciliation</div>
+          <span className="text-[11px] text-[#666]">AI-powered matching</span>
+        </div>
+        <div className="text-xs text-[#666] mb-2.5">
+          Upload a bank statement CSV — AI matches credits to invoices, debits to purchases, flags unmatched
+          transactions, and verifies the GST position.
+        </div>
+
+        <button onClick={() => bankRef.current?.click()} disabled={reconBusy}
+          className="flex items-center gap-1.5 px-3 py-1.5 text-[13px] bg-blue-600 hover:bg-blue-700 text-white rounded-lg disabled:opacity-50">
+          {reconBusy ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
+          {reconBusy ? 'Analysing statement…' : 'Upload Bank Statement (CSV)'}
+        </button>
+        <input ref={bankRef} type="file" accept=".csv,.txt,text/csv" className="hidden" onChange={analyseStatement} />
+
+        {reconErr && (
+          <div className="mt-2.5 text-xs text-[#c0392b] bg-[#fef2f2] rounded-lg px-3 py-2">{reconErr}</div>
+        )}
+
+        {recon && (
+          <div className="mt-3 border-t border-black/[0.12] pt-3">
+            <div className="text-[13px] leading-relaxed" dangerouslySetInnerHTML={{ __html: mdHTML(recon) }} />
+            <button onClick={() => setRecon('')}
+              className="flex items-center gap-1 mt-2.5 px-2.5 py-1 text-[11px] bg-white border border-black/20 rounded-lg hover:bg-[#f5f4f0]">
+              <X size={11} /> Clear
+            </button>
+          </div>
+        )}
       </div>
     </div>
   )
