@@ -7,7 +7,7 @@ import {
   DollarSign, ClipboardList, Settings, LogOut, Phone,
   BarChart2, Menu, X, MapPin, Receipt, Megaphone, Calculator,
   Package, GitBranch, UserCheck, Shield, TrendingUp, PieChart,
-  Paintbrush, MessageCircle, Banknote, ReceiptText, Clock, Wallet
+  Paintbrush, MessageCircle, Banknote, ReceiptText, Clock, Wallet, CalendarDays
 } from 'lucide-react'
 
 const nav = [
@@ -15,6 +15,7 @@ const nav = [
     { to: '/dashboard',  label: 'Dashboard',    icon: LayoutDashboard },
     { to: '/pipeline',   label: 'Pipeline',      icon: GitBranch },
     { to: '/calendar',   label: 'Calendar',      icon: Calendar },
+    { to: '/schedule',   label: 'Schedule',      icon: CalendarDays },
     { to: '/todos',      label: 'To‑do',         icon: ClipboardList },
   ]},
   { group: 'Work', items: [
