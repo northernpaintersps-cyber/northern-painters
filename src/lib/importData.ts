@@ -198,7 +198,6 @@ function mapAssignment(a: any, userId: string) {
 
 function mapEnquiry(e: any, userId: string) {
   const id = e.id ?? uid('enq', e.date, e.client)
-  const extraNotes = [e.action ? `Action: ${e.action}` : null, e.jobType ? `Job type: ${e.jobType}` : null].filter(Boolean).join(' · ')
   return {
     id,
     user_id: userId,
@@ -208,7 +207,10 @@ function mapEnquiry(e: any, userId: string) {
     phone: e.phone ?? null,
     email: e.email ?? null,
     source: e.source ?? null,
-    notes: [e.notes, extraNotes].filter(Boolean).join('\n') || null,
+    job_type: e.jobType ?? e.job_type ?? null,
+    action: e.action ?? null,
+    attachments: e.attachments ?? [],
+    notes: e.notes ?? null,
     enq_status: e.status ?? e.enq_status ?? null,
     converted_to_job: e.convertedToJob ?? e.converted_to_job ?? null,
     job_id: e.convertedJobId ?? e.job_id ?? null,

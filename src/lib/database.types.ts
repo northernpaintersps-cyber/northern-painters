@@ -154,6 +154,9 @@ export interface Database {
           phone: string | null
           email: string | null
           source: string | null
+          job_type: string | null
+          action: string | null
+          attachments: Json | null
           notes: string | null
           enq_status: string | null
           converted_to_job: string | null

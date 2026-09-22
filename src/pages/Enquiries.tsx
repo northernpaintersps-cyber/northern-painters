@@ -1,391 +1,328 @@
 import { useState, useMemo } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/lib/auth'
 import { Modal } from '@/components/ui/Modal'
 import { Input, Select, TextArea } from '@/components/ui/Field'
-import { Badge } from '@/components/ui/Badge'
-import { fmtDate, genId, today } from '@/lib/utils'
-import { Plus, Loader2, Trash2, Edit2, Search, Phone, Mail, MapPin, ArrowRight, Briefcase } from 'lucide-react'
-import { useNavigate } from 'react-router-dom'
+import { genId, today } from '@/lib/utils'
+import {
+  Plus, Loader2, Trash2, Edit2, Hammer, ArrowUpDown,
+  Camera, MapPin, Paperclip, Download,
+} from 'lucide-react'
 
-const STATUSES = ['New','Contacted','Quote Sent','Booked','Lost','Spam']
-const SOURCES  = ['Word of mouth','Google','Facebook','Instagram','Flyer','Builder referral','Return client','Other']
+type Row = Record<string, any>
 
-const STATUS_ORDER: Record<string, number> = {
-  'New': 0, 'Contacted': 1, 'Quote Sent': 2, 'Booked': 3, 'Lost': 4, 'Spam': 5
+const STATUSES = ['New', 'Replied', 'Waiting for Answer', 'Visit Scheduled', 'Quote Sent', 'Won', 'Lost', 'No Response']
+const ACTIONS = ['Send Message', 'Arrange Site Visit', 'Reschedule Visit', 'Follow Up', 'Send Quote']
+const SOURCES = ['Website', 'Referral', 'Builder', 'Facebook', 'Word of Mouth', 'Other']
+
+// V16 statusBadge()
+const SBADGE: Record<string, string> = {
+  'New':             'bg-[#dbeafe] text-[#1e40af]',
+  'Won':             'bg-[#dcfce7] text-[#166534]',
+  'Lost':            'bg-[#fee2e2] text-[#991b1b]',
+  'Quote Sent':      'bg-[#fef3c7] text-[#92400e]',
+  'Visit Scheduled': 'bg-[#ede9fe] text-[#5b21b6]',
 }
+const BADGE = 'inline-block px-2 py-0.5 rounded-full text-[11px] font-medium whitespace-nowrap'
 
-function useEnquiries() {
+function useTable(table: string) {
   const { user } = useAuth()
-  return useQuery<any[]>({
-    queryKey: ['np_enquiries', user?.id],
+  return useQuery({
+    queryKey: [table, user?.id],
     queryFn: async () => {
-      const { data, error } = await supabase.from('np_enquiries').select('*').eq('user_id', user!.id).order('created_at', { ascending: false })
-      if (error) throw error
-      return data ?? []
+      const { data } = await (supabase.from(table as any) as any).select('*').eq('user_id', user!.id)
+      return (data ?? []) as Row[]
     },
     enabled: !!user,
   })
 }
 
-function useUpsertEnquiry() {
+function useUpsert() {
   const qc = useQueryClient()
   const { user } = useAuth()
   return useMutation({
-    mutationFn: async (row: any) => {
-      const { error } = await supabase.from('np_enquiries').upsert({ ...row, user_id: user!.id, updated_at: new Date().toISOString() } as any)
+    mutationFn: async (row: Row) => {
+      const { error } = await (supabase.from('np_enquiries') as any)
+        .upsert({ ...row, user_id: user!.id, updated_at: new Date().toISOString() })
       if (error) throw error
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['np_enquiries'] }),
   })
 }
 
-function useDeleteEnquiry() {
+function useDel() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: async (id: string) => {
-      const { error } = await supabase.from('np_enquiries').delete().eq('id', id)
+      const { error } = await (supabase.from('np_enquiries') as any).delete().eq('id', id)
       if (error) throw error
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['np_enquiries'] }),
   })
 }
 
-// ── Kanban card ────────────────────────────────────────────────
-function EnqCard({ enq, onEdit, onDelete, onMove, onConvert }: { enq: any; onEdit: () => void; onDelete: () => void; onMove: (status: string) => void; onConvert: () => void }) {
-  const nextStatus = STATUSES[STATUSES.indexOf(enq.enq_status) + 1]
-  return (
-    <div className="bg-gray-50 rounded-xl border border-gray-200 p-3 space-y-2 hover:border-gray-600 transition-colors group">
-      <div className="flex items-start justify-between gap-2">
-        <div className="font-medium text-sm text-gray-900 leading-tight">{enq.client || 'Unknown'}</div>
-        <div className="flex gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
-          <button onClick={onEdit} className="text-gray-500 hover:text-blue-600"><Edit2 size={12} /></button>
-          <button onClick={onDelete} className="text-gray-500 hover:text-red-400"><Trash2 size={12} /></button>
-        </div>
-      </div>
-
-      {enq.address && (
-        <div className="flex items-center gap-1 text-xs text-gray-500 truncate">
-          <MapPin size={10} className="shrink-0" /> {enq.address}
-        </div>
-      )}
-      <div className="flex items-center gap-2 flex-wrap">
-        {enq.phone && (
-          <a href={`tel:${enq.phone}`} className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-900">
-            <Phone size={10} /> {enq.phone}
-          </a>
-        )}
-        {enq.email && (
-          <a href={`mailto:${enq.email}`} className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-900 truncate">
-            <Mail size={10} /> {enq.email}
-          </a>
-        )}
-      </div>
-
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-1.5 flex-wrap">
-          <span className="text-xs text-gray-500">{fmtDate(enq.date)}</span>
-          {enq.source && <span className="text-xs text-gray-500">· {enq.source}</span>}
-        </div>
-        <div className="flex items-center gap-1.5">
-          {!enq.job_id && (
-            <button onClick={onConvert} title="Convert to job"
-              className="flex items-center gap-0.5 text-xs text-gray-600 hover:text-green-400 transition-colors">
-              <Briefcase size={10} /> Job
-            </button>
-          )}
-          {enq.job_id && <span className="text-xs text-green-500 font-mono">{enq.job_id}</span>}
-          {nextStatus && !['Lost','Spam'].includes(nextStatus) && (
-            <button onClick={() => onMove(nextStatus)}
-              className="flex items-center gap-0.5 text-xs text-gray-500 hover:text-blue-600 transition-colors">
-              {nextStatus} <ArrowRight size={10} />
-            </button>
-          )}
-        </div>
-      </div>
-
-      {enq.notes && <p className="text-xs text-gray-500 line-clamp-2">{enq.notes}</p>}
-    </div>
-  )
-}
-
-// ── Kanban column ──────────────────────────────────────────────
-function Column({ status, enqs, onEdit, onDelete, onMove, onConvert }: {
-  status: string; enqs: any[];
-  onEdit: (e: any) => void; onDelete: (id: string) => void; onMove: (id: string, s: string) => void; onConvert: (e: any) => void
-}) {
-  const COLORS: Record<string, string> = {
-    'New':        'text-blue-400 border-blue-800',
-    'Contacted':  'text-purple-400 border-purple-800',
-    'Quote Sent': 'text-amber-400 border-amber-800',
-    'Booked':     'text-green-400 border-green-800',
-    'Lost':       'text-red-400 border-red-800',
-    'Spam':       'text-gray-500 border-gray-200',
-  }
-  return (
-    <div className="flex flex-col min-w-[220px] w-[220px]">
-      <div className={`flex items-center justify-between mb-3 pb-2 border-b ${COLORS[status] || 'text-gray-500 border-gray-200'}`}>
-        <span className="text-xs font-semibold uppercase tracking-wide">{status}</span>
-        <span className="text-xs font-mono bg-gray-50 px-1.5 py-0.5 rounded">{enqs.length}</span>
-      </div>
-      <div className="space-y-2 flex-1 overflow-y-auto max-h-[calc(100vh-280px)] pr-0.5">
-        {enqs.map(e => (
-          <EnqCard key={e.id} enq={e}
-            onEdit={() => onEdit(e)}
-            onDelete={() => onDelete(e.id)}
-            onMove={(s) => onMove(e.id, s)}
-            onConvert={() => onConvert(e)}
-          />
-        ))}
-        {!enqs.length && (
-          <div className="rounded-lg border border-dashed border-gray-200 p-3 text-xs text-gray-600 text-center">Empty</div>
-        )}
-      </div>
-    </div>
-  )
-}
-
-// ── List view row ─────────────────────────────────────────────
-function ListRow({ enq, onEdit, onDelete }: { enq: any; onEdit: () => void; onDelete: () => void }) {
-  return (
-    <tr className="border-t border-gray-200 hover:bg-gray-50/40 group">
-      <td className="px-3 py-2.5 text-sm text-gray-900 font-medium">{enq.client || '—'}</td>
-      <td className="px-3 py-2.5 text-sm text-gray-500 max-w-[180px] truncate">{enq.address || '—'}</td>
-      <td className="px-3 py-2.5 text-sm text-gray-500">{enq.phone || '—'}</td>
-      <td className="px-3 py-2.5 text-sm text-gray-500">{fmtDate(enq.date)}</td>
-      <td className="px-3 py-2.5"><Badge label={enq.enq_status || 'New'} /></td>
-      <td className="px-3 py-2.5 text-sm text-gray-500">{enq.source || '—'}</td>
-      <td className="px-3 py-2.5 text-right">
-        <div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-          <button onClick={onEdit} className="text-gray-500 hover:text-blue-600"><Edit2 size={13} /></button>
-          <button onClick={onDelete} className="text-gray-500 hover:text-red-400"><Trash2 size={13} /></button>
-        </div>
-      </td>
-    </tr>
-  )
-}
-
-// ── Main ──────────────────────────────────────────────────────
 export default function Enquiries() {
-  const { data: enquiries = [], isLoading } = useEnquiries()
-  const upsert = useUpsertEnquiry()
-  const del = useDeleteEnquiry()
-  const navigate = useNavigate()
+  const nav = useNavigate()
+  const { data: enquiries = [], isLoading } = useTable('np_enquiries')
+  const { data: siteVisits = [] } = useTable('np_site_visits')
+  const upsert = useUpsert()
+  const del = useDel()
 
-  const [view, setView] = useState<'kanban' | 'list'>('kanban')
-  const [search, setSearch] = useState('')
-  const [filterStatus, setFilterStatus] = useState('')
-  const [open, setOpen] = useState(false)
-  const [form, setForm] = useState<any>({})
+  const [q, setQ] = useState('')
+  const [statusFilter, setStatusFilter] = useState('')
+  const [asc, setAsc] = useState(false)
+  const [modal, setModal] = useState(false)
+  const [form, setForm] = useState<Row>({})
   const [saving, setSaving] = useState(false)
 
-  const ef = (k: string) => (e: React.ChangeEvent<any>) =>
-    setForm((p: any) => ({ ...p, [k]: e.target.value }))
+  const rows = useMemo(() => {
+    const s = q.toLowerCase()
+    const list = enquiries.filter(e => {
+      if (statusFilter && e.enq_status !== statusFilter) return false
+      if (s && !`${e.client ?? ''}${e.phone ?? ''}${e.email ?? ''}${e.address ?? ''}${e.notes ?? ''}`.toLowerCase().includes(s)) return false
+      return true
+    })
+    return [...list].sort((a, b) => {
+      const da = a.date || '', db = b.date || ''
+      return asc ? (da < db ? -1 : da > db ? 1 : 0) : (da > db ? -1 : da < db ? 1 : 0)
+    })
+  }, [enquiries, q, statusFilter, asc])
 
-  function openNew() { setForm({ date: today(), enq_status: 'New' }); setOpen(true) }
-  function openEdit(e: any) { setForm({ ...e }); setOpen(true) }
+  const attsOf = (e: Row): any[] => Array.isArray(e.attachments) ? e.attachments : []
+
+  function openNew() {
+    setForm({ date: today(), enq_status: 'New', source: SOURCES[0], action: ACTIONS[0], attachments: [] })
+    setModal(true)
+  }
+  function openEdit(e: Row) {
+    setForm({ ...e, attachments: attsOf(e) })
+    setModal(true)
+  }
+
+  const ef = (k: string) => (ev: React.ChangeEvent<any>) => setForm(p => ({ ...p, [k]: ev.target.value }))
+
+  async function addFiles(ev: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(ev.target.files ?? [])
+    ev.target.value = ''
+    for (const file of files) {
+      if (file.size > 4 * 1024 * 1024) {
+        alert(`${file.name} is larger than 4 MB and was skipped. Compress the PDF first.`)
+        continue
+      }
+      const dataUrl = await new Promise<string>(res => {
+        const r = new FileReader(); r.onload = () => res(r.result as string); r.readAsDataURL(file)
+      })
+      setForm(p => ({
+        ...p,
+        attachments: [...(p.attachments ?? []), { name: file.name, size: file.size, type: file.type, dataUrl }],
+      }))
+    }
+  }
 
   async function save() {
+    if (!form.client?.trim()) { alert('Client name required'); return }
     setSaving(true)
     try {
-      await upsert.mutateAsync({ ...form, id: form.id || genId('enq') })
-      setOpen(false)
-    } finally { setSaving(false) }
+      await upsert.mutateAsync({
+        ...form,
+        id: form.id || genId('enq'),
+        created_at: form.created_at || new Date().toISOString(),
+      })
+      setModal(false)
+    } catch (e: any) { alert('Save failed: ' + e.message) } finally { setSaving(false) }
   }
 
-  async function convertToJob(enq: any) {
-    // Store enquiry data for Jobs page to pick up as a pre-filled new job
+  // V16 convertEnquiry — pre-fill a new job from the enquiry
+  function convert(e: Row) {
     try {
       sessionStorage.setItem('np_prefill_job', JSON.stringify({
-        client: enq.client || '',
-        address: enq.address || '',
-        phone: enq.phone || '',
-        email: enq.email || '',
-        lead_source: enq.source || '',
-        job_desc: enq.notes || '',
-        status: 'Not Started',
-        quote_status: 'Info Collected',
-        type: 'Interior repaint',
-        terms: 'Labour and materials',
-        on_books: 'Invoiced',
-        weather: 'None',
-        _enq_id: enq.id,
+        client: e.client || '', address: e.address || '',
+        lead_source: e.source || '', job_desc: e.notes || '',
+        type: e.job_type || 'Interior repaint',
+        status: 'Not Started', quote_status: 'Info Collected',
+        terms: 'Labour and materials', on_books: 'Invoiced', weather: 'None',
+        _enq_id: e.id,
       }))
     } catch {}
-    navigate('/jobs?new=1')
+    nav('/jobs?new=1')
   }
 
-  async function moveStatus(id: string, status: string) {
-    const enq = enquiries.find(e => e.id === id)
-    if (!enq) return
-    await upsert.mutateAsync({ ...enq, enq_status: status })
+  // V16 startSVFromEnquiry
+  function startSiteVisit(e: Row) {
+    try {
+      sessionStorage.setItem('np_prefill_visit', JSON.stringify({
+        client: e.client || '', address: e.address || '', date: today(),
+      }))
+    } catch {}
+    nav('/visits?new=1')
   }
 
-  const filtered = useMemo(() => {
-    let out = enquiries
-    if (search) {
-      const q = search.toLowerCase()
-      out = out.filter(e => [e.client, e.address, e.phone, e.email, e.notes].some(f => f?.toLowerCase().includes(q)))
-    }
-    if (filterStatus) out = out.filter(e => e.enq_status === filterStatus)
-    return out
-  }, [enquiries, search, filterStatus])
-
-  const byStatus = useMemo(() => {
-    const map: Record<string, any[]> = {}
-    STATUSES.forEach(s => { map[s] = [] })
-    filtered.forEach(e => {
-      const s = e.enq_status || 'New'
-      if (!map[s]) map[s] = []
-      map[s].push(e)
-    })
-    return map
-  }, [filtered])
-
-  // Stats
-  const newCount    = enquiries.filter(e => e.enq_status === 'New').length
-  const bookedCount = enquiries.filter(e => e.enq_status === 'Booked').length
-  const lostCount   = enquiries.filter(e => e.enq_status === 'Lost').length
-  const convRate    = enquiries.length ? Math.round((bookedCount / enquiries.length) * 100) : 0
+  if (isLoading) return (
+    <div className="flex items-center justify-center h-64"><Loader2 size={20} className="animate-spin text-blue-600" /></div>
+  )
 
   return (
-    <div className="p-6 space-y-5">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <h1 className="text-lg font-bold text-gray-900">Enquiries</h1>
+    <div className="p-5">
+      <div className="flex items-center justify-between flex-wrap gap-2 mb-4">
+        <h2 className="text-[17px] font-semibold text-gray-900">Enquiries</h2>
         <button onClick={openNew}
-          className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-gray-900 font-semibold text-sm px-3 py-1.5 rounded-lg transition-colors">
-          <Plus size={14} /> New enquiry
+          className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white font-medium text-[13px] px-3 py-1.5 rounded-lg">
+          <Plus size={14} /> New Enquiry
         </button>
       </div>
 
-      {/* Stats strip */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <div className="grid gap-2.5 mb-3.5" style={{ gridTemplateColumns: 'repeat(auto-fit,minmax(140px,1fr))' }}>
         {[
-          { label: 'Total', value: enquiries.length, color: 'text-gray-900' },
-          { label: 'New', value: newCount, color: 'text-blue-400' },
-          { label: 'Booked', value: bookedCount, color: 'text-green-400' },
-          { label: 'Conversion', value: `${convRate}%`, color: convRate >= 50 ? 'text-green-400' : 'text-amber-400' },
-        ].map(s => (
-          <div key={s.label} className="bg-white rounded-xl border border-gray-200 p-3 flex items-center justify-between">
-            <span className="text-xs text-gray-500">{s.label}</span>
-            <span className={`text-xl font-bold ${s.color}`}>{s.value}</span>
+          { l: 'Total enquiries', v: enquiries.length, c: '#2563eb' },
+          { l: 'New', v: enquiries.filter(e => e.enq_status === 'New').length },
+          { l: 'Won', v: enquiries.filter(e => e.enq_status === 'Won').length, c: '#16a34a' },
+          { l: 'Lost', v: enquiries.filter(e => e.enq_status === 'Lost').length, c: '#dc2626' },
+        ].map(m => (
+          <div key={m.l} className="bg-[#f5f4f0] rounded-lg px-4 py-3.5">
+            <div className="text-[11px] text-[#666] mb-1">{m.l}</div>
+            <div className="text-xl font-semibold" style={m.c ? { color: m.c } : undefined}>{m.v}</div>
           </div>
         ))}
       </div>
 
-      {/* Toolbar */}
-      <div className="flex items-center gap-3 flex-wrap">
-        <div className="relative flex-1 min-w-[180px] max-w-xs">
-          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
-          <input value={search} onChange={e => setSearch(e.target.value)}
-            placeholder="Search…"
-            className="w-full bg-white border border-gray-200 rounded-lg pl-8 pr-3 py-2 text-sm text-gray-900 placeholder-gray-500 focus:outline-none focus:border-blue-500/50" />
-        </div>
-        <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)}
-          className="bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-600 focus:outline-none focus:border-blue-500/50">
+      <div className="flex gap-2 mb-3 flex-wrap items-center">
+        <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search..."
+          className="w-[200px] px-2.5 py-1.5 text-[12.5px] bg-white border border-black/20 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500" />
+        <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
+          className="px-2.5 py-1.5 text-[12.5px] bg-white border border-black/20 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500">
           <option value="">All statuses</option>
-          {STATUSES.map(s => <option key={s}>{s}</option>)}
+          {STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
         </select>
-        <div className="flex gap-1 ml-auto">
-          <button onClick={() => setView('kanban')}
-            className={`text-xs px-3 py-1.5 rounded-lg font-medium transition-colors ${view === 'kanban' ? 'bg-blue-600 text-gray-900' : 'bg-gray-50 text-gray-500 hover:text-gray-900'}`}>
-            Kanban
-          </button>
-          <button onClick={() => setView('list')}
-            className={`text-xs px-3 py-1.5 rounded-lg font-medium transition-colors ${view === 'list' ? 'bg-blue-600 text-gray-900' : 'bg-gray-50 text-gray-500 hover:text-gray-900'}`}>
-            List
-          </button>
+        <button onClick={() => setAsc(a => !a)}
+          className="flex items-center gap-1 px-2.5 py-1.5 text-[12.5px] bg-white border border-black/20 rounded-lg hover:bg-[#f5f4f0] whitespace-nowrap">
+          <ArrowUpDown size={13} /> {asc ? 'Oldest first' : 'Newest first'}
+        </button>
+      </div>
+
+      <div className="bg-white border border-black/[0.12] rounded-xl overflow-hidden">
+        <div className="overflow-auto max-h-[70vh]">
+          <table className="w-full border-collapse text-[12.5px]">
+            <thead>
+              <tr>
+                {['Date','Client','Phone','Job type','Source','Status','Next action','Docs','Site Visit','Converted',''].map((h, i) => (
+                  <th key={i} className="text-left px-2.5 py-[7px] border-b border-black/[0.12] text-[#666] font-medium whitespace-nowrap bg-[#fafaf8] sticky top-0 z-[2]">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map(e => {
+                const atts = attsOf(e)
+                const sv = siteVisits.find(s => s.job_id && s.job_id === e.job_id)
+                  ?? (e.client ? siteVisits.find(s => s.client === e.client) : undefined)
+                return (
+                  <tr key={e.id} className="border-b border-black/[0.06] hover:bg-[#fafaf8]">
+                    <td className="px-2.5 py-[7px] text-xs">{e.date || '—'}</td>
+                    <td className="px-2.5 py-[7px] font-medium">{e.client}</td>
+                    <td className="px-2.5 py-[7px] text-xs">{e.phone || ''}</td>
+                    <td className="px-2.5 py-[7px] text-xs">{e.job_type || ''}</td>
+                    <td className="px-2.5 py-[7px]">
+                      {e.source ? <span className={`${BADGE} bg-[#f1f0e8] text-[#5f5e5a]`}>{e.source}</span> : null}
+                    </td>
+                    <td className="px-2.5 py-[7px]">
+                      <span className={`${BADGE} ${SBADGE[e.enq_status] || 'bg-[#f1f0e8] text-[#5f5e5a]'}`}>{e.enq_status || 'New'}</span>
+                    </td>
+                    <td className="px-2.5 py-[7px] text-xs text-[#666]">{e.action || ''}</td>
+                    <td className="px-2.5 py-[7px] text-center">
+                      {atts.length ? (
+                        <button onClick={() => openEdit(e)} title="View attachments"
+                          className="text-[11px] bg-[#fef3c7] text-[#92400e] rounded-full px-2 py-0.5 font-semibold inline-flex items-center gap-1">
+                          <Paperclip size={10} /> {atts.length}
+                        </button>
+                      ) : '—'}
+                    </td>
+                    <td className="px-2.5 py-[7px] text-center">
+                      {sv ? (
+                        <button onClick={() => nav('/visits')} title={`${sv.date || ''} — ${sv.address || ''}`}
+                          className={`${BADGE} bg-[#ede9fe] text-[#5b21b6] inline-flex items-center gap-1`}>
+                          <MapPin size={10} /> {sv.date || 'Done'}
+                        </button>
+                      ) : (
+                        <button onClick={() => startSiteVisit(e)} title="New site visit"
+                          className="px-1.5 py-1 rounded-md bg-white border border-black/20 hover:bg-[#f5f4f0]"><Camera size={12} /></button>
+                      )}
+                    </td>
+                    <td className="px-2.5 py-[7px]">
+                      {e.converted_to_job ? (
+                        <button onClick={() => nav('/jobs')} title="Go to job"
+                          className={`${BADGE} bg-[#dcfce7] text-[#166534]`}>{e.job_id || 'Yes'}</button>
+                      ) : '—'}
+                    </td>
+                    <td className="px-2.5 py-[7px] whitespace-nowrap">
+                      <button onClick={() => openEdit(e)}
+                        className="ml-1 px-1.5 py-1 rounded-md bg-blue-600 text-white hover:bg-blue-700 align-middle"><Edit2 size={12} /></button>
+                      {!e.converted_to_job && (
+                        <button onClick={() => convert(e)} title="Convert to Job"
+                          className="ml-1 px-1.5 py-1 rounded-md bg-white border border-black/20 hover:bg-[#f5f4f0] align-middle"><Hammer size={12} /></button>
+                      )}
+                      <button onClick={() => { if (confirm('Delete this enquiry?')) del.mutate(e.id) }}
+                        className="ml-1 px-1.5 py-1 rounded-md bg-white border border-black/20 hover:bg-[#f5f4f0] align-middle text-[#c0392b]"><Trash2 size={12} /></button>
+                    </td>
+                  </tr>
+                )
+              })}
+              {rows.length === 0 && (
+                <tr><td colSpan={11} className="text-center text-[#666] py-6">No enquiries yet.</td></tr>
+              )}
+            </tbody>
+          </table>
         </div>
       </div>
 
-      {/* Content */}
-      {isLoading
-        ? <div className="flex justify-center py-16"><Loader2 size={20} className="animate-spin text-blue-600" /></div>
-        : view === 'kanban'
-          ? (
-            <div className="overflow-x-auto">
-              <div className="flex gap-4 pb-4 min-w-max">
-                {STATUSES.map(s => (
-                  <Column key={s} status={s} enqs={byStatus[s] || []}
-                    onEdit={openEdit}
-                    onDelete={id => { if (confirm('Delete this enquiry?')) del.mutate(id) }}
-                    onMove={moveStatus}
-                    onConvert={convertToJob}
-                  />
-                ))}
-              </div>
-            </div>
-          )
-          : (
-            <div className="overflow-x-auto rounded-xl border border-gray-200">
-              <table className="w-full">
-                <thead>
-                  <tr>
-                    {['Client','Address','Phone','Date','Status','Source',''].map(h => (
-                      <th key={h} className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {filtered.map(e => (
-                    <ListRow key={e.id} enq={e}
-                      onEdit={() => openEdit(e)}
-                      onDelete={() => { if (confirm('Delete this enquiry?')) del.mutate(e.id) }}
-                    />
-                  ))}
-                  {!filtered.length && (
-                    <tr><td colSpan={7} className="text-center py-10 text-gray-500 text-sm">No enquiries found</td></tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          )
-      }
-
-      {/* Modal */}
-      <Modal open={open} onClose={() => setOpen(false)} title={form.id ? 'Edit enquiry' : 'New enquiry'} size="lg">
-        <div className="space-y-3">
-          <div className="grid grid-cols-2 gap-3">
-            <Input label="Client name" value={form.client || ''} onChange={ef('client')} />
-            <Input label="Date" type="date" value={form.date || ''} onChange={ef('date')} />
-          </div>
+      <Modal open={modal} onClose={() => setModal(false)} size="lg" title={form.id ? 'Edit Enquiry' : 'New Enquiry'}>
+        <div className="grid grid-cols-2 gap-3">
+          <Input label="Date" type="date" value={form.date || ''} onChange={ef('date')} />
+          <Select label="Source" value={form.source || ''} onChange={ef('source')} options={SOURCES} />
+          <Input label="Client name" value={form.client || ''} onChange={ef('client')} />
+          <Input label="Phone" value={form.phone || ''} onChange={ef('phone')} />
+          <Input label="Email" value={form.email || ''} onChange={ef('email')} />
           <Input label="Address" value={form.address || ''} onChange={ef('address')} />
-          <div className="grid grid-cols-2 gap-3">
-            <Input label="Phone" type="tel" value={form.phone || ''} onChange={ef('phone')} />
-            <Input label="Email" type="email" value={form.email || ''} onChange={ef('email')} />
+          <Input label="Job type" placeholder="e.g. Exterior repaint" value={form.job_type || ''} onChange={ef('job_type')} />
+          <Select label="Status" value={form.enq_status || 'New'} onChange={ef('enq_status')} options={STATUSES} />
+          <Select label="Next action" value={form.action || ''} onChange={ef('action')} options={ACTIONS} />
+          <TextArea label="Notes" rows={2} value={form.notes || ''} onChange={ef('notes')} wrapperClassName="col-span-2" />
+
+          <div className="col-span-2">
+            <label className="block text-xs font-medium text-gray-500 mb-1">Attachments (PDF, images — max 4 MB each)</label>
+            <input type="file" multiple accept="application/pdf,image/*" onChange={addFiles}
+              className="text-[12px] text-gray-600 file:mr-3 file:py-1 file:px-3 file:rounded file:border file:border-black/20 file:text-[12px] file:bg-white file:text-gray-700 hover:file:bg-[#f5f4f0]" />
+            <div className="mt-2">
+              {(form.attachments ?? []).length === 0 ? (
+                <div className="text-xs text-[#666]">No files attached yet.</div>
+              ) : (form.attachments ?? []).map((a: any, i: number) => (
+                <div key={i} className="flex items-center gap-2 px-2 py-1.5 bg-[#f5f4f0] rounded-md mb-1">
+                  <Paperclip size={14} className="text-[#dc2626] shrink-0" />
+                  <span className="text-xs flex-1 truncate">{a.name}</span>
+                  <span className="text-[10px] text-[#666] whitespace-nowrap">{(a.size / 1024).toFixed(0)} KB</span>
+                  <a href={a.dataUrl} download={a.name} title="Download"
+                    className="px-1.5 py-0.5 rounded bg-white border border-black/20 hover:bg-white"><Download size={12} /></a>
+                  <button title="Remove" className="px-1.5 py-0.5 rounded bg-white border border-black/20 text-[#c0392b]"
+                    onClick={() => setForm(p => ({ ...p, attachments: (p.attachments ?? []).filter((_: any, j: number) => j !== i) }))}>
+                    <Trash2 size={12} />
+                  </button>
+                </div>
+              ))}
+            </div>
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            <Select label="Status" value={form.enq_status || 'New'} onChange={ef('enq_status')} options={STATUSES} />
-            <Select label="Source" value={form.source || ''} onChange={ef('source')} options={SOURCES} placeholder="— Select —" />
-          </div>
-          <TextArea label="Notes" value={form.notes || ''} onChange={ef('notes')} rows={3} />
-          {form.enq_status === 'Booked' && (
-            <Input label="Converted to job ID (optional)" value={form.job_id || ''} onChange={ef('job_id')} placeholder="e.g. NP-0042" />
-          )}
         </div>
-        <div className="flex justify-between mt-5 pt-4 border-t border-gray-200">
-          <div className="flex items-center gap-3">
+
+        <div className="flex justify-between mt-5 pt-4 border-t border-black/10">
+          <div>
             {form.id && (
-              <button onClick={() => { if (confirm('Delete this enquiry?')) { del.mutate(form.id); setOpen(false) } }}
-                className="flex items-center gap-1.5 text-sm text-red-400 hover:text-red-300">
-                <Trash2 size={14} /> Delete
-              </button>
+              <button onClick={() => { if (confirm('Delete this enquiry?')) { del.mutate(form.id); setModal(false) } }}
+                className="flex items-center gap-1.5 text-[13px] text-red-500 hover:text-red-700"><Trash2 size={14} /> Delete</button>
             )}
           </div>
           <div className="flex gap-2">
-            {form.id && !form.job_id && (
-              <button onClick={() => { setOpen(false); convertToJob(form) }}
-                className="flex items-center gap-1.5 text-sm px-4 py-2 rounded-lg bg-green-500/20 text-green-400 hover:bg-green-500/30 font-medium transition-colors">
-                <Briefcase size={13} /> Convert to job
-              </button>
-            )}
-            {form.job_id && (
-              <span className="flex items-center gap-1 text-xs text-green-400 px-3"><Briefcase size={12} /> {form.job_id}</span>
-            )}
-            <button onClick={() => setOpen(false)} className="text-sm px-4 py-2 rounded-lg bg-gray-50 text-gray-500 hover:text-gray-900">Cancel</button>
-            <button onClick={save} disabled={saving} className="flex items-center gap-1.5 text-sm px-5 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-gray-900 font-semibold disabled:opacity-50">
+            <button onClick={() => setModal(false)} className="px-4 py-2 text-[13px] rounded-lg bg-[#f5f4f0] text-gray-600 border border-black/10 hover:bg-gray-200">Cancel</button>
+            <button onClick={save} disabled={saving}
+              className="flex items-center gap-1.5 px-5 py-2 text-[13px] rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-semibold disabled:opacity-50">
               {saving && <Loader2 size={13} className="animate-spin" />} Save
             </button>
           </div>
