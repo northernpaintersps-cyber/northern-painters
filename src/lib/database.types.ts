@@ -206,6 +206,7 @@ export interface Database {
           job_id: string | null
           date: string | null
           exp_desc: string | null
+          supplier: string | null
           amount_ex_gst: number | null
           gst: number | null
           category: string | null
