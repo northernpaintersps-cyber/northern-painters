@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '@/lib/auth'
 import { supabase } from '@/lib/supabase'
-import { fmtCurrency, calcOwed, invStatus, normaliseDate, genId } from '@/lib/utils'
+import { fmtCurrency, calcOwed, invStatus, normaliseDate, genId, crewLabel } from '@/lib/utils'
 import {
   AlertCircle, UserPlus, Clock, Users, ExternalLink, Plus,
   CalendarDays, BarChart3, CheckSquare, CalendarPlus,
@@ -190,7 +190,7 @@ export default function Dashboard() {
   const jobsInProgress = jobs.filter(j => j.status === 'In Progress')
   const jobsScheduled = jobs.filter(j => j.status === 'Scheduled')
   const newEnquiries = enquiries.filter(e => e.enq_status === 'New')
-  const crewTodayCount = [...new Set(assignments.filter(a => a.date === todayStr).map(a => a.crew_name))].length
+  const crewTodayCount = [...new Set(assignments.filter(a => a.date === todayStr).map(a => crewLabel(crew, a.crew_name)))].length
 
   const in14 = new Date(now); in14.setDate(in14.getDate() + 14)
   const in14Str = localStr(in14)
@@ -443,10 +443,7 @@ export default function Dashboard() {
               const isToday = sd === todayStr
               const dateLabel = new Date(sd + 'T00:00').toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' })
               const jobCrew = assignments.filter(a => a.job_id === j.id && a.date >= todayStr && a.date <= in14Str)
-              const crewNames = [...new Set(jobCrew.map(a => {
-                const c = crew.find(c => c.id === a.crew_name || c.name === a.crew_name)
-                return c?.name ?? a.crew_name
-              }).filter(Boolean))]
+              const crewNames = [...new Set(jobCrew.map(a => crewLabel(crew, a.crew_name)).filter(Boolean))]
               const noCrewAlert = !crewNames.length && ['Scheduled', 'Not Started'].includes(j.status)
               return (
                 <div key={j.id} onClick={() => nav('/jobs')}

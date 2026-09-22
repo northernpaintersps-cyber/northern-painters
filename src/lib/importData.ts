@@ -182,12 +182,13 @@ function mapCrew(c: any, userId: string) {
   }
 }
 
-function mapAssignment(a: any, userId: string) {
+function mapAssignment(a: any, userId: string, crewNames: Record<string, string> = {}) {
   return {
     id: a.id ?? uid('asgn', a.jobId, a.date, a.crewName),
     user_id: userId,
     job_id: a.jobId ?? a.job_id ?? null,
-    crew_name: a.crewName ?? a.crew_name ?? a.crewId ?? null,
+    // V16 stores crewId here; resolve it to the member's name so it reads correctly
+    crew_name: a.crewName ?? a.crew_name ?? crewNames[a.crewId] ?? a.crewId ?? null,
     date: toDate(a.date),
     hours: toNum(a.hours),
     notes: a.notes ?? null,
@@ -387,7 +388,9 @@ export async function importBackup(json: any, userId: string, onProgress?: (msg:
   // ── Assignments ───────────────────────────────────────────
   const rawAssign = getArr(json, 'assignments', 'ASSIGNMENTS')
   onProgress?.(`Importing ${rawAssign.length} assignments…`)
-  const mappedAssign = rawAssign.map((a: any) => mapAssignment(a, userId))
+  const crewNames: Record<string, string> = {}
+  rawCrew.forEach((c: any) => { if (c?.id && c?.name) crewNames[c.id] = c.name })
+  const mappedAssign = rawAssign.map((a: any) => mapAssignment(a, userId, crewNames))
   const r8 = await batchUpsert('np_assignments', mappedAssign)
   report.assignments = r8.count; allErrors.push(...r8.errors)
 

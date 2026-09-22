@@ -92,6 +92,23 @@ export function getJobScheduledDates(
   return getWorkingDates(start, days, workWeekends)
 }
 
+
+// ── Crew references ──────────────────────────────────────────
+// Assignments store a crew reference that may be a crew id (V16 exports
+// crewId) or a plain name. Resolve either against the crew list.
+export function findCrew<T extends { id?: string | null; name?: string | null }>(
+  crew: T[], ref: string | null | undefined,
+): T | undefined {
+  if (!ref) return undefined
+  return crew.find(c => c.id === ref) ?? crew.find(c => c.name === ref)
+}
+
+export function crewLabel<T extends { id?: string | null; name?: string | null }>(
+  crew: T[], ref: string | null | undefined,
+): string {
+  return findCrew(crew, ref)?.name ?? ref ?? ''
+}
+
 // ── Invoice calculations ─────────────────────────────────────
 // DB column is total_inc_gst; V16 backups use incGST. Accept both.
 type Inv = {

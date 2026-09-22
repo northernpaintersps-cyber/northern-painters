@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/lib/auth'
-import { fmtCurrency, getJobScheduledDates, normaliseDate } from '@/lib/utils'
+import { fmtCurrency, getJobScheduledDates, normaliseDate, crewLabel } from '@/lib/utils'
 import { Loader2, CalendarPlus, CalendarDays, Info } from 'lucide-react'
 
 type Row = Record<string, any>
@@ -46,6 +46,7 @@ export default function Schedule() {
   const nav = useNavigate()
   const { data: jobs = [], isLoading } = useTable('np_jobs')
   const { data: assignments = [] } = useTable('np_assignments')
+  const { data: crew = [] } = useTable('np_crew')
   const quickEdit = useQuickEdit()
 
   const rows = useMemo(() => jobs
@@ -54,7 +55,7 @@ export default function Schedule() {
     [jobs])
 
   const crewFor = (jobId: string) =>
-    [...new Set(assignments.filter(a => a.job_id === jobId).map(a => a.crew_name).filter(Boolean))]
+    [...new Set(assignments.filter(a => a.job_id === jobId).map(a => crewLabel(crew, a.crew_name)).filter(Boolean))]
 
   if (isLoading) return (
     <div className="flex items-center justify-center h-64"><Loader2 size={20} className="animate-spin text-blue-600" /></div>
@@ -85,7 +86,7 @@ export default function Schedule() {
             </thead>
             <tbody>
               {rows.map(j => {
-                const crew = crewFor(j.id)
+                const crewNames = crewFor(j.id)
                 return (
                   <tr key={j.id} className="border-b border-black/[0.06] hover:bg-[#fafaf8]">
                     <td className="px-2.5 py-[7px] text-[#2563eb] font-medium">{j.id}</td>
@@ -116,7 +117,7 @@ export default function Schedule() {
                         }} />
                     </td>
                     <td className="px-2.5 py-[7px] text-xs">
-                      {crew.length ? crew.map(n => (
+                      {crewNames.length ? crewNames.map(n => (
                         <span key={String(n)} className="inline-block bg-[#dbeafe] text-[#2563eb] rounded px-1.5 py-px m-px text-[11px] font-semibold">{n}</span>
                       )) : <span className="text-[#666] text-[11px]">—</span>}
                     </td>

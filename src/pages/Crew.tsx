@@ -5,7 +5,7 @@ import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/lib/auth'
 import { Modal } from '@/components/ui/Modal'
 import { Input } from '@/components/ui/Field'
-import { getJobScheduledDates, genId, today, fmtCurrency } from '@/lib/utils'
+import { getJobScheduledDates, genId, today, findCrew, crewLabel } from '@/lib/utils'
 import {
   Plus, Loader2, Trash2, Edit2, ChevronLeft, ChevronRight,
   MessageSquare, CalendarDays,
@@ -119,9 +119,9 @@ export default function Crew() {
     const overlaps = (a: SlotKey, b: SlotKey) => a === b || a === 'full' || b === 'full'
     weekKeys.forEach(date => {
       const onDay = assignments.filter(a => a.date === date)
-      const names = [...new Set(onDay.map(a => a.crew_name).filter(Boolean))]
-      names.forEach(name => {
-        const mine = onDay.filter(a => a.crew_name === name)
+      const refs = [...new Set(onDay.map(a => crewLabel(crew, a.crew_name)).filter(Boolean))]
+      refs.forEach(name => {
+        const mine = onDay.filter(a => crewLabel(crew, a.crew_name) === name)
         for (let i = 0; i < mine.length; i++)
           for (let j = i + 1; j < mine.length; j++)
             if (mine[i].job_id !== mine[j].job_id && overlaps(slotOf(mine[i]), slotOf(mine[j]))) {
@@ -130,7 +130,7 @@ export default function Crew() {
       })
     })
     return out
-  }, [assignments, weekKeys.join()])
+  }, [assignments, crew, weekKeys.join()])
 
   const schedOf = useMemo(() => {
     const m: Record<string, string[]> = {}
@@ -155,11 +155,12 @@ export default function Crew() {
     setCrewModal(false)
   }
   async function removeCrew(c: Row) {
-    const n = assignments.filter(a => a.crew_name === c.name).length
+    const mine = assignments.filter(a => findCrew(crew, a.crew_name)?.id === c.id)
+    const n = mine.length
     let msg = `Delete ${c.name} from the crew list?`
     if (n) msg += `\n\nThis will also remove ${n} calendar assignment${n === 1 ? '' : 's'} for this crew member.`
     if (!confirm(msg)) return
-    for (const a of assignments.filter(a => a.crew_name === c.name)) await delAsn.mutateAsync(a.id)
+    for (const a of mine) await delAsn.mutateAsync(a.id)
     await delCrew.mutateAsync(c.id)
   }
 
@@ -181,8 +182,8 @@ export default function Crew() {
   // V16 openBriefingMsg
   async function briefing(a: Row) {
     const j = jobs.find(x => x.id === a.job_id)
-    const c = crew.find(x => x.name === a.crew_name)
-    const msg = `Hi ${(a.crew_name || '').split(' ')[0]},\n\nYou're booked for ${SLOT[slotOf(a)].label.toLowerCase()} on ${a.date}.\n\nJob: ${a.job_id}${j?.client ? ` — ${j.client}` : ''}\nSite: ${j?.address || 'TBC'}\n${j?.job_desc ? `Scope: ${j.job_desc}\n` : ''}${a.notes ? `Notes: ${a.notes}\n` : ''}\nSee you there.\n\nNorthern Painters`
+    const c = findCrew(crew, a.crew_name)
+    const msg = `Hi ${crewLabel(crew, a.crew_name).split(' ')[0]},\n\nYou're booked for ${SLOT[slotOf(a)].label.toLowerCase()} on ${a.date}.\n\nJob: ${a.job_id}${j?.client ? ` — ${j.client}` : ''}\nSite: ${j?.address || 'TBC'}\n${j?.job_desc ? `Scope: ${j.job_desc}\n` : ''}${a.notes ? `Notes: ${a.notes}\n` : ''}\nSee you there.\n\nNorthern Painters`
     try {
       await navigator.clipboard.writeText(msg)
       alert(c?.phone ? `Briefing copied — send to ${c.phone}` : 'Briefing message copied!')
@@ -254,7 +255,7 @@ export default function Crew() {
                       <span className="text-[#666] text-[11px]">/hr</span>
                     </div>
                   </td>
-                  <td className="px-2.5 py-[7px] text-xs text-[#666]">{assignments.filter(a => a.crew_name === c.name).length}</td>
+                  <td className="px-2.5 py-[7px] text-xs text-[#666]">{assignments.filter(a => findCrew(crew, a.crew_name)?.id === c.id).length}</td>
                   <td className="px-2.5 py-[7px] whitespace-nowrap">
                     <button onClick={() => { setCrewForm({ ...c }); setCrewModal(true) }}
                       className="ml-1 px-1.5 py-1 rounded-md bg-white border border-black/20 hover:bg-[#f5f4f0] align-middle"><Edit2 size={12} /></button>
@@ -337,7 +338,7 @@ export default function Crew() {
                                 className="flex items-center gap-0.5 text-[9px] px-1.5 py-0.5 rounded-lg whitespace-nowrap my-px"
                                 style={{ background: conflict ? '#fee2e2' : '#27500a', color: conflict ? '#991b1b' : '#eaf3de' }}>
                                 {conflict && <span className="text-[10px]">⚠</span>}
-                                {(a.crew_name || '').split(' ')[0]}
+                                {crewLabel(crew, a.crew_name).split(' ')[0]}
                                 {s.short && <span className="text-[8px] opacity-80 font-bold ml-0.5">{s.short}</span>}
                               </div>
                             )
@@ -390,14 +391,14 @@ export default function Crew() {
             </thead>
             <tbody>
               {[...assignments].sort((a, b) => (b.date || '').localeCompare(a.date || '')).map(a => {
-                const c = crew.find(x => x.name === a.crew_name)
+                const c = findCrew(crew, a.crew_name)
                 const j = jobs.find(x => x.id === a.job_id)
                 const conflict = conflictIds.has(a.id)
                 const s = SLOT[slotOf(a)]
                 return (
                   <tr key={a.id} className="border-b border-black/[0.06]" style={conflict ? { background: '#fff1f2' } : undefined}>
                     <td className="px-2.5 py-[7px]">
-                      <div className="font-semibold text-xs">{a.crew_name || '—'}</div>
+                      <div className="font-semibold text-xs">{crewLabel(crew, a.crew_name) || '—'}</div>
                       {c?.phone && <div className="text-[10px] text-[#666]">{c.phone}</div>}
                     </td>
                     <td className="px-2.5 py-[7px] whitespace-nowrap text-xs">{a.date}</td>
@@ -484,7 +485,7 @@ export default function Crew() {
             <div className="text-[10px] font-bold uppercase tracking-wider text-[#666] mb-1.5">Already assigned this day</div>
             {assignments.filter(a => a.job_id === asnForm.job_id && a.date === asnForm.date).map(a => (
               <div key={a.id} className="flex items-center justify-between py-1 text-xs border-b border-black/[0.05]">
-                <span>{a.crew_name} · {SLOT[slotOf(a)].label}</span>
+                <span>{crewLabel(crew, a.crew_name)} · {SLOT[slotOf(a)].label}</span>
                 <button onClick={() => delAsn.mutate(a.id)} className="text-[#c0392b] hover:underline">Remove</button>
               </div>
             ))}
