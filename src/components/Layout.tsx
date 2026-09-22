@@ -5,7 +5,7 @@ import { useRealtime } from '@/lib/useRealtime'
 import {
   LayoutDashboard, Briefcase, FileText, Users, Calendar,
   DollarSign, ClipboardList, Settings, LogOut, Phone,
-  BarChart2, Menu, X, MapPin
+  BarChart2, Menu, X, MapPin, Receipt, Megaphone, Calculator
 } from 'lucide-react'
 
 const nav = [
@@ -17,6 +17,9 @@ const nav = [
   { to: '/finance',    label: 'Finance',      icon: DollarSign },
   { to: '/enquiries',  label: 'Enquiries',    icon: Phone },
   { to: '/visits',     label: 'Site Visits',  icon: MapPin },
+  { to: '/receipts',   label: 'Receipts',     icon: Receipt },
+  { to: '/ads',        label: 'Ads Spend',    icon: Megaphone },
+  { to: '/quotes',     label: 'Quote Builder',icon: Calculator },
   { to: '/todos',      label: 'To‑do',        icon: ClipboardList },
   { to: '/reports',    label: 'Reports',      icon: BarChart2 },
 ]
