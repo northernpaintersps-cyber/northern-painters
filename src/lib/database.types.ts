@@ -58,6 +58,7 @@ export interface Database {
           notes: string | null
           clock_in: string | null
           clock_out: string | null
+          break_mins: number | null
           updated_at: string | null
           created_at: string | null
         }
