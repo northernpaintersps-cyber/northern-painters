@@ -12,12 +12,12 @@ import {
 import {
   INT_SUBS, EXT_SUBS, SPEC_SUBS, PROD_RATES, JOB_TYPES, QUOTE_TERMS,
   PREP_OPTS, HEIGHT_OPTS, ACCESS_OPTS, METHOD_OPTS, CONS_PREP, WORKFLOWS,
-  BENCHMARKS, type Sub,
+  BENCHMARKS, APP_OPTS, FINISH_OPTS, type Sub,
 } from '@/lib/quoteData'
 import {
   Plus, Trash2, Loader2, Sparkles, Save, ClipboardList, Settings2,
   FileText, Image as ImageIcon, Ruler, Hammer, RefreshCw,
-  FileDown, Lock, ArrowUp, ArrowDown, Check,
+  FileDown, Lock, ArrowUp, ArrowDown, Check, CopyPlus,
 } from 'lucide-react'
 
 type Row = Record<string, any>
@@ -43,6 +43,13 @@ type Room = { id: string; name: string; w: number; l: number; h: number }
 type Equip = { id: string; name: string; cost: number }
 type ExtraMat = { id: string; name: string; cost: number }
 type Painter = { id: string; name: string; rate: number }
+// A duplicated substrate — e.g. "Doors interior — French" alongside the plain row.
+// srcKey points back at the preset so production rates still apply.
+type Variant = {
+  id: string; group: 'i' | 'e' | 's'; srcKey: string | null
+  label: string; unit: string; qty: number
+  paint: string; method: string; finish: string
+}
 
 // Markdown-ish rendering for the AI estimate, tables included
 function renderEstimate(src: string): string {
@@ -137,7 +144,8 @@ export default function QuotingTool() {
 
   // 2. Substrates
   const [qty, setQty] = useState<Record<string, number>>({})
-  const [extraSubs, setExtraSubs] = useState<{ id: string; group: 'i' | 'e' | 's'; label: string; unit: string; qty: number }[]>([])
+  const [extraSubs, setExtraSubs] = useState<Variant[]>([])
+  const [openVariant, setOpenVariant] = useState<string | null>(null)
 
   // 3. Condition
   const [prep, setPrep] = useState(PREP_OPTS[1])
@@ -173,6 +181,21 @@ export default function QuotingTool() {
   const [genErr, setGenErr] = useState('')
   const [lockedPrice, setLockedPrice] = useState<number | ''>('')
   const [showRates, setShowRates] = useState(false)
+  const [quoteId, setQuoteId] = useState<string | null>(null)
+  const [quoteNo, setQuoteNo] = useState('')
+
+  // Reopen a saved quote
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem('np_reopen_quote')
+      if (!raw) return
+      sessionStorage.removeItem('np_reopen_quote')
+      const d = JSON.parse(raw)
+      restoreState(d)
+      setQuoteId(d._quoteId ?? null)
+    } catch {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // Prefill from a site visit
   useEffect(() => {
@@ -203,16 +226,19 @@ export default function QuotingTool() {
     const lines = allSubs
       .filter(({ sub }) => (qty[sub.key] || 0) > 0)
       .map(({ sub }) => `${sub.label}: ${qty[sub.key]} ${sub.unit} — ${sub.paint}, ${sub.defMethod}, ${sub.defFinish}`)
-    extraSubs.filter(s => s.qty > 0).forEach(s => lines.push(`${s.label}: ${s.qty} ${s.unit}`))
+    extraSubs.filter(s => s.qty > 0).forEach(s =>
+      lines.push(`${s.label}: ${s.qty} ${s.unit} — ${s.paint}, ${s.method}, ${s.finish}`))
     return lines.join('\n')
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [qty, extraSubs])
 
   // V16 PROD_RATES baseline — a sanity figure next to the AI's hours
-  const baselineHours = useMemo(() => allSubs.reduce((s, { sub }) =>
-    s + (qty[sub.key] || 0) * (PROD_RATES[sub.key] ?? 0), 0),
+  const baselineHours = useMemo(() => {
+    const presets = allSubs.reduce((s, { sub }) => s + (qty[sub.key] || 0) * (PROD_RATES[sub.key] ?? 0), 0)
+    const variants = extraSubs.reduce((s, v) => s + v.qty * (PROD_RATES[v.srcKey ?? ''] ?? 0), 0)
+    return presets + variants
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [qty])
+  }, [qty, extraSubs])
 
   const rateSum = painters.reduce((s, p) => s + (p.rate || 0), 0)
   const totalHours = processes.reduce((s, p) => s + (p.hours || 0), 0)
@@ -225,18 +251,19 @@ export default function QuotingTool() {
   const materials = useMemo(() => {
     const products: Record<string, { product: string; size: string; litres: number; coverage: number; price: number }> = {}
     const lib: any[] = biz?.paint_products ?? []
-    allSubs.forEach(({ sub }) => {
-      const q = qty[sub.key] || 0
+    const addPaint = (paint: string, unit: string, q: number) => {
       if (q <= 0) return
-      const first = sub.paint.toLowerCase().split(' ')[0]
+      const first = paint.toLowerCase().split(' ')[0]
       const hit = lib.find(p => (p.product ?? '').toLowerCase().includes(first))
       const coverage = hit?.coverage ?? 12
-      const m2 = sub.unit === 'm2' ? q : sub.unit === 'lm' ? q * 0.3 : q * 2
+      const m2 = unit === 'm2' ? q : unit === 'lm' ? q * 0.3 : q * 2
       const litres = (m2 * parseInt(coats)) / coverage
-      const key = hit?.product ?? sub.paint
+      const key = hit?.product ?? paint
       if (!products[key]) products[key] = { product: key, size: hit?.size ?? '4L', litres: 0, coverage, price: hit?.yours ?? 0 }
       products[key].litres += litres
-    })
+    }
+    allSubs.forEach(({ sub }) => addPaint(sub.paint, sub.unit, qty[sub.key] || 0))
+    extraSubs.forEach(v => addPaint(v.paint, v.unit, v.qty))
     const rows = Object.values(products).map(p => {
       const tinL = parseFloat(p.size) || 4
       const tins = Math.ceil(p.litres / tinL)
@@ -244,7 +271,7 @@ export default function QuotingTool() {
     })
     return { rows, total: rows.reduce((s, r) => s + r.cost, 0) + extraMatTotal }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [qty, coats, biz, extraMatTotal])
+  }, [qty, coats, biz, extraMatTotal, extraSubs])
 
   const subtotal = labourCost + materials.total + consTotal + equipTotal
   const gst = subtotal * 0.1
@@ -374,46 +401,101 @@ export default function QuotingTool() {
         labour_rate: painters[0]?.rate ?? rates.standard,
         est_days: Math.max(1, Math.round(days)),
         notes: siteNotes,
-        extra: { quote_estimate: estimate, substrates: qty, processes, painters },
+        quote_no: quoteNo || null,
+        extra: { quote_estimate: estimate, substrates: qty, processes, painters, quote_id: quoteId },
         created_at: new Date().toISOString(),
       })
       if (error) throw error
       return id
     },
-    onSuccess: id => {
+    onSuccess: async id => {
       qc.invalidateQueries({ queryKey: ['np_jobs'] })
+      // Mark the saved quote as converted so the archive shows where it went
+      if (quoteId) {
+        await (supabase.from('np_quotes') as any)
+          .update({ job_id: id, status: 'Converted', updated_at: new Date().toISOString() })
+          .eq('id', quoteId)
+        qc.invalidateQueries({ queryKey: ['np_quotes'] })
+      }
       if (confirm(`Saved as job ${id}. Open the Jobs page?`)) nav('/jobs')
     },
     onError: (e: any) => alert('Save failed: ' + e.message),
   })
 
-  function saveDraft() {
-    const draft = {
-      id: genId('qd'), savedAt: new Date().toISOString(),
+  // Everything needed to rebuild this quote exactly
+  function captureState() {
+    return {
       client, address, jobType, terms, qty, extraSubs, prep, ceilingHeight, access,
       method, coats, processes, consPrep, consTotal, consNotes, extraMats,
-      painters, travelKm, equip, siteNotes, logisticsNotes, estimate, lockedPrice,
+      painters, travelKm, equip, siteNotes, logisticsNotes, estimate, lockedPrice, rooms,
     }
-    const next = [draft, ...drafts.filter(d => d.client !== client || d.jobType !== jobType)].slice(0, 20)
-    saveDrafts.mutate(next)
   }
 
-  function loadDraft(d: Row) {
+  function restoreState(d: Row) {
     setClient(d.client ?? ''); setAddress(d.address ?? ''); setJobType(d.jobType ?? JOB_TYPES[0])
     setTerms(d.terms ?? QUOTE_TERMS[0]); setQty(d.qty ?? {}); setExtraSubs(d.extraSubs ?? [])
     setPrep(d.prep ?? PREP_OPTS[1]); setCeilingHeight(d.ceilingHeight ?? HEIGHT_OPTS[0]); setAccess(d.access ?? ACCESS_OPTS[0])
     setMethod(d.method ?? 'roll'); setCoats(d.coats ?? '2'); setProcesses(d.processes ?? [])
     setConsPrep(d.consPrep ?? 'medium'); setConsTotal(d.consTotal ?? 0); setConsNotes(d.consNotes ?? '')
-    setExtraMats(d.extraMats ?? []); setPainters(d.painters?.length ? d.painters : painters)
+    setExtraMats(d.extraMats ?? []); if (d.painters?.length) setPainters(d.painters)
     setTravelKm(d.travelKm ?? ''); setEquip(d.equip ?? []); setSiteNotes(d.siteNotes ?? '')
-    setLogisticsNotes(d.logisticsNotes ?? ''); setEstimate(d.estimate ?? ''); setLockedPrice(d.lockedPrice ?? '')
+    setLogisticsNotes(d.logisticsNotes ?? ''); setEstimate(d.estimate ?? '')
+    setLockedPrice(d.lockedPrice ?? ''); setRooms(d.rooms ?? [])
   }
+
+  // ── Lock & Save — the permanent record, not a draft ──────
+  const lockAndSave = useMutation({
+    mutationFn: async () => {
+      const price = typeof lockedPrice === 'number' && lockedPrice > 0 ? lockedPrice : subtotal
+      const row = {
+        id: quoteId ?? genId('QT-'),
+        user_id: user!.id,
+        quote_no: quoteNo || null,
+        client, address, job_type: jobType, terms,
+        status: typeof lockedPrice === 'number' && lockedPrice > 0 ? 'Locked' : 'Draft',
+        locked_price: typeof lockedPrice === 'number' && lockedPrice > 0 ? lockedPrice : null,
+        quote_ex_gst: Math.round(subtotal),
+        labour_cost: Math.round(labourCost),
+        materials_cost: Math.round(materials.total),
+        consumables: Math.round(consTotal),
+        equipment: Math.round(equipTotal),
+        total_hours: Number(totalHours.toFixed(2)),
+        est_days: Number(days.toFixed(2)),
+        estimate_text: estimate || null,
+        state: captureState(),
+        locked_at: typeof lockedPrice === 'number' && lockedPrice > 0 ? new Date().toISOString() : null,
+        updated_at: new Date().toISOString(),
+      }
+      const { error } = await (supabase.from('np_quotes') as any).upsert(row)
+      if (error) throw error
+      return row.id
+    },
+    onSuccess: id => {
+      setQuoteId(id)
+      qc.invalidateQueries({ queryKey: ['np_quotes'] })
+      if (confirm('Quote saved. Open Saved Quotes?')) nav('/quotes')
+    },
+    onError: (e: any) => alert(
+      e.message?.includes('np_quotes')
+        ? 'The quotes table does not exist yet — open Saved Quotes for the one-time SQL to run.'
+        : 'Save failed: ' + e.message,
+    ),
+  })
+
+  function saveDraft() {
+    const draft = { id: genId('qd'), savedAt: new Date().toISOString(), ...captureState() }
+    const next = [draft, ...drafts.filter(d => d.client !== client || d.jobType !== jobType)].slice(0, 20)
+    saveDrafts.mutate(next)
+  }
+
+  const loadDraft = restoreState
 
   function clearAll() {
     if (!confirm('Start a new quote? Unsaved changes will be lost.')) return
     setClient(''); setAddress(''); setQty({}); setExtraSubs([]); setProcesses([])
     setConsTotal(0); setConsNotes(''); setExtraMats([]); setEquip([]); setRooms([])
     setSiteNotes(''); setLogisticsNotes(''); setEstimate(''); setLockedPrice(''); setDocs([]); setExtractRes(null)
+    setQuoteId(null); setQuoteNo('')
   }
 
   function exportQuote() {
@@ -429,12 +511,26 @@ export default function QuotingTool() {
     setTimeout(() => w.print(), 500)
   }
 
+  function addVariant(group: 'i' | 'e' | 's', from?: Sub) {
+    const v: Variant = {
+      id: genId('xs'), group, srcKey: from?.key ?? null,
+      label: from ? `${from.label} — variant` : '',
+      unit: from?.unit ?? 'm2', qty: 0,
+      paint: from?.paint ?? '', method: from?.defMethod ?? 'Brush', finish: from?.defFinish ?? 'Low Sheen',
+    }
+    setExtraSubs(x => [...x, v])
+    setOpenVariant(v.id)
+  }
+
   const SubGroup = ({ title, subs, group }: { title: string; subs: Sub[]; group: 'i' | 'e' | 's' }) => (
     <Card>
       <div className={CT}>{title}</div>
-      <div className="grid gap-1.5" style={{ gridTemplateColumns: 'repeat(auto-fill,minmax(210px,1fr))' }}>
+      <div className="text-[11px] text-[#666] mb-2">
+        Enter quantities. Use the copy button to add a variant of a substrate — e.g. French, solid and panel doors priced separately.
+      </div>
+      <div className="grid gap-1.5" style={{ gridTemplateColumns: 'repeat(auto-fill,minmax(230px,1fr))' }}>
         {subs.map(s => (
-          <div key={s.key} className="flex items-center gap-2 bg-[#f5f4f0] rounded-lg px-2.5 py-1.5">
+          <div key={s.key} className="flex items-center gap-1.5 bg-[#f5f4f0] rounded-lg px-2.5 py-1.5">
             <div className="flex-1 min-w-0">
               <div className="text-[12.5px] font-medium truncate">{s.label}</div>
               <div className="text-[10px] text-[#666] truncate">{s.paint}</div>
@@ -442,27 +538,65 @@ export default function QuotingTool() {
             <input type="number" min={0} step="any" value={qty[s.key] || ''} placeholder="0"
               onChange={e => setQty(q => ({ ...q, [s.key]: parseFloat(e.target.value) || 0 }))}
               className="w-16 px-1.5 py-1 text-right font-mono text-xs bg-white border border-black/20 rounded focus:outline-none focus:ring-1 focus:ring-blue-500" />
-            <span className="text-[10px] text-[#999] w-8">{s.unit}</span>
+            <span className="text-[10px] text-[#999] w-7">{s.unit}</span>
+            <button onClick={() => addVariant(group, s)} title="Add a variant of this substrate"
+              className="p-1 rounded bg-white border border-black/20 hover:bg-white text-[#2563eb] shrink-0">
+              <CopyPlus size={12} />
+            </button>
           </div>
         ))}
       </div>
-      {extraSubs.filter(s => s.group === group).map(s => (
-        <div key={s.id} className="flex items-center gap-2 bg-[#f5f4f0] rounded-lg px-2.5 py-1.5 mt-1.5">
-          <input value={s.label} placeholder="Substrate name"
-            onChange={e => setExtraSubs(x => x.map(y => y.id === s.id ? { ...y, label: e.target.value } : y))}
-            className="flex-1 px-1.5 py-1 text-xs bg-white border border-black/20 rounded focus:outline-none" />
-          <input type="number" value={s.qty || ''} placeholder="0"
-            onChange={e => setExtraSubs(x => x.map(y => y.id === s.id ? { ...y, qty: parseFloat(e.target.value) || 0 } : y))}
-            className="w-16 px-1.5 py-1 text-right font-mono text-xs bg-white border border-black/20 rounded focus:outline-none" />
-          <select value={s.unit} onChange={e => setExtraSubs(x => x.map(y => y.id === s.id ? { ...y, unit: e.target.value } : y))}
-            className="text-[10px] bg-white border border-black/20 rounded px-1 py-1">
-            <option>m2</option><option>lm</option><option>count</option>
-          </select>
-          <button onClick={() => setExtraSubs(x => x.filter(y => y.id !== s.id))} className="text-[#c0392b]"><Trash2 size={12} /></button>
+
+      {extraSubs.filter(v => v.group === group).map(v => (
+        <div key={v.id} className="border border-black/[0.12] rounded-lg mt-1.5 overflow-hidden">
+          <div className="flex items-center gap-1.5 px-2.5 py-1.5 bg-[#f5f4f0] flex-wrap">
+            <input value={v.label} placeholder="Substrate name — e.g. Doors — French"
+              onChange={e => setExtraSubs(x => x.map(y => y.id === v.id ? { ...y, label: e.target.value } : y))}
+              className="flex-1 min-w-[120px] px-1.5 py-1 text-xs bg-white border border-black/20 rounded focus:outline-none" />
+            <input type="number" min={0} step="any" value={v.qty || ''} placeholder="0"
+              onChange={e => setExtraSubs(x => x.map(y => y.id === v.id ? { ...y, qty: parseFloat(e.target.value) || 0 } : y))}
+              className="w-16 px-1.5 py-1 text-right font-mono text-xs bg-white border border-black/20 rounded focus:outline-none" />
+            <select value={v.unit} onChange={e => setExtraSubs(x => x.map(y => y.id === v.id ? { ...y, unit: e.target.value } : y))}
+              className="text-[10px] bg-white border border-black/20 rounded px-1 py-1">
+              {['m2', 'lm', 'count'].map(u => <option key={u}>{u}</option>)}
+            </select>
+            <button onClick={() => setOpenVariant(o => o === v.id ? null : v.id)} title="Coating settings"
+              className={`p-1 rounded border shrink-0 ${openVariant === v.id ? 'bg-[#ede9fe] border-[#c4b5fd] text-[#5b21b6]' : 'bg-white border-black/20 text-[#666]'}`}>
+              <Settings2 size={12} />
+            </button>
+            <button onClick={() => addVariant(group, subs.find(s => s.key === v.srcKey))} title="Duplicate this variant"
+              className="p-1 rounded bg-white border border-black/20 text-[#2563eb] shrink-0"><CopyPlus size={12} /></button>
+            <button onClick={() => setExtraSubs(x => x.filter(y => y.id !== v.id))}
+              className="p-1 rounded bg-white border border-black/20 text-[#c0392b] shrink-0"><Trash2 size={12} /></button>
+          </div>
+          {openVariant === v.id && (
+            <div className="px-2.5 py-2 grid gap-2" style={{ gridTemplateColumns: 'repeat(auto-fill,minmax(150px,1fr))' }}>
+              <div>
+                <label className="block text-[10px] uppercase font-bold text-[#666] mb-1">Product</label>
+                <input list="paint-products" value={v.paint} placeholder="Paint product"
+                  onChange={e => setExtraSubs(x => x.map(y => y.id === v.id ? { ...y, paint: e.target.value } : y))}
+                  className="w-full px-1.5 py-1 text-xs bg-white border border-black/20 rounded focus:outline-none" />
+              </div>
+              <div>
+                <label className="block text-[10px] uppercase font-bold text-[#666] mb-1">Application</label>
+                <select value={v.method} onChange={e => setExtraSubs(x => x.map(y => y.id === v.id ? { ...y, method: e.target.value } : y))}
+                  className="w-full px-1.5 py-1 text-xs bg-white border border-black/20 rounded focus:outline-none">
+                  {APP_OPTS.map(o => <option key={o}>{o}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-[10px] uppercase font-bold text-[#666] mb-1">Finish</label>
+                <select value={v.finish} onChange={e => setExtraSubs(x => x.map(y => y.id === v.id ? { ...y, finish: e.target.value } : y))}
+                  className="w-full px-1.5 py-1 text-xs bg-white border border-black/20 rounded focus:outline-none">
+                  {FINISH_OPTS.map(o => <option key={o}>{o}</option>)}
+                </select>
+              </div>
+            </div>
+          )}
         </div>
       ))}
-      <button onClick={() => setExtraSubs(x => [...x, { id: genId('xs'), group, label: '', unit: 'm2', qty: 0 }])}
-        className={`${BTN} mt-2`}><Plus size={12} /> Add substrate</button>
+
+      <button onClick={() => addVariant(group)} className={`${BTN} mt-2`}><Plus size={12} /> Add substrate</button>
     </Card>
   )
 
@@ -522,6 +656,9 @@ export default function QuotingTool() {
                 <select value={jobType} onChange={e => setJobType(e.target.value)} className={INP}>
                   {JOB_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
                 </select>
+              </Field>
+              <Field label="Quote no. (optional)">
+                <input value={quoteNo} onChange={e => setQuoteNo(e.target.value)} placeholder="e.g. Q-1042" className={INP} />
               </Field>
               <Field label="Quote terms">
                 <select value={terms} onChange={e => setTerms(e.target.value)} className={INP}>
@@ -630,6 +767,9 @@ export default function QuotingTool() {
             </div>
           </Card>
 
+          <datalist id="paint-products">
+            {(biz?.paint_products ?? []).map((p: any) => <option key={p.id} value={p.product} />)}
+          </datalist>
           <SubGroup title="2a. Interior Substrates" subs={INT_SUBS} group="i" />
           <SubGroup title="2b. Exterior Substrates" subs={EXT_SUBS} group="e" />
           <SubGroup title="2c. Specialty" subs={SPEC_SUBS} group="s" />
@@ -890,6 +1030,11 @@ export default function QuotingTool() {
               )}
             </div>
             <div className="flex gap-2 flex-wrap">
+              <button onClick={() => lockAndSave.mutate()} disabled={!client.trim() || lockAndSave.isPending}
+                className={`${BTN_P} disabled:opacity-50`}>
+                {lockAndSave.isPending ? <Loader2 size={13} className="animate-spin" /> : <Lock size={13} />}
+                {quoteId ? 'Update saved quote' : 'Lock & Save'}
+              </button>
               <button onClick={exportQuote} className={BTN_P}><FileDown size={13} /> Export Quote</button>
               <button onClick={() => saveJob.mutate()} disabled={!client.trim() || saveJob.isPending}
                 className={`${BTN_P} disabled:opacity-50`}>
@@ -898,7 +1043,11 @@ export default function QuotingTool() {
               <button onClick={saveDraft} className={BTN}><Save size={13} /> Save Draft</button>
               <button onClick={clearAll} className={BTN}><RefreshCw size={13} /> New</button>
             </div>
-            {!client.trim() && <div className="text-[11px] text-[#666] mt-2">Enter a client name to save as a job.</div>}
+            <div className="text-[11px] text-[#666] mt-2">
+              {!client.trim()
+                ? 'Enter a client name to save this quote.'
+                : <>Lock &amp; Save keeps this quote permanently in <button onClick={() => nav('/quotes')} className="text-[#2563eb] underline">Saved Quotes</button> — reviewable and re-openable later. Drafts are a scratchpad and get replaced.</>}
+            </div>
           </Card>
 
           <Card>

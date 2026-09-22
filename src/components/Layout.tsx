@@ -8,7 +8,7 @@ import {
   ClipboardList, Settings, LogOut, Phone,
   BarChart2, Menu, X, MapPin, Receipt, Megaphone, Calculator,
   Package, GitBranch, UserCheck, Shield, TrendingUp, PieChart,
-  Paintbrush, MessageCircle, Banknote, ReceiptText, Clock, Wallet, CalendarDays,
+  Paintbrush, MessageCircle, Banknote, ReceiptText, Clock, Wallet, CalendarDays, FileCheck,
   Download
 } from 'lucide-react'
 
@@ -39,7 +39,8 @@ const nav = [
     { to: '/reports',       label: 'Reports',       icon: BarChart2 },
   ]},
   { group: 'Resources', items: [
-    { to: '/quotes',     label: 'Quote Builder', icon: Calculator },
+    { to: '/quotes/build', label: 'Quote Builder', icon: Calculator },
+    { to: '/quotes',     label: 'Saved Quotes',  icon: FileCheck },
     { to: '/paintcalc',  label: 'Paint Calc',    icon: Paintbrush },
     { to: '/insights',   label: 'AI Chat',       icon: MessageCircle },
     { to: '/todos',      label: 'To‑do',         icon: ClipboardList },

@@ -15,6 +15,7 @@ import SiteVisits from '@/pages/SiteVisits'
 import Receipts from '@/pages/Receipts'
 import AdsSpend from '@/pages/AdsSpend'
 import QuotingTool from '@/pages/QuotingTool'
+import Quotes from '@/pages/Quotes'
 import Materials from '@/pages/Materials'
 import Pipeline from '@/pages/Pipeline'
 import Clients from '@/pages/Clients'
@@ -56,7 +57,8 @@ export default function App() {
         <Route path="/visits" element={<SiteVisits />} />
         <Route path="/receipts" element={<Receipts />} />
         <Route path="/ads" element={<AdsSpend />} />
-        <Route path="/quotes" element={<QuotingTool />} />
+        <Route path="/quotes" element={<Quotes />} />
+        <Route path="/quotes/build" element={<QuotingTool />} />
         <Route path="/materials" element={<Materials />} />
         <Route path="/pipeline" element={<Pipeline />} />
         <Route path="/clients" element={<Clients />} />
