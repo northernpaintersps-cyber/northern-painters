@@ -30,6 +30,7 @@ export interface PaintProduct {
 
 export interface BusinessSettings {
   company_name: string
+  owner_name: string
   abn: string
   licence: string
   address: string
@@ -80,6 +81,7 @@ const DEFAULT_PAINT_PRODUCTS: PaintProduct[] = [
 
 const DEFAULT_SETTINGS: BusinessSettings = {
   company_name: 'Northern Painters',
+  owner_name: '',
   abn: '',
   licence: '',
   address: '',
@@ -262,6 +264,7 @@ export default function SettingsPage() {
           <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Company</p>
           <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
             <Field label="Company name" value={biz.company_name} onChange={set('company_name')} />
+            <Field label="Owner name (signature on receipts)" value={biz.owner_name} onChange={set('owner_name')} />
             <Field label="ABN" value={biz.abn} onChange={set('abn')} placeholder="12 345 678 901" />
             <Field label="Licence number" value={biz.licence} onChange={set('licence')} placeholder="NSW Fair Trading" />
           </div>
