@@ -2,6 +2,7 @@ import { Routes, Route, Navigate } from 'react-router-dom'
 import { useAuth } from '@/lib/auth'
 import Layout from '@/components/Layout'
 import Login from '@/pages/Login'
+import Dashboard from '@/pages/Dashboard'
 import Jobs from '@/pages/Jobs'
 import Invoices from '@/pages/Invoices'
 import Crew from '@/pages/Crew'
@@ -27,7 +28,8 @@ export default function App() {
     <Routes>
       <Route path="/login" element={<Login />} />
       <Route element={<RequireAuth><Layout /></RequireAuth>}>
-        <Route index element={<Navigate to="/jobs" replace />} />
+        <Route index element={<Navigate to="/dashboard" replace />} />
+        <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/jobs/*" element={<Jobs />} />
         <Route path="/invoices/*" element={<Invoices />} />
         <Route path="/crew/*" element={<Crew />} />
@@ -38,7 +40,7 @@ export default function App() {
         <Route path="/reports" element={<Reports />} />
         <Route path="/settings" element={<SettingsPage />} />
       </Route>
-      <Route path="*" element={<Navigate to="/jobs" replace />} />
+      <Route path="*" element={<Navigate to="/dashboard" replace />} />
     </Routes>
   )
 }
