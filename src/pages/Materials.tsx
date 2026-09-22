@@ -9,7 +9,7 @@ import { extractInvoice } from '@/lib/ai'
 import { useBusinessSettings } from '@/pages/SettingsPage'
 import {
   Plus, Loader2, Trash2, Edit2, Scan, AlertCircle,
-  Camera, ScanLine, ArrowUpDown, X, Info,
+  Camera, ScanLine, ArrowUpDown, X, Info, AlertTriangle, MapPin,
 } from 'lucide-react'
 
 const CATEGORIES = ['Paint', 'Primer/Undercoat', 'Filler/Putty', 'Tape/Masking', 'Brushes/Rollers', 'Sandpaper/Prep', 'Caulk/Sealant', 'Solvent/Cleaner', 'Hardware', 'Other']
@@ -103,6 +103,10 @@ export default function Materials() {
   const [saving, setSaving] = useState(false)
   const [scanning, setScanning] = useState(false)
   const [scanError, setScanError] = useState<string | null>(null)
+  const [dupOf, setDupOf] = useState<any | null>(null)          // V16 duplicate invoice check
+  const [autoJob, setAutoJob] = useState<any | null>(null)       // job matched from the invoice address
+  const [scanItems, setScanItems] = useState<any[]>([])
+  const [showItems, setShowItems] = useState(false)
   const [asc, setAsc] = useState(false)
   const scanInputRef = useRef<HTMLInputElement>(null)
   const camRef = useRef<HTMLInputElement>(null)
@@ -156,15 +160,19 @@ export default function Materials() {
     inc: filtered.reduce((s, m) => s + (m.total_inc_gst ?? 0), 0),
   }), [filtered])
 
+  function resetScanState() {
+    setScanError(null); setDupOf(null); setAutoJob(null); setScanItems([]); setShowItems(false)
+  }
+
   function openNew() {
     setForm(emptyForm())
-    setScanError(null)
+    resetScanState()
     setModalOpen(true)
   }
 
   function openEdit(m: any) {
     setForm({ ...emptyForm(), ...m })
-    setScanError(null)
+    resetScanState()
     setModalOpen(true)
   }
 
@@ -178,9 +186,28 @@ export default function Materials() {
       return
     }
     setScanning(true)
-    setScanError(null)
+    resetScanState()
     try {
       const result = await extractInvoice(apiKey, file)
+
+      // V16: warn if this invoice number is already on file
+      const invNo = (result.receipt_no || '').trim()
+      setDupOf(invNo
+        ? materials.find(m => (m.receipt_no || '').trim().toLowerCase() === invNo.toLowerCase()) ?? null
+        : null)
+
+      // V16: auto-match a job from the delivery address on the invoice
+      const addr = (result.job_address || '').toLowerCase().trim()
+      const matched = addr
+        ? jobs.find(j => {
+            const a = (j.address || '').toLowerCase()
+            if (!a) return false
+            return a.includes(addr.split(',')[0]) || addr.includes(a.split(',')[0])
+          })
+        : undefined
+      setAutoJob(matched ?? null)
+      setScanItems(result.items ?? [])
+
       setForm(f => ({
         ...f,
         supplier:      result.supplier || f.supplier,
@@ -192,6 +219,7 @@ export default function Materials() {
         total_inc_gst: result.total_inc_gst ?? f.total_inc_gst,
         category:      result.category || f.category,
         notes:         result.notes ? (f.notes ? `${f.notes}\n${result.notes}` : result.notes) : f.notes,
+        job_id:        matched?.id ?? f.job_id,
       }))
     } catch (err: any) {
       setScanError(err?.message || 'Scan failed. Check your API key and try again.')
@@ -210,6 +238,7 @@ export default function Materials() {
         cost_ex_gst: parseFloat(form.cost_ex_gst) || 0,
         gst: parseFloat(form.gst) || 0,
         total_inc_gst: parseFloat(form.total_inc_gst) || 0,
+        ...(scanItems.length ? { extra: { line_items: scanItems } } : {}),
       })
       setModalOpen(false)
     } finally { setSaving(false) }
@@ -384,6 +413,59 @@ export default function Materials() {
             {scanning ? 'Scanning…' : 'Scan invoice'}
           </label>
         </div>
+        {dupOf && (
+          <div className="flex gap-2 items-start bg-[#fef2f2] border border-[#fca5a5] rounded-lg px-3.5 py-2.5 mb-3.5">
+            <AlertTriangle size={18} className="text-[#dc2626] shrink-0 mt-px" />
+            <div>
+              <strong className="text-[#dc2626] text-[13px]">Invoice already uploaded</strong>
+              <div className="text-xs text-[#7f1d1d] mt-0.5">
+                Invoice <strong>{dupOf.receipt_no}</strong> was previously saved
+                ({[dupOf.supplier, dupOf.date].filter(Boolean).join(' · ')}
+                {dupOf.total_inc_gst ? ` · ${fmtCurrency(dupOf.total_inc_gst)}` : ''}).
+                Check before saving again.
+              </div>
+              <button onClick={() => { setDupOf(null); openEdit(dupOf) }}
+                className="text-xs text-[#dc2626] underline mt-1">Open the existing entry instead</button>
+            </div>
+          </div>
+        )}
+
+        {autoJob && (
+          <div className="flex gap-2 items-center bg-[#f0fdf4] border border-[#86efac] rounded-lg px-3.5 py-2 mb-3.5 text-xs text-[#166534]">
+            <MapPin size={14} className="shrink-0" />
+            Auto-matched to <strong>{autoJob.id}</strong> — {autoJob.client} from the address on the invoice.
+          </div>
+        )}
+
+        {scanItems.length > 0 && (
+          <div className="mb-3.5">
+            <button onClick={() => setShowItems(v => !v)}
+              className="w-full text-left text-xs font-semibold text-[#2563eb] px-3 py-2 bg-[#f5f4f0] rounded-lg">
+              {scanItems.length} line item{scanItems.length !== 1 ? 's' : ''} extracted — click to review
+            </button>
+            {showItems && (
+              <table className="w-full text-xs mt-1.5 border-collapse">
+                <thead>
+                  <tr>
+                    <th className="text-left px-1.5 py-1 border-b border-black/[0.12] text-[#666] font-medium">Description</th>
+                    <th className="w-12 text-center px-1.5 py-1 border-b border-black/[0.12] text-[#666] font-medium">Qty</th>
+                    <th className="w-24 text-right px-1.5 py-1 border-b border-black/[0.12] text-[#666] font-medium">Ex GST</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {scanItems.map((it, i) => (
+                    <tr key={i}>
+                      <td className="px-1.5 py-1 border-b border-black/[0.06]">{it.description || '—'}</td>
+                      <td className="px-1.5 py-1 border-b border-black/[0.06] text-center text-[#666]">{it.qty || 1}</td>
+                      <td className="px-1.5 py-1 border-b border-black/[0.06] text-right">{fmtCurrency(it.total_ex_gst)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        )}
+
         {scanError && (
           <div className="flex items-start gap-2 bg-red-900/20 border border-red-800/50 rounded-lg px-3 py-2 mb-3">
             <AlertCircle size={13} className="text-red-400 mt-0.5 shrink-0" />

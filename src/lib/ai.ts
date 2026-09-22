@@ -1,6 +1,12 @@
 // AI utilities — calls Anthropic Claude API directly from the browser
 // using the key stored in business settings (np_settings key='business')
 
+export interface InvoiceLineItem {
+  description: string
+  qty: number
+  total_ex_gst: number
+}
+
 export interface InvoiceExtraction {
   supplier: string
   description: string
@@ -11,6 +17,9 @@ export interface InvoiceExtraction {
   total_inc_gst: number | null
   category: string
   notes: string
+  /** Delivery or site address printed on the invoice, used to auto-match a job. */
+  job_address: string
+  items: InvoiceLineItem[]
 }
 
 async function callClaude(
@@ -495,6 +504,8 @@ Extract the following fields and return ONLY valid JSON (no markdown, no explana
   "description": "brief description of what was purchased (e.g. Dulux Weathershield 15L x2, masking tape, rollers)",
   "date": "YYYY-MM-DD or empty string if not found",
   "receipt_no": "invoice or receipt number or empty string",
+  "job_address": "delivery or site address printed on the invoice, or empty string",
+  "items": [{"description": "line item", "qty": number, "total_ex_gst": number}],
   "cost_ex_gst": number or null,
   "gst": number or null,
   "total_inc_gst": number or null,
@@ -516,6 +527,8 @@ If only ex-GST shown, calculate GST as ex-GST * 0.1 and total as ex-GST * 1.1.`,
   "description": "",
   "date": "",
   "receipt_no": "",
+  "job_address": "",
+  "items": [],
   "cost_ex_gst": null,
   "gst": null,
   "total_inc_gst": null,
@@ -545,6 +558,14 @@ If only ex-GST shown, calculate GST as ex-GST * 0.1 and total as ex-GST * 1.1.`,
       total_inc_gst:  parsed.total_inc_gst != null ? Number(parsed.total_inc_gst) : null,
       category:       String(parsed.category ?? 'Other'),
       notes:          String(parsed.notes ?? ''),
+      job_address:    String(parsed.job_address ?? ''),
+      items: Array.isArray(parsed.items)
+        ? parsed.items.map((i: any) => ({
+            description: String(i.description ?? ''),
+            qty: Number(i.qty) || 1,
+            total_ex_gst: Number(i.total_ex_gst ?? i.unit_price) || 0,
+          }))
+        : [],
     }
   } catch {
     throw new Error('AI returned unexpected format. Check your API key and try again.')
