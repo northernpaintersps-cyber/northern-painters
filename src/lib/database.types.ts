@@ -102,6 +102,7 @@ export interface Database {
           gst: number | null
           total_inc_gst: number | null
           category: string | null
+          billing_type: string | null
           notes: string | null
           receipt_no: string | null
           updated_at: string | null

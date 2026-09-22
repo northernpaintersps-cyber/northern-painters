@@ -113,6 +113,7 @@ function mapCost(c: any, userId: string, _src: string) {
       gst: toNum(c.gst),
       total_inc_gst: toNum(c.totalIncGST ?? c.total_inc_gst),
       category: c.category ?? null,
+      billing_type: c.billingType ?? c.billing_type ?? null,
       receipt_no: c.receipt ?? c.invoiceNo?.toString() ?? c.receiptNo ?? c.receipt_no ?? null,
     }
   }
