@@ -72,6 +72,174 @@ ${context}`
   return callClaude(apiKey, history, system, { model: 'claude-sonnet-4-6', maxTokens: 1500 })
 }
 
+// ── Quote builder AI (V16 runQuote / suggestProcesses / runConsAI) ──
+export interface QuoteInput {
+  client: string
+  address: string
+  jobType: string
+  terms: string
+  method: string
+  coats: string
+  prep: string
+  ceilingHeight: string
+  access: string
+  travelKm: string
+  equipText: string
+  equipTotal: number
+  substrates: string          // "Ceilings: 120 m2" lines
+  labourBreakdown: string     // "Prep: 12.0 hrs ($960)" lines
+  totalHours: number
+  labourCost: number
+  days: number
+  consumables: number
+  materialsBreakdown: string
+  materialsTotal: number
+  painterDesc: string         // "2 painters @ $65, $75/hr"
+  overheadPct: number
+  hoursPerDay: number
+  tradePrices: string
+  benchmarks: string
+  siteNotes: string
+  logisticsNotes: string
+  photos?: Array<{ dataUrl: string; tag?: string; caption?: string }>
+}
+
+const money = (v: number) => '$' + Math.round(v).toLocaleString('en-AU')
+
+export async function generateQuote(apiKey: string, q: QuoteInput): Promise<string> {
+  const system = `You are a quoting assistant for Northern Painters, Byron Bay NSW. Dulux accredited.
+IMPORTANT: Labour hours AND materials costs have been PRE-CALCULATED by the estimator. Do NOT recalculate or change either. Present them exactly as given.
+PAINTERS: ${q.painterDesc}. Overhead: ${q.overheadPct}%. Hrs/day: ${q.hoursPerDay}.
+TRADE PRICES: ${q.tradePrices}
+${q.benchmarks}
+RESPOND WITH THESE SECTIONS ONLY:
+## Scope of Work
+Write 2–4 sentences describing what will be done. Then list the exact phases from the PRE-CALCULATED LABOUR BREAKDOWN below, in order, as a numbered list. Do not add, remove or rename any phase — use the exact phase names as given.
+## Job Plan
+Reproduce the PRE-CALCULATED LABOUR BREAKDOWN as a table, exactly as given:
+[table: Phase / Process | Hours | Cost ex GST]
+Total: ${q.totalHours.toFixed(1)} hrs = ${money(q.labourCost)} ex GST over ~${q.days.toFixed(1)} days
+## Paint Materials (pre-calculated — do not change)
+[table: Product | Litres needed | Tins | Trade cost]
+${q.materialsTotal ? `Total materials: ${money(q.materialsTotal)} ex GST` : ''}
+## Quote Summary
+[table showing: Labour ex GST | Materials ex GST | Consumables ex GST | Equipment hire ex GST | Subtotal ex GST | GST 10% | TOTAL inc GST]
+## Suggested Price Range
+Low / Mid / High ex GST (±10% variance)
+## Assumptions and Exclusions
+## Benchmark Check`
+
+  const user = `Quote for: ${q.client || 'Unknown'} at ${q.address || 'TBC'}
+Job type: ${q.jobType}
+Terms: ${q.terms}
+Application: ${q.method}, ${q.coats} coats
+Prep: ${q.prep}
+Ceiling height: ${q.ceilingHeight}
+Access: ${q.access}
+Travel: ${q.travelKm || '?'}km one way
+Equipment hire: ${q.equipText}${q.equipTotal > 0 ? ` — ${money(q.equipTotal)} ex GST` : ''}
+
+SUBSTRATES:
+${q.substrates}
+
+PRE-CALCULATED LABOUR BREAKDOWN (use exactly — do not recalculate):
+${q.labourBreakdown || 'No breakdown available'}
+TOTAL LABOUR: ${q.totalHours.toFixed(1)} hours = ${money(q.labourCost)} ex GST
+
+CONSUMABLES (pre-estimated): ${money(q.consumables)} ex GST
+${q.equipTotal > 0 ? `EQUIPMENT HIRE: ${money(q.equipTotal)} ex GST` : ''}
+${q.siteNotes ? 'SITE/SCOPE NOTES: ' + q.siteNotes : ''}
+${q.logisticsNotes ? 'LOGISTICS NOTES: ' + q.logisticsNotes : ''}
+
+PRE-CALCULATED MATERIALS BREAKDOWN (present in ## Paint Materials exactly — do not recalculate):
+${q.materialsBreakdown}`
+
+  // Site visit photos give the model surface condition and access context
+  let content: any = user
+  if (q.photos?.length) {
+    const blocks: any[] = [{
+      type: 'text',
+      text: `${user}\n\nSITE PHOTOS (${q.photos.length} taken during site visit — use these to assess surface condition, prep requirements, access, and scope):`,
+    }]
+    q.photos.forEach((p, i) => {
+      blocks.push({ type: 'text', text: `Photo ${i + 1}${p.tag ? ` [${p.tag}]` : ''}${p.caption ? ` — ${p.caption}` : ''}:` })
+      const mime = p.dataUrl.match(/^data:([^;]+);/)?.[1] ?? 'image/jpeg'
+      blocks.push({
+        type: 'image',
+        source: { type: 'base64', media_type: mime, data: p.dataUrl.replace(/^data:[^;]+;base64,/, '') },
+      })
+    })
+    content = blocks
+  }
+
+  return callClaude(apiKey, [{ role: 'user', content }], system,
+    { model: 'claude-sonnet-4-6', maxTokens: 2000 })
+}
+
+// V16 suggestProcesses — estimate hours per workflow phase
+export async function suggestProcessHours(
+  apiKey: string,
+  opts: { jobType: string; prep: string; method: string; coats: string; access: string; ceilingHeight: string; substrates: string; processes: string[]; painters: number },
+): Promise<Record<string, number>> {
+  const prompt = `You are a senior Australian painting estimator. Estimate CREW hours for each process phase below.
+
+Job type: ${opts.jobType}
+Prep level: ${opts.prep}
+Application: ${opts.method}, ${opts.coats} coats
+Access: ${opts.access}
+Ceiling height: ${opts.ceilingHeight}
+Crew size: ${opts.painters} painter(s) working together
+
+SUBSTRATES AND QUANTITIES:
+${opts.substrates || '(none entered)'}
+
+PHASES TO ESTIMATE:
+${opts.processes.map((p, i) => `${i + 1}. ${p}`).join('\n')}
+
+Return ONLY a JSON object mapping each phase name exactly as given to its estimated hours as a number. No markdown, no prose.
+Example: {"Setup and protection": 4, "Prep and sanding": 12}`
+
+  const raw = await callClaude(apiKey, [{ role: 'user', content: prompt }],
+    'You estimate painting labour hours. Return ONLY valid JSON, no markdown fences.',
+    { model: 'claude-sonnet-4-6', maxTokens: 1000 })
+
+  const cleaned = raw.replace(/```(?:json)?/gi, '').trim()
+  const start = cleaned.indexOf('{')
+  const parsed = JSON.parse(start > 0 ? cleaned.slice(start) : cleaned)
+  const out: Record<string, number> = {}
+  for (const [k, v] of Object.entries(parsed)) {
+    const n = Number(v)
+    if (!isNaN(n)) out[k] = n
+  }
+  return out
+}
+
+// V16 runConsAI — estimate consumables spend
+export async function estimateConsumables(
+  apiKey: string,
+  opts: { jobType: string; prepLevel: string; substrates: string; method: string },
+): Promise<{ total: number; notes: string }> {
+  const prompt = `You are an Australian painting estimator. Estimate the CONSUMABLES cost (ex GST) for this job — masking tape, plastic drop sheets, sandpaper, caulk/gap filler, filler, rags, thinners, roller sleeves, brushes, tack cloths.
+
+Job type: ${opts.jobType}
+Prep level: ${opts.prepLevel}
+Application: ${opts.method}
+
+SUBSTRATES AND QUANTITIES:
+${opts.substrates || '(none entered)'}
+
+Return ONLY JSON: {"total": <number, ex GST AUD>, "notes": "<one or two sentences listing the main items and quantities>"}`
+
+  const raw = await callClaude(apiKey, [{ role: 'user', content: prompt }],
+    'You estimate painting consumables. Return ONLY valid JSON, no markdown fences.',
+    { model: 'claude-sonnet-4-6', maxTokens: 600 })
+
+  const cleaned = raw.replace(/```(?:json)?/gi, '').trim()
+  const start = cleaned.indexOf('{')
+  const parsed = JSON.parse(start > 0 ? cleaned.slice(start) : cleaned)
+  return { total: Number(parsed.total) || 0, notes: String(parsed.notes ?? '') }
+}
+
 // ── Bank statement reconciliation (V16 analyzeBankStatement) ──
 export interface ReconContext {
   invoices: Array<Record<string, any>>
