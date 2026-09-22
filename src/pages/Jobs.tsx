@@ -341,36 +341,50 @@ export default function Jobs() {
         {filtered.map(j => {
           const dates = Array.isArray(j.scheduled_dates) ? j.scheduled_dates : []
           return (
-            <button key={j.id} onClick={() => openEdit(j)}
-              className="w-full text-left px-6 py-4 hover:bg-gray-800/40 transition-colors">
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2 mb-1 flex-wrap">
-                    <span className="text-xs text-gray-500 font-mono">{j.id}</span>
-                    {j.status && <Badge label={j.status} />}
-                    {j.quote_status && <Badge label={j.quote_status} />}
+            <div key={j.id} className="flex items-center hover:bg-gray-800/40 transition-colors group">
+              <button className="flex-1 text-left px-6 py-4 min-w-0" onClick={() => openEdit(j)}>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2 mb-1 flex-wrap">
+                      <span className="text-xs text-gray-500 font-mono">{j.id}</span>
+                      {j.quote_status && <Badge label={j.quote_status} />}
+                    </div>
+                    <div className="text-sm font-semibold text-white truncate">{j.client || '—'}</div>
+                    <div className="text-xs text-gray-400 truncate mt-0.5">{j.address || '—'}</div>
+                    <div className="flex items-center gap-3 mt-1.5 flex-wrap">
+                      {j.type && <span className="text-xs text-gray-500">{j.type}</span>}
+                      {dates.length > 0 && (
+                        <span className="flex items-center gap-1 text-xs text-gray-500">
+                          <Calendar size={10} />
+                          {fmtDate(dates[0])}{dates.length > 1 ? ` +${dates.length - 1}d` : ''}
+                        </span>
+                      )}
+                    </div>
                   </div>
-                  <div className="text-sm font-semibold text-white truncate">{j.client || '—'}</div>
-                  <div className="text-xs text-gray-400 truncate mt-0.5">{j.address || '—'}</div>
-                  <div className="flex items-center gap-3 mt-1.5 flex-wrap">
-                    {j.type && <span className="text-xs text-gray-500">{j.type}</span>}
-                    {dates.length > 0 && (
-                      <span className="flex items-center gap-1 text-xs text-gray-500">
-                        <Calendar size={10} />
-                        {fmtDate(dates[0])}{dates.length > 1 ? ` +${dates.length - 1}d` : ''}
-                      </span>
+                  <div className="text-right shrink-0">
+                    <div className="text-sm font-bold text-white">{fmtCurrency(j.agreed_ex_gst || j.quote_ex_gst)}</div>
+                    {j.agreed_ex_gst && j.quote_ex_gst && j.agreed_ex_gst !== j.quote_ex_gst && (
+                      <div className="text-xs text-gray-500">quoted {fmtCurrency(j.quote_ex_gst)}</div>
                     )}
+                    <div className="text-xs text-gray-500 mt-0.5">{j.quote_no || ''}</div>
                   </div>
                 </div>
-                <div className="text-right shrink-0">
-                  <div className="text-sm font-bold text-white">{fmtCurrency(j.agreed_ex_gst || j.quote_ex_gst)}</div>
-                  {j.agreed_ex_gst && j.quote_ex_gst && j.agreed_ex_gst !== j.quote_ex_gst && (
-                    <div className="text-xs text-gray-500">quoted {fmtCurrency(j.quote_ex_gst)}</div>
-                  )}
-                  <div className="text-xs text-gray-500 mt-0.5">{j.quote_no || ''}</div>
-                </div>
+              </button>
+              {/* Quick status selector */}
+              <div className="pr-4 shrink-0">
+                <select
+                  value={j.status || ''}
+                  onClick={e => e.stopPropagation()}
+                  onChange={async e => {
+                    e.stopPropagation()
+                    await upsert.mutateAsync({ ...j, status: e.target.value })
+                  }}
+                  className="text-xs bg-gray-800 border border-gray-700 rounded-lg px-2 py-1 text-gray-300 focus:outline-none focus:ring-1 focus:ring-yellow-400 cursor-pointer opacity-0 group-hover:opacity-100 transition-opacity"
+                >
+                  {JOB_STATUSES.map(s => <option key={s}>{s}</option>)}
+                </select>
               </div>
-            </button>
+            </div>
           )
         })}
       </div>

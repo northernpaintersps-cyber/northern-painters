@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useCallback } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/lib/auth'
@@ -431,12 +431,17 @@ function ExpensesTab({ jobs }: { jobs: any[] }) {
 
 // ── Pay Schedules tab ─────────────────────────────────────────
 function PaySchedulesTab({ jobs }: { jobs: any[] }) {
+  const qc = useQueryClient()
+  const { user } = useAuth()
   const { data: rows = [], isLoading } = useTable<any>('np_pay_schedules')
+  const { data: labourRows = [] } = useTable<any>('np_labour')
   const upsert = useUpsert('np_pay_schedules')
+  const upsertLabour = useUpsert('np_labour')
   const del = useDelete('np_pay_schedules')
   const [open, setOpen] = useState(false)
   const [form, setForm] = useState<any>({})
   const [saving, setSaving] = useState(false)
+  const [showSummary, setShowSummary] = useState(true)
 
   const ef = (k: string) => (e: React.ChangeEvent<any>) =>
     setForm((p: any) => ({ ...p, [k]: e.target.value }))
@@ -452,9 +457,71 @@ function PaySchedulesTab({ jobs }: { jobs: any[] }) {
     } finally { setSaving(false) }
   }
 
+  // Labour by worker summary
+  const workerSummary = useMemo(() => {
+    const map: Record<string, { total: number; unpaid: number; entries: any[] }> = {}
+    labourRows.forEach((r: any) => {
+      const name = r.sub || 'Unknown'
+      const cost = r.cost ?? (r.hours ?? 0) * (r.rate ?? 0)
+      if (!map[name]) map[name] = { total: 0, unpaid: 0, entries: [] }
+      map[name].total += cost
+      if (!r.paid) map[name].unpaid += cost
+      map[name].entries.push(r)
+    })
+    return Object.entries(map).sort((a, b) => b[1].unpaid - a[1].unpaid)
+  }, [labourRows])
+
+  async function markWorkerPaid(workerName: string, entries: any[]) {
+    const unpaid = entries.filter(e => !e.paid)
+    if (!unpaid.length || !confirm(`Mark ${unpaid.length} entries as paid for ${workerName}?`)) return
+    for (const e of unpaid) {
+      await upsertLabour.mutateAsync({ ...e, paid: true })
+    }
+    qc.invalidateQueries({ queryKey: ['np_labour'] })
+  }
+
   return (
-    <div className="space-y-4">
-      <div className="flex justify-end">
+    <div className="space-y-5">
+      {/* Labour by worker summary */}
+      <div className="bg-gray-900 rounded-xl border border-gray-800 overflow-hidden">
+        <button
+          onClick={() => setShowSummary(v => !v)}
+          className="w-full flex items-center justify-between px-4 py-3 text-sm font-semibold text-white hover:bg-gray-800/50 transition-colors">
+          <span>Labour owed by worker</span>
+          {showSummary ? <ChevronUp size={14} className="text-gray-500" /> : <ChevronDown size={14} className="text-gray-500" />}
+        </button>
+        {showSummary && (
+          <div className="divide-y divide-gray-800">
+            {workerSummary.map(([name, data]) => (
+              <div key={name} className="flex items-center gap-4 px-4 py-3">
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-white">{name}</p>
+                  <p className="text-xs text-gray-500">{data.entries.length} entries · all time total {fmtCurrency(data.total)}</p>
+                </div>
+                <div className="text-right">
+                  <p className={`text-sm font-bold tabular-nums ${data.unpaid > 0 ? 'text-amber-400' : 'text-green-400'}`}>
+                    {data.unpaid > 0 ? `${fmtCurrency(data.unpaid)} unpaid` : 'All paid'}
+                  </p>
+                </div>
+                {data.unpaid > 0 && (
+                  <button
+                    onClick={() => markWorkerPaid(name, data.entries)}
+                    className="text-xs px-3 py-1.5 rounded-lg bg-green-500/20 text-green-400 hover:bg-green-500/30 font-medium transition-colors whitespace-nowrap">
+                    Mark paid
+                  </button>
+                )}
+              </div>
+            ))}
+            {!workerSummary.length && (
+              <p className="text-sm text-gray-500 text-center py-6">No labour entries yet</p>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Pay schedules table */}
+      <div className="flex items-center justify-between">
+        <p className="text-sm font-semibold text-white">Pay schedules</p>
         <button onClick={openNew} className="flex items-center gap-1.5 bg-yellow-400 hover:bg-yellow-300 text-gray-900 font-semibold text-sm px-3 py-1.5 rounded-lg">
           <Plus size={14} /> Add schedule
         </button>
@@ -464,12 +531,13 @@ function PaySchedulesTab({ jobs }: { jobs: any[] }) {
         : (
           <div className="overflow-x-auto rounded-xl border border-gray-800">
             <table className="w-full">
-              <THead cols={['Worker','Period start','Period end','Amount','Paid']} />
+              <THead cols={['Worker','Job','Period start','Period end','Amount','Paid']} />
               <tbody>
                 {rows.map(r => (
                   <Row key={r.id}
                     cells={[
                       r.worker || '—',
+                      r.job_id || '—',
                       fmtDate(r.period_start),
                       fmtDate(r.period_end),
                       fmtCurrency(r.amount),
@@ -479,15 +547,15 @@ function PaySchedulesTab({ jobs }: { jobs: any[] }) {
                     onDelete={() => { if (confirm('Delete?')) del.mutate(r.id) }}
                   />
                 ))}
-                {!rows.length && <tr><td colSpan={6} className="text-center py-8 text-gray-500 text-sm">No pay schedules yet</td></tr>}
+                {!rows.length && <tr><td colSpan={7} className="text-center py-8 text-gray-500 text-sm">No pay schedules yet</td></tr>}
               </tbody>
             </table>
           </div>
         )
       }
-      <Modal open={open} onClose={() => setOpen(false)} title={form.id ? 'Edit pay schedule' : 'New pay schedule'}>
+      <Modal open={open} onClose={() => setOpen(false)} title={form.id && rows.find((r: any) => r.id === form.id) ? 'Edit pay schedule' : 'New pay schedule'}>
         <div className="space-y-3">
-          <JobSelect label="Job (optional)" value={form.id || ''} onChange={ef('id')} jobs={jobs} />
+          <JobSelect label="Job (optional)" value={form.job_id || ''} onChange={ef('job_id')} jobs={jobs} />
           <Input label="Worker / subcontractor" value={form.worker || ''} onChange={ef('worker')} />
           <div className="grid grid-cols-2 gap-3">
             <Input label="Period start" type="date" value={form.period_start || ''} onChange={ef('period_start')} />

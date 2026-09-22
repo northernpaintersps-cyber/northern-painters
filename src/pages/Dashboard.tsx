@@ -4,7 +4,7 @@ import { supabase } from '@/lib/supabase'
 import { StatCard } from '@/components/ui/StatCard'
 import { Badge } from '@/components/ui/Badge'
 import { fmtCurrency, fmtDate, calcOwed, invStatus, grossMargin, inYear, today } from '@/lib/utils'
-import { DollarSign, Briefcase, AlertCircle, TrendingUp, Users, Phone, Clock } from 'lucide-react'
+import { DollarSign, Briefcase, AlertCircle, TrendingUp, Users, Phone, Clock, MapPin } from 'lucide-react'
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid
 } from 'recharts'
@@ -106,6 +106,14 @@ export default function Dashboard() {
   })
   if (sentOld.length) alerts.push({ type: 'warning', msg: `${sentOld.length} quote${sentOld.length > 1 ? 's' : ''} sent 7+ days ago — follow up` })
 
+  // Today's schedule
+  const todayJobs = jobs.filter((j: any) => {
+    const dates = Array.isArray(j.scheduled_dates) ? j.scheduled_dates : []
+    return dates.includes(todayStr) || j.status === 'In Progress'
+  }).slice(0, 6)
+  const todayAssignments = assignments.filter((a: any) => a.date === todayStr)
+  const todayCrewNames = [...new Set(todayAssignments.map((a: any) => a.crew_name))]
+
   // In-progress cost cards
   const ipJobs = jobs.filter((j: any) => j.status === 'In Progress').slice(0, 4)
 
@@ -157,6 +165,67 @@ export default function Dashboard() {
           <StatCard label="Scheduled" value={scheduled} icon={Clock} color="blue" />
           <StatCard label="New enquiries" value={newEnquiries} icon={Phone} color={newEnquiries > 0 ? 'amber' : 'gray'} />
           <StatCard label="Crew on site today" value={crewToday} icon={Users} />
+        </div>
+      </div>
+
+      {/* Today's schedule */}
+      <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
+        <div className="flex items-center gap-2 mb-4">
+          <MapPin size={14} className="text-yellow-400" />
+          <p className="text-sm font-semibold text-white">Today's schedule</p>
+          <span className="text-xs text-gray-500 ml-1">{new Date().toLocaleDateString('en-AU', { weekday: 'long', day: 'numeric', month: 'short' })}</span>
+        </div>
+        <div className="grid md:grid-cols-2 gap-4">
+          {/* Jobs on today */}
+          <div>
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Jobs on site</p>
+            {todayJobs.length === 0
+              ? <p className="text-sm text-gray-500">No jobs scheduled for today</p>
+              : (
+                <div className="space-y-2">
+                  {todayJobs.map((j: any) => (
+                    <div key={j.id} className="flex items-start gap-2 bg-gray-800/60 rounded-lg px-3 py-2">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-white truncate">{j.client || '—'}</p>
+                        <p className="text-xs text-gray-400 truncate">{j.address || ''}</p>
+                      </div>
+                      <span className={`text-xs px-1.5 py-0.5 rounded font-medium shrink-0 ${
+                        j.status === 'In Progress' ? 'bg-green-500/20 text-green-400' :
+                        j.status === 'Scheduled' ? 'bg-blue-500/20 text-blue-400' : 'bg-gray-700 text-gray-400'
+                      }`}>{j.status}</span>
+                    </div>
+                  ))}
+                </div>
+              )
+            }
+          </div>
+          {/* Crew today */}
+          <div>
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Crew assigned today</p>
+            {todayCrewNames.length === 0
+              ? <p className="text-sm text-gray-500">No crew assigned for today</p>
+              : (
+                <div className="space-y-2">
+                  {todayCrewNames.map((name: any) => {
+                    const myAssignments = todayAssignments.filter((a: any) => a.crew_name === name)
+                    return (
+                      <div key={String(name)} className="flex items-start gap-2 bg-gray-800/60 rounded-lg px-3 py-2">
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium text-white">{name}</p>
+                          <p className="text-xs text-gray-400 truncate">
+                            {myAssignments.map((a: any) => a.job_id || a.job_desc || '').filter(Boolean).join(', ') || 'Assigned'}
+                          </p>
+                        </div>
+                        <span className="text-xs bg-purple-500/20 text-purple-400 px-1.5 py-0.5 rounded font-medium shrink-0">
+                          {myAssignments[0]?.time_slot || 'Full day'}
+                        </span>
+                      </div>
+                    )
+                  })}
+                </div>
+              )
+            }
+          </div>
         </div>
       </div>
 
