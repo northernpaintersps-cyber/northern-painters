@@ -1,11 +1,13 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/lib/auth'
 import { Modal } from '@/components/ui/Modal'
 import { Input, Select, TextArea } from '@/components/ui/Field'
 import { fmtCurrency, fmtDate, genId, today } from '@/lib/utils'
-import { Plus, Search, Loader2, Trash2, Edit2 } from 'lucide-react'
+import { extractInvoice } from '@/lib/ai'
+import { useBusinessSettings } from '@/pages/SettingsPage'
+import { Plus, Search, Loader2, Trash2, Edit2, Scan, AlertCircle } from 'lucide-react'
 
 const CATEGORIES = ['Paint', 'Primer/Undercoat', 'Filler/Putty', 'Tape/Masking', 'Brushes/Rollers', 'Sandpaper/Prep', 'Caulk/Sealant', 'Solvent/Cleaner', 'Hardware', 'Other']
 const BILLING_TYPES = ['Fixed Quote', 'Hourly', 'Hourly/Estimate']
@@ -82,6 +84,7 @@ function emptyForm() {
 export default function Materials() {
   const { data: materials = [], isLoading } = useMaterials()
   const { data: jobs = [] } = useJobs()
+  const { data: bizSettings } = useBusinessSettings()
   const upsert = useUpsertMaterial()
   const del = useDeleteMaterial()
 
@@ -91,6 +94,9 @@ export default function Materials() {
   const [form, setForm] = useState(emptyForm())
   const [modalOpen, setModalOpen] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [scanning, setScanning] = useState(false)
+  const [scanError, setScanError] = useState<string | null>(null)
+  const scanInputRef = useRef<HTMLInputElement>(null)
 
   const ef = (k: string) => (e: React.ChangeEvent<any>) => {
     const v = e.target.value
@@ -124,12 +130,47 @@ export default function Materials() {
 
   function openNew() {
     setForm(emptyForm())
+    setScanError(null)
     setModalOpen(true)
   }
 
   function openEdit(m: any) {
     setForm({ ...emptyForm(), ...m })
+    setScanError(null)
     setModalOpen(true)
+  }
+
+  async function handleScan(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    const apiKey = bizSettings?.ai_api_key?.trim()
+    if (!apiKey) {
+      setScanError('No AI API key set. Add your Anthropic API key in Settings.')
+      if (scanInputRef.current) scanInputRef.current.value = ''
+      return
+    }
+    setScanning(true)
+    setScanError(null)
+    try {
+      const result = await extractInvoice(apiKey, file)
+      setForm(f => ({
+        ...f,
+        supplier:      result.supplier || f.supplier,
+        mat_desc:      result.description || f.mat_desc,
+        date:          result.date || f.date,
+        receipt_no:    result.receipt_no || f.receipt_no,
+        cost_ex_gst:   result.cost_ex_gst ?? f.cost_ex_gst,
+        gst:           result.gst ?? f.gst,
+        total_inc_gst: result.total_inc_gst ?? f.total_inc_gst,
+        category:      result.category || f.category,
+        notes:         result.notes ? (f.notes ? `${f.notes}\n${result.notes}` : result.notes) : f.notes,
+      }))
+    } catch (err: any) {
+      setScanError(err?.message || 'Scan failed. Check your API key and try again.')
+    } finally {
+      setScanning(false)
+      if (scanInputRef.current) scanInputRef.current.value = ''
+    }
   }
 
   async function save() {
@@ -247,7 +288,21 @@ export default function Materials() {
 
       {/* Modal */}
       <Modal open={modalOpen} onClose={() => setModalOpen(false)} size="lg">
-        <h2 className="text-base font-semibold text-white mb-4">{form.id ? 'Edit material' : 'Add material'}</h2>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-base font-semibold text-white">{form.id ? 'Edit material' : 'Add material'}</h2>
+          <label className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border transition-colors cursor-pointer
+            ${scanning ? 'border-yellow-400/50 bg-yellow-400/10 text-yellow-400' : 'border-gray-700 bg-gray-800 text-gray-400 hover:text-white hover:border-gray-600'}`}>
+            <input ref={scanInputRef} type="file" accept="image/*" className="hidden" onChange={handleScan} disabled={scanning} />
+            {scanning ? <Loader2 size={12} className="animate-spin" /> : <Scan size={12} />}
+            {scanning ? 'Scanning…' : 'Scan invoice'}
+          </label>
+        </div>
+        {scanError && (
+          <div className="flex items-start gap-2 bg-red-900/20 border border-red-800/50 rounded-lg px-3 py-2 mb-3">
+            <AlertCircle size={13} className="text-red-400 mt-0.5 shrink-0" />
+            <p className="text-xs text-red-300">{scanError}</p>
+          </div>
+        )}
         <div className="space-y-3">
           <div className="grid grid-cols-2 gap-3">
             <Input label="Date" type="date" value={form.date} onChange={ef('date')} />

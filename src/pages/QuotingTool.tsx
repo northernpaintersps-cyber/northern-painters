@@ -3,7 +3,8 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/lib/auth'
 import { fmtCurrency, genId, today } from '@/lib/utils'
-import { Plus, Loader2, Trash2, ChevronDown, ChevronUp, Printer } from 'lucide-react'
+import { generateQuoteScope } from '@/lib/ai'
+import { Plus, Loader2, Trash2, ChevronDown, ChevronUp, Printer, Sparkles, AlertCircle } from 'lucide-react'
 import { useBusinessSettings } from '@/pages/SettingsPage'
 
 // ── Constants ─────────────────────────────────────────────────
@@ -339,6 +340,8 @@ export default function QuotingTool() {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
+  const [aiWriting, setAiWriting] = useState(false)
+  const [aiError, setAiError] = useState<string | null>(null)
 
   const selJob = jobs.find(j => j.id === selJobId)
 
@@ -381,6 +384,34 @@ export default function QuotingTool() {
     } finally { setSaving(false) }
   }
 
+  async function handleAiScope() {
+    const apiKey = bizSettings?.ai_api_key?.trim()
+    if (!apiKey) {
+      setAiError('No AI API key set. Add your Anthropic API key in Settings.')
+      return
+    }
+    setAiWriting(true)
+    setAiError(null)
+    try {
+      const scope = await generateQuoteScope(apiKey, {
+        client: selJob?.client ?? '',
+        address: selJob?.address ?? '',
+        jobType: selJob?.type ?? '',
+        items: items.map(it => {
+          const c = calcItem(it)
+          return { area_name: it.area_name, surface_type: it.surface_type, sqm: c.sqm, coats: it.coats, prep_level: it.prep_level, notes: it.notes }
+        }),
+        totalExGST: totals.exGST,
+      })
+      setSettings(s => ({ ...s, notes: scope }))
+      setSettingsOpen(true)
+    } catch (err: any) {
+      setAiError(err?.message || 'AI failed. Check your API key.')
+    } finally {
+      setAiWriting(false)
+    }
+  }
+
   function printQuote() {
     if (!selJob) return
     const html = buildQuoteHTML(selJob, items, { ...settings, company_name: bizSettings?.company_name })
@@ -415,6 +446,11 @@ export default function QuotingTool() {
           </button>
           {selJob && (
             <>
+              <button onClick={handleAiScope} disabled={aiWriting || items.length === 0}
+                className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-purple-500/20 border border-purple-500/40 text-purple-300 hover:bg-purple-500/30 disabled:opacity-40 transition-colors">
+                {aiWriting ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
+                {aiWriting ? 'Writing…' : 'AI scope'}
+              </button>
               <button onClick={printQuote}
                 className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-gray-300 hover:text-white transition-colors">
                 <Printer size={13} /> Print / PDF
@@ -427,6 +463,25 @@ export default function QuotingTool() {
           )}
         </div>
       </div>
+
+      {/* AI error */}
+      {aiError && (
+        <div className="flex items-start gap-2 bg-red-900/20 border border-red-800/50 rounded-lg px-4 py-3">
+          <AlertCircle size={14} className="text-red-400 mt-0.5 shrink-0" />
+          <div className="flex-1">
+            <p className="text-sm text-red-300">{aiError}</p>
+          </div>
+          <button onClick={() => setAiError(null)} className="text-red-600 hover:text-red-400 text-xs">✕</button>
+        </div>
+      )}
+
+      {/* AI scope success hint */}
+      {aiWriting === false && saved === false && settings.notes && settingsOpen && (
+        <div className="flex items-center gap-2 bg-purple-900/20 border border-purple-800/40 rounded-lg px-4 py-2">
+          <Sparkles size={13} className="text-purple-400" />
+          <p className="text-xs text-purple-300">AI scope written. Review the notes in Quote settings above before printing.</p>
+        </div>
+      )}
 
       {/* Quote settings panel */}
       {settingsOpen && (
