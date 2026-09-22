@@ -294,19 +294,54 @@ function mapAdsSpend(a: any, userId: string) {
 }
 
 // ── Batch upsert with deduplication ──────────────────────────
+// Postgres rejects the whole statement when a column is missing, so one absent
+// column would drop an entire 50-row chunk. Strip the offending column and retry
+// rather than losing the rows — the caller still gets a warning.
+const MISSING_COL = /Could not find the '([^']+)' column/i
+
+async function upsertChunk(
+  table: string, chunk: any[], dropped: Set<string>,
+): Promise<{ ok: boolean; message?: string }> {
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const payload = dropped.size
+      ? chunk.map(r => {
+          const c = { ...r }
+          dropped.forEach(k => delete c[k])
+          return c
+        })
+      : chunk
+    const { error } = await (supabase.from(table as any) as any).upsert(payload, { onConflict: 'id' })
+    if (!error) return { ok: true }
+    const missing = error.message?.match(MISSING_COL)?.[1]
+    if (!missing || dropped.has(missing)) return { ok: false, message: error.message }
+    dropped.add(missing)      // retry without it
+  }
+  return { ok: false, message: 'too many missing columns' }
+}
+
 async function batchUpsert(table: string, rows: any[], chunkSize = 50): Promise<{ count: number; errors: string[] }> {
   if (!rows.length) return { count: 0, errors: [] }
   // Deduplicate by id — keep last occurrence
   const seen = new Map<string, any>()
   for (const r of rows) if (r?.id != null) seen.set(String(r.id), r)
   const deduped = Array.from(seen.values())
+
   const errors: string[] = []
+  const dropped = new Set<string>()
   let count = 0
+
   for (let i = 0; i < deduped.length; i += chunkSize) {
     const chunk = deduped.slice(i, i + chunkSize)
-    const { error } = await (supabase.from(table as any) as any).upsert(chunk, { onConflict: 'id' })
-    if (error) errors.push(`${table}: ${error.message}`)
-    else count += chunk.length
+    const res = await upsertChunk(table, chunk, dropped)
+    if (res.ok) count += chunk.length
+    else errors.push(`${table}: ${res.message}`)
+  }
+
+  if (dropped.size) {
+    errors.push(
+      `${table}: imported without ${[...dropped].join(', ')} — ` +
+      `add the column${dropped.size > 1 ? 's' : ''} in Supabase and re-import to keep this data.`,
+    )
   }
   return { count, errors }
 }
