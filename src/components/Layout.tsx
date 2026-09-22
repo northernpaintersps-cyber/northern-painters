@@ -6,7 +6,7 @@ import {
   LayoutDashboard, Briefcase, FileText, Users, Calendar,
   DollarSign, ClipboardList, Settings, LogOut, Phone,
   BarChart2, Menu, X, MapPin, Receipt, Megaphone, Calculator,
-  Package, GitBranch, UserCheck, Shield
+  Package, GitBranch, UserCheck, Shield, TrendingUp, PieChart
 } from 'lucide-react'
 
 const nav = [
@@ -23,10 +23,12 @@ const nav = [
     { to: '/clients',    label: 'Clients',       icon: UserCheck },
   ]},
   { group: 'Finance', items: [
-    { to: '/invoices',   label: 'Invoices',      icon: FileText },
-    { to: '/receipts',   label: 'Receipts',      icon: Receipt },
-    { to: '/finance',    label: 'Finance',       icon: DollarSign },
-    { to: '/reports',    label: 'Reports',       icon: BarChart2 },
+    { to: '/invoices',      label: 'Invoices',      icon: FileText },
+    { to: '/receipts',      label: 'Receipts',      icon: Receipt },
+    { to: '/costs',         label: 'Project Costs', icon: TrendingUp },
+    { to: '/profitability', label: 'Profitability', icon: PieChart },
+    { to: '/finance',       label: 'Finance',       icon: DollarSign },
+    { to: '/reports',       label: 'Reports',       icon: BarChart2 },
   ]},
   { group: 'Resources', items: [
     { to: '/quotes',     label: 'Quote Builder', icon: Calculator },
