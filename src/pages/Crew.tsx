@@ -1,467 +1,502 @@
-import { useState, useMemo, useCallback } from 'react'
+import { useState, useMemo } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/lib/auth'
 import { Modal } from '@/components/ui/Modal'
-import { Input, Select, TextArea } from '@/components/ui/Field'
-import { Badge } from '@/components/ui/Badge'
-import { fmtCurrency, fmtDate, genId, today } from '@/lib/utils'
-import { Plus, Search, Loader2, Trash2, User, ChevronLeft, ChevronRight } from 'lucide-react'
-import { addDays } from '@/lib/utils'
+import { Input } from '@/components/ui/Field'
+import { getJobScheduledDates, genId, today, fmtCurrency } from '@/lib/utils'
+import {
+  Plus, Loader2, Trash2, Edit2, ChevronLeft, ChevronRight,
+  MessageSquare, CalendarDays,
+} from 'lucide-react'
 
-type CrewMember = Record<string, any>
-type Assignment = Record<string, any>
+type Row = Record<string, any>
 
-const PAYMENT_TYPES = ['ABN', 'Cash']
-const ROLES = ['Painter', 'Lead Painter', 'Apprentice', 'Labourer', 'Subcontractor']
-const TIME_SLOTS = ['full', 'morning', 'afternoon']
+const CONFIRMED = ['Scheduled', 'In Progress', 'Hourly Rate Accepted']
+const DN = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+const II = 'border-none bg-transparent text-[12.5px] w-full focus:outline-none focus:bg-blue-50/60 rounded px-0.5'
 
-function useCrew() {
+const localStr = (d: Date) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+
+// Monday of the week, offset by N weeks
+function weekStart(offset: number) {
+  const d = new Date()
+  const day = (d.getDay() + 6) % 7 // Mon = 0
+  d.setDate(d.getDate() - day + offset * 7)
+  d.setHours(0, 0, 0, 0)
+  return d
+}
+
+const SLOT = {
+  full:      { label: 'Full day',  short: '',   bg: '#eaf3de', fg: '#166534', brd: '#86efac' },
+  morning:   { label: 'Morning',   short: 'AM', bg: '#dbeafe', fg: '#1e40af', brd: '#93c5fd' },
+  afternoon: { label: 'Afternoon', short: 'PM', bg: '#fef3c7', fg: '#92400e', brd: '#fde68a' },
+} as const
+type SlotKey = keyof typeof SLOT
+const slotOf = (a: Row): SlotKey => (a.time_slot in SLOT ? a.time_slot : 'full')
+
+function useTable(table: string) {
   const { user } = useAuth()
   return useQuery({
-    queryKey: ['np_crew', user?.id],
+    queryKey: [table, user?.id],
     queryFn: async () => {
-      const { data, error } = await supabase.from('np_crew').select('*').eq('user_id', user!.id).order('name')
-      if (error) throw error
-      return (data ?? []) as CrewMember[]
+      const { data } = await (supabase.from(table as any) as any).select('*').eq('user_id', user!.id)
+      return (data ?? []) as Row[]
     },
     enabled: !!user,
   })
 }
 
-function useAssignments() {
-  const { user } = useAuth()
-  return useQuery({
-    queryKey: ['np_assignments', user?.id],
-    queryFn: async () => {
-      const { data, error } = await supabase.from('np_assignments').select('*').eq('user_id', user!.id).order('date', { ascending: false })
-      if (error) throw error
-      return (data ?? []) as Assignment[]
-    },
-    enabled: !!user,
-  })
-}
-
-function useJobs() {
-  const { user } = useAuth()
-  return useQuery({
-    queryKey: ['np_jobs_simple', user?.id],
-    queryFn: async () => {
-      const { data } = await supabase.from('np_jobs').select('id,client,address,status,scheduled_dates').eq('user_id', user!.id).order('created_at', { ascending: false })
-      return (data ?? []) as any[]
-    },
-    enabled: !!user,
-  })
-}
-
-function useUpsertCrew() {
+function useUpsert(table: string) {
   const qc = useQueryClient()
   const { user } = useAuth()
   return useMutation({
-    mutationFn: async (c: CrewMember) => {
-      const { error } = await supabase.from('np_crew').upsert({ ...c, user_id: user!.id, updated_at: new Date().toISOString() } as any)
+    mutationFn: async (row: Row) => {
+      const { error } = await (supabase.from(table as any) as any)
+        .upsert({ ...row, user_id: user!.id, updated_at: new Date().toISOString() })
       if (error) throw error
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['np_crew'] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: [table] }),
   })
 }
 
-function useDeleteCrew() {
+function useDelete(table: string) {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: async (id: string) => {
-      const { error } = await supabase.from('np_crew').delete().eq('id', id)
+      const { error } = await (supabase.from(table as any) as any).delete().eq('id', id)
       if (error) throw error
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['np_crew'] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: [table] }),
   })
 }
 
-function useUpsertAssignment() {
-  const qc = useQueryClient()
-  const { user } = useAuth()
-  return useMutation({
-    mutationFn: async (a: Assignment) => {
-      const { error } = await supabase.from('np_assignments').upsert({ ...a, user_id: user!.id, updated_at: new Date().toISOString() } as any)
-      if (error) throw error
-    },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['np_assignments'] })
-      qc.invalidateQueries({ queryKey: ['np_jobs'] })
-    },
-  })
-}
-
-function useDeleteAssignment() {
-  const qc = useQueryClient()
-  return useMutation({
-    mutationFn: async (id: string) => {
-      const { error } = await supabase.from('np_assignments').delete().eq('id', id)
-      if (error) throw error
-    },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['np_assignments'] }),
-  })
+function Card({ children, className = '' }: { children: React.ReactNode; className?: string }) {
+  return <div className={`bg-white border border-black/[0.12] rounded-xl mb-3.5 ${className}`}>{children}</div>
 }
 
 export default function Crew() {
-  const { data: crew = [], isLoading } = useCrew()
-  const { data: assignments = [] } = useAssignments()
-  const { data: jobs = [] } = useJobs()
-  const upsertCrew = useUpsertCrew()
-  const deleteCrew = useDeleteCrew()
-  const upsertAssignment = useUpsertAssignment()
-  const deleteAssignment = useDeleteAssignment()
+  const nav = useNavigate()
+  const { user } = useAuth()
+  const { data: crew = [], isLoading } = useTable('np_crew')
+  const { data: jobs = [] } = useTable('np_jobs')
+  const { data: assignments = [] } = useTable('np_assignments')
 
-  const [tab, setTab] = useState<'crew' | 'schedule' | 'assignments'>('crew')
-  const [weekOffset, setWeekOffset] = useState(0)
-  const [search, setSearch] = useState('')
-  const [crewForm, setCrewForm] = useState<CrewMember>({})
-  const [crewModalOpen, setCrewModalOpen] = useState(false)
-  const [selectedCrewId, setSelectedCrewId] = useState<string | null>(null)
-  const [asnForm, setAsnForm] = useState<Assignment>({ date: today(), time_slot: 'full' })
-  const [asnModalOpen, setAsnModalOpen] = useState(false)
-  const [selectedAsnId, setSelectedAsnId] = useState<string | null>(null)
-  const [saving, setSaving] = useState(false)
+  const { data: settings } = useQuery({
+    queryKey: ['np_settings', 'business', user?.id],
+    queryFn: async () => {
+      const { data } = await (supabase.from('np_settings') as any)
+        .select('value').eq('user_id', user!.id).eq('key', 'business').maybeSingle()
+      return (data?.value ?? {}) as any
+    },
+    enabled: !!user,
+  })
+  const rate0 = settings?.rates?.standard ?? 65
 
-  // ── Crew helpers ────────────────────────────────────────────
-  function openNewCrew() { setCrewForm({ payment_type: 'ABN', role: 'Painter' }); setSelectedCrewId(null); setCrewModalOpen(true) }
-  function openEditCrew(c: CrewMember) { setCrewForm({ ...c }); setSelectedCrewId(c.id); setCrewModalOpen(true) }
-  const cf = (k: string) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) =>
-    setCrewForm(prev => ({ ...prev, [k]: e.target.value }))
-  const cn = (k: string) => (e: React.ChangeEvent<HTMLInputElement>) =>
-    setCrewForm(prev => ({ ...prev, [k]: parseFloat(e.target.value) || 0 }))
+  const upsertCrew = useUpsert('np_crew')
+  const delCrew = useDelete('np_crew')
+  const upsertAsn = useUpsert('np_assignments')
+  const delAsn = useDelete('np_assignments')
 
+  const [offset, setOffset] = useState(0)
+  const [crewModal, setCrewModal] = useState(false)
+  const [crewForm, setCrewForm] = useState<Row>({})
+  const [asnModal, setAsnModal] = useState(false)
+  const [asnForm, setAsnForm] = useState<Row>({ date: today(), time_slot: 'full' })
+
+  const ws = weekStart(offset)
+  const days = useMemo(() => Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(ws); d.setDate(d.getDate() + i); return d
+  }), [ws.getTime()])
+  const weekKeys = days.map(localStr)
+  const todayStr = localStr(new Date())
+
+  // V16 conflict map — same crew, same date, overlapping slot, different job
+  const conflictIds = useMemo(() => {
+    const out = new Set<string>()
+    const overlaps = (a: SlotKey, b: SlotKey) => a === b || a === 'full' || b === 'full'
+    weekKeys.forEach(date => {
+      const onDay = assignments.filter(a => a.date === date)
+      const names = [...new Set(onDay.map(a => a.crew_name).filter(Boolean))]
+      names.forEach(name => {
+        const mine = onDay.filter(a => a.crew_name === name)
+        for (let i = 0; i < mine.length; i++)
+          for (let j = i + 1; j < mine.length; j++)
+            if (mine[i].job_id !== mine[j].job_id && overlaps(slotOf(mine[i]), slotOf(mine[j]))) {
+              out.add(mine[i].id); out.add(mine[j].id)
+            }
+      })
+    })
+    return out
+  }, [assignments, weekKeys.join()])
+
+  const schedOf = useMemo(() => {
+    const m: Record<string, string[]> = {}
+    jobs.forEach(j => { m[j.id] = getJobScheduledDates(j) })
+    return m
+  }, [jobs])
+
+  const weekJobs = jobs.filter(j =>
+    CONFIRMED.includes(j.status) && weekKeys.some(k => (schedOf[j.id] ?? []).includes(k))
+  )
+
+  // ── Crew CRUD ─────────────────────────────────────────────
+  const quickCrew = (c: Row, patch: Row) => upsertCrew.mutate({ ...c, ...patch })
+
+  function openAddCrew() {
+    setCrewForm({ payment_type: 'ABN', rate: rate0, role: 'Painter' })
+    setCrewModal(true)
+  }
   async function saveCrew() {
-    setSaving(true)
-    try {
-      await upsertCrew.mutateAsync({ ...crewForm, id: selectedCrewId || genId('c'), created_at: crewForm.created_at || new Date().toISOString() })
-      setCrewModalOpen(false)
-    } finally { setSaving(false) }
+    if (!crewForm.name?.trim()) { alert('Name required'); return }
+    await upsertCrew.mutateAsync({ ...crewForm, id: crewForm.id || genId('c'), created_at: crewForm.created_at || new Date().toISOString() })
+    setCrewModal(false)
+  }
+  async function removeCrew(c: Row) {
+    const n = assignments.filter(a => a.crew_name === c.name).length
+    let msg = `Delete ${c.name} from the crew list?`
+    if (n) msg += `\n\nThis will also remove ${n} calendar assignment${n === 1 ? '' : 's'} for this crew member.`
+    if (!confirm(msg)) return
+    for (const a of assignments.filter(a => a.crew_name === c.name)) await delAsn.mutateAsync(a.id)
+    await delCrew.mutateAsync(c.id)
   }
 
-  async function handleDeleteCrew() {
-    if (!selectedCrewId || !confirm('Delete crew member?')) return
-    await deleteCrew.mutateAsync(selectedCrewId)
-    setCrewModalOpen(false)
+  // ── Assignment CRUD ───────────────────────────────────────
+  function openAssign(jobId: string, date: string) {
+    const j = jobs.find(x => x.id === jobId)
+    setAsnForm({ job_id: jobId, date, time_slot: 'full', crew_name: crew[0]?.name ?? '', client: j?.client })
+    setAsnModal(true)
   }
-
-  // ── Assignment helpers ───────────────────────────────────────
-  function openNewAsn(crewMember?: CrewMember) {
-    setAsnForm({ date: today(), time_slot: 'full', crew_name: crewMember?.name || '' })
-    setSelectedAsnId(null)
-    setAsnModalOpen(true)
-  }
-
-  function openEditAsn(a: Assignment) {
-    setAsnForm({ ...a })
-    setSelectedAsnId(a.id)
-    setAsnModalOpen(true)
-  }
-
-  const af = (k: string) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) =>
-    setAsnForm(prev => ({ ...prev, [k]: e.target.value }))
-
   async function saveAsn() {
-    setSaving(true)
+    if (!asnForm.crew_name) { alert('Pick a crew member'); return }
+    await upsertAsn.mutateAsync({
+      ...asnForm, id: asnForm.id || genId('a'),
+      created_at: asnForm.created_at || new Date().toISOString(),
+    })
+    setAsnModal(false)
+  }
+
+  // V16 openBriefingMsg
+  async function briefing(a: Row) {
+    const j = jobs.find(x => x.id === a.job_id)
+    const c = crew.find(x => x.name === a.crew_name)
+    const msg = `Hi ${(a.crew_name || '').split(' ')[0]},\n\nYou're booked for ${SLOT[slotOf(a)].label.toLowerCase()} on ${a.date}.\n\nJob: ${a.job_id}${j?.client ? ` — ${j.client}` : ''}\nSite: ${j?.address || 'TBC'}\n${j?.job_desc ? `Scope: ${j.job_desc}\n` : ''}${a.notes ? `Notes: ${a.notes}\n` : ''}\nSee you there.\n\nNorthern Painters`
     try {
-      const id = selectedAsnId || genId('a')
-      await upsertAssignment.mutateAsync({ ...asnForm, id, created_at: asnForm.created_at || new Date().toISOString() })
-      setAsnModalOpen(false)
-    } finally { setSaving(false) }
+      await navigator.clipboard.writeText(msg)
+      alert(c?.phone ? `Briefing copied — send to ${c.phone}` : 'Briefing message copied!')
+    } catch { prompt('Copy this message:', msg) }
   }
 
-  async function handleDeleteAsn() {
-    if (!selectedAsnId || !confirm('Delete assignment?')) return
-    await deleteAssignment.mutateAsync(selectedAsnId)
-    setAsnModalOpen(false)
-  }
-
-  // ── Filtered lists ───────────────────────────────────────────
-  const filteredCrew = useMemo(() =>
-    crew.filter(c => !search || c.name?.toLowerCase().includes(search.toLowerCase())),
-    [crew, search])
-
-  const filteredAsn = useMemo(() =>
-    assignments.filter(a => !search || [a.crew_name, a.job_id].some(v => v?.toLowerCase().includes(search.toLowerCase()))),
-    [assignments, search])
-
-  // Crew stats
-  function crewStats(c: CrewMember) {
-    const myAsn = assignments.filter(a => a.crew_name === c.name)
-    const upcoming = myAsn.filter(a => a.date >= today()).length
-    const recent = myAsn.filter(a => a.date < today()).slice(0, 3)
-    return { upcoming, recent, total: myAsn.length }
-  }
+  if (isLoading) return (
+    <div className="flex items-center justify-center h-64"><Loader2 size={20} className="animate-spin text-blue-600" /></div>
+  )
 
   return (
-    <div className="h-full flex flex-col">
+    <div className="p-5">
       {/* Header */}
-      <div className="px-6 py-4 border-b border-gray-200 space-y-3 shrink-0">
-        <div className="flex items-center justify-between">
-          <h1 className="text-lg font-bold text-gray-900">Crew & Assignments</h1>
-          <button
-            onClick={() => tab === 'crew' ? openNewCrew() : openNewAsn()}
-            className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-gray-900 font-semibold text-sm px-3 py-1.5 rounded-lg transition-colors">
-            <Plus size={14} /> {tab === 'crew' ? 'Add crew' : 'New assignment'}
+      <div className="flex items-center justify-between flex-wrap gap-2 mb-4">
+        <h2 className="text-[17px] font-semibold text-gray-900">Crew &amp; Calendar</h2>
+        <div className="flex gap-2 items-center flex-wrap">
+          <button onClick={() => setOffset(o => o - 1)}
+            className="px-2 py-1.5 bg-white border border-black/20 rounded-lg hover:bg-[#f5f4f0]"><ChevronLeft size={14} /></button>
+          <span className="text-[13px] font-medium">
+            {ws.toLocaleDateString('en-AU', { day: 'numeric', month: 'short' })} – {days[6].toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' })}
+          </span>
+          <button onClick={() => setOffset(o => o + 1)}
+            className="px-2 py-1.5 bg-white border border-black/20 rounded-lg hover:bg-[#f5f4f0]"><ChevronRight size={14} /></button>
+          <button onClick={openAddCrew}
+            className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white font-medium text-[13px] px-3 py-1.5 rounded-lg">
+            <Plus size={14} /> Add Crew
           </button>
         </div>
-        <div className="flex gap-1 bg-gray-50 p-1 rounded-lg">
-          {(['crew', 'schedule', 'assignments'] as const).map(t => (
-            <button key={t} onClick={() => setTab(t)}
-              className={`flex-1 text-xs py-1.5 rounded-md font-medium capitalize transition-colors ${tab === t ? 'bg-gray-200 text-gray-900' : 'text-gray-500 hover:text-gray-900'}`}>
-              {t === 'crew' ? `Crew (${crew.length})` : t === 'schedule' ? 'Schedule' : `Assignments (${assignments.length})`}
-            </button>
+      </div>
+
+      {/* Crew members */}
+      <Card className="p-4">
+        <div className="flex justify-between items-center mb-2.5 gap-2 flex-wrap">
+          <div className="text-[13px] font-bold">Crew Members</div>
+          <div className="text-[11px] text-[#666]">Edit inline. Add phone number to enable briefing messages.</div>
+        </div>
+        <div className="overflow-auto max-h-[40vh]">
+          <table className="w-full border-collapse text-[12.5px]">
+            <thead>
+              <tr>
+                {['Name','Role','Phone','Hourly rate','Assignments',''].map((h, i) => (
+                  <th key={i} className="text-left px-2.5 py-[7px] border-b border-black/[0.12] text-[#666] font-medium whitespace-nowrap bg-[#fafaf8] sticky top-0 z-[2]">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {crew.map(c => (
+                <tr key={c.id} className="border-b border-black/[0.06] hover:bg-[#fafaf8]">
+                  <td className="px-2.5 py-[7px]" style={{ minWidth: 130 }}>
+                    <input defaultValue={c.name ?? ''} className={II}
+                      onBlur={e => { if (e.target.value !== (c.name ?? '')) quickCrew(c, { name: e.target.value }) }} />
+                  </td>
+                  <td className="px-2.5 py-[7px]" style={{ minWidth: 110 }}>
+                    <input defaultValue={c.role ?? ''} className={II}
+                      onBlur={e => { if (e.target.value !== (c.role ?? '')) quickCrew(c, { role: e.target.value }) }} />
+                  </td>
+                  <td className="px-2.5 py-[7px]" style={{ minWidth: 110 }}>
+                    <input type="tel" defaultValue={c.phone ?? ''} placeholder="04xx xxx xxx" className={II}
+                      onBlur={e => { if (e.target.value !== (c.phone ?? '')) quickCrew(c, { phone: e.target.value }) }} />
+                  </td>
+                  <td className="px-2.5 py-[7px]">
+                    <div className="flex items-center gap-1">
+                      <span className="text-[#666]">$</span>
+                      <input type="number" step={1} defaultValue={c.rate ?? rate0} className={II} style={{ width: 70 }}
+                        onBlur={e => {
+                          const v = parseFloat(e.target.value) || rate0
+                          if (v !== (c.rate ?? rate0)) quickCrew(c, { rate: v })
+                        }} />
+                      <span className="text-[#666] text-[11px]">/hr</span>
+                    </div>
+                  </td>
+                  <td className="px-2.5 py-[7px] text-xs text-[#666]">{assignments.filter(a => a.crew_name === c.name).length}</td>
+                  <td className="px-2.5 py-[7px] whitespace-nowrap">
+                    <button onClick={() => { setCrewForm({ ...c }); setCrewModal(true) }}
+                      className="ml-1 px-1.5 py-1 rounded-md bg-white border border-black/20 hover:bg-[#f5f4f0] align-middle"><Edit2 size={12} /></button>
+                    <button onClick={() => removeCrew(c)}
+                      className="ml-1 px-1.5 py-1 rounded-md bg-white border border-black/20 hover:bg-[#f5f4f0] align-middle text-[#c0392b]"><Trash2 size={12} /></button>
+                  </td>
+                </tr>
+              ))}
+              {crew.length === 0 && (
+                <tr><td colSpan={6} className="text-center py-5 text-[#666]">No crew members yet.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+
+      {/* Week grid — jobs × days */}
+      <Card className="p-3 overflow-x-auto">
+        {conflictIds.size > 0 && (
+          <div className="bg-[#fee2e2] border border-[#fca5a5] rounded-lg px-3 py-2 mb-2.5 text-xs text-[#991b1b] font-semibold">
+            ⚠ Scheduling conflict — one or more crew members are assigned to overlapping shifts on the same day. Tap the cell to fix.
+          </div>
+        )}
+        <div style={{ minWidth: 700 }}>
+          <table className="w-full border-collapse">
+            <thead>
+              <tr>
+                <th className="px-2.5 py-[7px] text-left border border-black/[0.12] bg-[#fafaf8] text-[11px] sticky left-0 z-[3]" style={{ minWidth: 130 }}>Job</th>
+                {days.map((d, i) => {
+                  const isToday = localStr(d) === todayStr
+                  return (
+                    <th key={i} className="text-center px-1 py-[7px] border"
+                      style={{
+                        minWidth: 95,
+                        background: isToday ? '#dbeafe' : '#fafaf8',
+                        color: isToday ? '#1e40af' : '#1a1a18',
+                        borderColor: isToday ? '#93c5fd' : 'rgba(0,0,0,.12)',
+                      }}>
+                      <div className="text-[10px] font-semibold tracking-wide" style={{ color: isToday ? '#1e40af' : '#666' }}>{DN[i]}</div>
+                      <div className="text-base font-semibold">{d.getDate()}</div>
+                    </th>
+                  )
+                })}
+              </tr>
+            </thead>
+            <tbody>
+              {weekJobs.map(j => (
+                <tr key={j.id}>
+                  <td className="px-2.5 py-1.5 border border-black/[0.12] bg-white sticky left-0 z-[2] align-top" style={{ minWidth: 130 }}>
+                    <div className="text-[11px] font-bold text-[#2563eb]">{j.id}</div>
+                    <div className="text-[11px] font-medium">{j.client}</div>
+                    {j.address && <div className="text-[10px] text-[#666] truncate" style={{ maxWidth: 120 }}>{j.address.split(',')[0]}</div>}
+                  </td>
+                  {weekKeys.map(key => {
+                    const isScheduled = (schedOf[j.id] ?? []).includes(key)
+                    if (!isScheduled) return <td key={key} className="bg-[#f5f4f0] border border-black/[0.12]" />
+                    const asgns = assignments.filter(a => a.job_id === j.id && a.date === key)
+                    const hasConflict = asgns.some(a => conflictIds.has(a.id))
+                    if (!asgns.length) return (
+                      <td key={key} onClick={() => openAssign(j.id, key)}
+                        className="cursor-pointer px-1.5 py-1 align-top"
+                        style={{ background: '#dbeafe44', border: '1.5px dashed #93c5fd', minWidth: 95 }}>
+                        <div className="text-[9px] text-[#1e40af] opacity-70 text-center py-1">+ assign</div>
+                      </td>
+                    )
+                    return (
+                      <td key={key} onClick={() => openAssign(j.id, key)}
+                        className="cursor-pointer px-1.5 py-1 align-top"
+                        style={{
+                          background: hasConflict ? '#fff1f2' : '#eaf3de',
+                          border: `1.5px solid ${hasConflict ? '#fca5a5' : '#86efac'}`, minWidth: 95,
+                        }}>
+                        {hasConflict && <div className="text-[8px] text-[#dc2626] font-bold mb-0.5">⚠ Conflict</div>}
+                        <div className="flex flex-col gap-px">
+                          {asgns.map(a => {
+                            const conflict = conflictIds.has(a.id)
+                            const s = SLOT[slotOf(a)]
+                            return (
+                              <div key={a.id}
+                                className="flex items-center gap-0.5 text-[9px] px-1.5 py-0.5 rounded-lg whitespace-nowrap my-px"
+                                style={{ background: conflict ? '#fee2e2' : '#27500a', color: conflict ? '#991b1b' : '#eaf3de' }}>
+                                {conflict && <span className="text-[10px]">⚠</span>}
+                                {(a.crew_name || '').split(' ')[0]}
+                                {s.short && <span className="text-[8px] opacity-80 font-bold ml-0.5">{s.short}</span>}
+                              </div>
+                            )
+                          })}
+                        </div>
+                      </td>
+                    )
+                  })}
+                </tr>
+              ))}
+              {weekJobs.length === 0 && (
+                <tr><td colSpan={8} className="text-center text-[#666] py-6 text-[13px]">
+                  No active jobs scheduled this week.<br />
+                  <span className="text-[11px]">Schedule jobs from the Jobs page, or use the Calendar.</span>
+                </td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+        <div className="mt-2 flex gap-3 text-[10px] text-[#666] flex-wrap">
+          {(['full', 'morning', 'afternoon'] as SlotKey[]).map(k => (
+            <span key={k} className="inline-flex items-center gap-1">
+              <span className="rounded px-1.5 py-px font-semibold border"
+                style={{ background: SLOT[k].bg, borderColor: SLOT[k].brd, color: SLOT[k].fg }}>
+                {SLOT[k].short || 'Full'}
+              </span>
+              {SLOT[k].label}
+            </span>
           ))}
         </div>
-        <div className="relative">
-          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
-          <input value={search} onChange={e => setSearch(e.target.value)} placeholder={`Search ${tab}…`}
-            className="w-full bg-gray-50 border border-gray-200 rounded-lg pl-8 pr-3 py-2 text-sm text-gray-900 placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-blue-500" />
+      </Card>
+
+      {/* Assignments */}
+      <Card className="p-4">
+        <div className="flex justify-between items-center mb-2">
+          <div className="text-[13px] font-bold">Assignments</div>
+          <button onClick={() => nav('/calendar')}
+            className="flex items-center gap-1 px-2.5 py-1 text-[11px] bg-white border border-black/20 rounded-lg hover:bg-[#f5f4f0]">
+            <CalendarDays size={12} /> Schedule view
+          </button>
         </div>
-      </div>
-
-      {/* Content */}
-      <div className="flex-1 overflow-y-auto">
-        {isLoading && <div className="flex items-center justify-center py-16"><Loader2 size={20} className="animate-spin text-blue-600" /></div>}
-
-        {tab === 'crew' && (
-          <div className="divide-y divide-gray-200">
-            {filteredCrew.length === 0 && !isLoading && <div className="text-center py-16 text-gray-500 text-sm">No crew members yet</div>}
-            {filteredCrew.map(c => {
-              const stats = crewStats(c)
-              return (
-                <div key={c.id} className="px-6 py-4 hover:bg-gray-50/30 transition-colors">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="flex items-start gap-3">
-                      <div className="w-10 h-10 rounded-full bg-gray-200 flex items-center justify-center shrink-0">
-                        <User size={16} className="text-gray-500" />
-                      </div>
-                      <div>
-                        <div className="text-sm font-semibold text-gray-900">{c.name}</div>
-                        <div className="text-xs text-gray-500">{c.role} · {c.payment_type}</div>
-                        <div className="flex items-center gap-3 mt-1">
-                          {c.rate && <span className="text-xs text-gray-500">Cost {fmtCurrency(c.rate)}/hr</span>}
-                          {c.charge_rate && <span className="text-xs text-gray-500">Charge {fmtCurrency(c.charge_rate)}/hr</span>}
-                          {c.phone && <a href={`tel:${c.phone}`} className="text-xs text-blue-400 hover:underline">{c.phone}</a>}
-                        </div>
-                        <div className="flex items-center gap-3 mt-1.5">
-                          <span className="text-xs text-gray-500">{stats.upcoming} upcoming</span>
-                          <span className="text-xs text-gray-500">{stats.total} total assignments</span>
-                        </div>
-                      </div>
-                    </div>
-                    <div className="flex gap-1.5 shrink-0">
-                      <button onClick={() => openNewAsn(c)}
-                        className="text-xs px-2.5 py-1 rounded-lg bg-gray-200 text-gray-600 hover:text-gray-900 hover:bg-gray-600 transition-colors">
-                        + Assign
+        <div className="overflow-auto max-h-[50vh]">
+          <table className="w-full border-collapse text-[12.5px]">
+            <thead>
+              <tr>
+                {['Crew','Date','Shift','Job','Client','Notes',''].map((h, i) => (
+                  <th key={i} className="text-left px-2.5 py-[7px] border-b border-black/[0.12] text-[#666] font-medium whitespace-nowrap bg-[#fafaf8] sticky top-0 z-[2]">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {[...assignments].sort((a, b) => (b.date || '').localeCompare(a.date || '')).map(a => {
+                const c = crew.find(x => x.name === a.crew_name)
+                const j = jobs.find(x => x.id === a.job_id)
+                const conflict = conflictIds.has(a.id)
+                const s = SLOT[slotOf(a)]
+                return (
+                  <tr key={a.id} className="border-b border-black/[0.06]" style={conflict ? { background: '#fff1f2' } : undefined}>
+                    <td className="px-2.5 py-[7px]">
+                      <div className="font-semibold text-xs">{a.crew_name || '—'}</div>
+                      {c?.phone && <div className="text-[10px] text-[#666]">{c.phone}</div>}
+                    </td>
+                    <td className="px-2.5 py-[7px] whitespace-nowrap text-xs">{a.date}</td>
+                    <td className="px-2.5 py-[7px]">
+                      <span className="text-[11px] px-1.5 py-0.5 rounded-lg font-semibold"
+                        style={{ background: s.bg, color: s.fg }}>{s.label}</span>
+                    </td>
+                    <td className="px-2.5 py-[7px] text-[#2563eb] font-semibold text-xs">
+                      {a.job_id}{conflict && <span className="text-[10px] text-[#dc2626] ml-1">⚠</span>}
+                    </td>
+                    <td className="px-2.5 py-[7px] text-xs">{j?.client || '—'}</td>
+                    <td className="px-2.5 py-[7px] text-xs text-[#666]">{a.notes || ''}</td>
+                    <td className="px-2.5 py-[7px] whitespace-nowrap">
+                      <button onClick={() => briefing(a)}
+                        title={c?.phone ? 'Send briefing message' : 'Add phone number to crew member to send message'}
+                        className="ml-1 px-1.5 py-1 rounded-md bg-blue-600 text-white hover:bg-blue-700 align-middle inline-flex items-center gap-1 text-[11px]">
+                        <MessageSquare size={11} /> {c?.phone ? 'Send' : 'Msg'}
                       </button>
-                      <button onClick={() => openEditCrew(c)}
-                        className="text-xs px-2.5 py-1 rounded-lg bg-gray-200 text-gray-600 hover:text-gray-900 hover:bg-gray-600 transition-colors">
-                        Edit
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              )
-            })}
-          </div>
-        )}
-
-        {tab === 'schedule' && (() => {
-          // Build 7-day window starting from Monday of current week + offset
-          const now = new Date()
-          const dayOfWeek = now.getDay() // 0=Sun
-          const monday = new Date(now)
-          monday.setDate(now.getDate() - (dayOfWeek === 0 ? 6 : dayOfWeek - 1) + weekOffset * 7)
-          monday.setHours(0,0,0,0)
-          const days = Array.from({ length: 7 }, (_, i) => {
-            const d = new Date(monday)
-            d.setDate(monday.getDate() + i)
-            return d.toISOString().slice(0, 10)
-          })
-          const DAY_LABELS = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun']
-          const todayStr = today()
-
-          // Map date+crewName → assignments
-          const asnMap: Record<string, any[]> = {}
-          assignments.forEach(a => {
-            const key = `${a.date}__${a.crew_name}`
-            if (!asnMap[key]) asnMap[key] = []
-            asnMap[key].push(a)
-          })
-
-          // Crew sorted alphabetically
-          const schedCrew = [...crew].sort((a, b) => (a.name || '').localeCompare(b.name || ''))
-
-          return (
-            <div className="p-4 space-y-3 overflow-x-auto">
-              {/* Week navigation */}
-              <div className="flex items-center gap-3 mb-2">
-                <button onClick={() => setWeekOffset(o => o - 1)} className="p-1.5 rounded-lg bg-gray-50 text-gray-500 hover:text-gray-900 transition-colors"><ChevronLeft size={14} /></button>
-                <span className="text-sm text-gray-900 font-medium min-w-[160px] text-center">
-                  {new Date(days[0]).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' })}
-                  {' – '}
-                  {new Date(days[6]).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' })}
-                </span>
-                <button onClick={() => setWeekOffset(o => o + 1)} className="p-1.5 rounded-lg bg-gray-50 text-gray-500 hover:text-gray-900 transition-colors"><ChevronRight size={14} /></button>
-                {weekOffset !== 0 && (
-                  <button onClick={() => setWeekOffset(0)} className="text-xs text-blue-600 hover:text-blue-500 ml-1">Today</button>
-                )}
-              </div>
-
-              {schedCrew.length === 0
-                ? <p className="text-sm text-gray-500 py-8 text-center">No crew members yet</p>
-                : (
-                  <div className="rounded-xl border border-gray-200 overflow-hidden">
-                    <table className="w-full min-w-[700px]">
-                      <thead>
-                        <tr className="bg-white">
-                          <th className="px-3 py-2.5 text-left text-xs font-semibold text-gray-500 w-28 sticky left-0 bg-white z-10">Crew</th>
-                          {days.map((d, i) => (
-                            <th key={d} className={`px-2 py-2.5 text-center text-xs font-semibold min-w-[90px] ${d === todayStr ? 'text-blue-600 bg-blue-600/5' : 'text-gray-500'}`}>
-                              <div>{DAY_LABELS[i]}</div>
-                              <div className="font-normal text-gray-600">{new Date(d).getDate()}</div>
-                            </th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {schedCrew.map(c => (
-                          <tr key={c.id} className="border-t border-gray-200">
-                            <td className="px-3 py-2 text-xs font-medium text-gray-900 whitespace-nowrap sticky left-0 bg-[#f5f4f0] z-10">
-                              {c.name}
-                              <div className="text-gray-500 font-normal">{c.role}</div>
-                            </td>
-                            {days.map(d => {
-                              const cell = asnMap[`${d}__${c.name}`] || []
-                              const isToday = d === todayStr
-                              return (
-                                <td key={d} className={`px-1 py-1.5 text-center align-top ${isToday ? 'bg-blue-600/5' : ''}`}>
-                                  {cell.length > 0
-                                    ? cell.map(a => {
-                                        const job = jobs.find(j => j.id === a.job_id)
-                                        return (
-                                          <button key={a.id} onClick={() => openEditAsn(a)}
-                                            className="block w-full text-left mb-1 bg-blue-500/20 hover:bg-blue-500/30 text-blue-300 rounded px-1.5 py-1 transition-colors">
-                                            <div className="text-xs font-medium truncate">{a.job_id || '—'}</div>
-                                            {job && <div className="text-xs text-blue-400/70 truncate">{job.client}</div>}
-                                            {a.time_slot !== 'full' && <div className="text-xs text-blue-400/50">{a.time_slot}</div>}
-                                          </button>
-                                        )
-                                      })
-                                    : (
-                                      <button onClick={() => { setAsnForm({ date: d, time_slot: 'full', crew_name: c.name }); setSelectedAsnId(null); setAsnModalOpen(true) }}
-                                        className="w-full h-8 rounded border border-dashed border-gray-200 hover:border-gray-600 transition-colors text-gray-700 hover:text-gray-500 text-xs">
-                                        +
-                                      </button>
-                                    )
-                                  }
-                                </td>
-                              )
-                            })}
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+                      <button onClick={() => { if (confirm('Remove this assignment?')) delAsn.mutate(a.id) }}
+                        className="ml-1 px-1.5 py-1 rounded-md bg-white border border-black/20 hover:bg-[#f5f4f0] align-middle text-[#c0392b]"><Trash2 size={12} /></button>
+                    </td>
+                  </tr>
                 )
-              }
-            </div>
-          )
-        })()}
-
-        {tab === 'assignments' && (
-          <div className="divide-y divide-gray-200">
-            {filteredAsn.length === 0 && !isLoading && <div className="text-center py-16 text-gray-500 text-sm">No assignments yet</div>}
-            {filteredAsn.map(a => {
-              const job = jobs.find(j => j.id === a.job_id)
-              const isPast = a.date < today()
-              return (
-                <button key={a.id} onClick={() => openEditAsn(a)}
-                  className="w-full text-left px-6 py-3.5 hover:bg-gray-50/30 transition-colors">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-sm font-semibold text-gray-900">{a.crew_name}</span>
-                        <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${a.time_slot === 'full' ? 'bg-blue-500/20 text-blue-400' : 'bg-gray-200 text-gray-600'}`}>
-                          {a.time_slot}
-                        </span>
-                        {isPast && <span className="text-xs text-gray-600">past</span>}
-                      </div>
-                      <div className="text-xs text-gray-500 mt-0.5">
-                        {job ? `${a.job_id} — ${job.client}` : a.job_id}
-                      </div>
-                      {a.notes && <div className="text-xs text-gray-500 mt-0.5 truncate">{a.notes}</div>}
-                    </div>
-                    <div className="text-right shrink-0">
-                      <div className="text-sm font-semibold text-gray-900">{fmtDate(a.date)}</div>
-                      {a.hours && <div className="text-xs text-gray-500">{a.hours}h</div>}
-                    </div>
-                  </div>
-                </button>
-              )
-            })}
-          </div>
-        )}
-      </div>
+              })}
+              {assignments.length === 0 && (
+                <tr><td colSpan={7} className="text-center text-[#666] py-5">No assignments yet. Click a calendar cell to assign.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </Card>
 
       {/* Crew modal */}
-      <Modal open={crewModalOpen} onClose={() => setCrewModalOpen(false)} title={selectedCrewId ? 'Edit crew member' : 'Add crew member'}>
+      <Modal open={crewModal} onClose={() => setCrewModal(false)} title={crewForm.id ? 'Edit Crew Member' : 'Add Crew Member'}>
         <div className="grid grid-cols-2 gap-3">
-          <Input label="Full name" value={crewForm.name || ''} onChange={cf('name')} wrapperClassName="col-span-2" />
-          <Select label="Role" value={crewForm.role || ''} onChange={cf('role')} options={ROLES} placeholder="—" />
-          <Select label="Payment type" value={crewForm.payment_type || ''} onChange={cf('payment_type')} options={PAYMENT_TYPES} />
-          <Input label="Cost rate ($/hr)" type="number" value={crewForm.rate || ''} onChange={cn('rate')} min={0} />
-          <Input label="Charge rate ($/hr)" type="number" value={crewForm.charge_rate || ''} onChange={cn('charge_rate')} min={0} />
-          <Input label="Phone" type="tel" value={crewForm.phone || ''} onChange={cf('phone')} />
-          <Input label="Email" type="email" value={crewForm.email || ''} onChange={cf('email')} />
-          <TextArea label="Notes" value={crewForm.notes || ''} onChange={cf('notes')} wrapperClassName="col-span-2" />
+          <Input label="Name" value={crewForm.name || ''} onChange={e => setCrewForm(p => ({ ...p, name: e.target.value }))} wrapperClassName="col-span-2" />
+          <Input label="Role" placeholder="Painter, Lead Painter…" value={crewForm.role || ''} onChange={e => setCrewForm(p => ({ ...p, role: e.target.value }))} />
+          <Input label="Hourly rate" type="number" value={crewForm.rate ?? rate0} onChange={e => setCrewForm(p => ({ ...p, rate: parseFloat(e.target.value) || rate0 }))} />
+          <Input label="Phone (for briefing messages)" type="tel" placeholder="04xx xxx xxx" value={crewForm.phone || ''} onChange={e => setCrewForm(p => ({ ...p, phone: e.target.value }))} />
+          <Input label="Charge rate" type="number" value={crewForm.charge_rate ?? ''} onChange={e => setCrewForm(p => ({ ...p, charge_rate: parseFloat(e.target.value) || null }))} />
         </div>
-        <div className="flex justify-between mt-5 pt-4 border-t border-gray-200">
-          <div>{selectedCrewId && <button onClick={handleDeleteCrew} className="flex items-center gap-1.5 text-sm text-red-400 hover:text-red-300"><Trash2 size={14} /> Delete</button>}</div>
-          <div className="flex gap-2">
-            <button onClick={() => setCrewModalOpen(false)} className="text-sm px-4 py-2 rounded-lg bg-gray-50 text-gray-500 hover:text-gray-900">Cancel</button>
-            <button onClick={saveCrew} disabled={saving} className="flex items-center gap-1.5 text-sm px-5 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-gray-900 font-semibold disabled:opacity-50">
-              {saving && <Loader2 size={13} className="animate-spin" />} Save
-            </button>
-          </div>
+        <div className="flex justify-end gap-2 mt-5 pt-4 border-t border-black/10">
+          <button onClick={() => setCrewModal(false)} className="px-4 py-2 text-[13px] rounded-lg bg-[#f5f4f0] text-gray-600 border border-black/10 hover:bg-gray-200">Cancel</button>
+          <button onClick={saveCrew} className="px-5 py-2 text-[13px] rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-semibold">Save</button>
         </div>
       </Modal>
 
       {/* Assignment modal */}
-      <Modal open={asnModalOpen} onClose={() => setAsnModalOpen(false)} title={selectedAsnId ? 'Edit assignment' : 'New assignment'}>
+      <Modal open={asnModal} onClose={() => setAsnModal(false)} title="Assign Crew">
         <div className="grid grid-cols-2 gap-3">
           <div className="col-span-2">
             <label className="block text-xs font-medium text-gray-500 mb-1">Crew member</label>
-            <select value={asnForm.crew_name || ''} onChange={af('crew_name')}
-              className="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-1 focus:ring-blue-500">
-              <option value="">— Select crew —</option>
-              {crew.map(c => <option key={c.id} value={c.name}>{c.name} ({c.role})</option>)}
+            <select value={asnForm.crew_name || ''} onChange={e => setAsnForm(p => ({ ...p, crew_name: e.target.value }))}
+              className="w-full bg-white border border-black/20 rounded-lg px-3 py-2 text-[13px] focus:outline-none focus:ring-1 focus:ring-blue-500">
+              <option value="">— Select —</option>
+              {crew.map(c => <option key={c.id} value={c.name}>{c.name}{c.role ? ` · ${c.role}` : ''}</option>)}
+            </select>
+          </div>
+          <Input label="Date" type="date" value={asnForm.date || ''} onChange={e => setAsnForm(p => ({ ...p, date: e.target.value }))} />
+          <div>
+            <label className="block text-xs font-medium text-gray-500 mb-1">Shift</label>
+            <select value={asnForm.time_slot || 'full'} onChange={e => setAsnForm(p => ({ ...p, time_slot: e.target.value }))}
+              className="w-full bg-white border border-black/20 rounded-lg px-3 py-2 text-[13px] focus:outline-none focus:ring-1 focus:ring-blue-500">
+              {(Object.keys(SLOT) as SlotKey[]).map(k => <option key={k} value={k}>{SLOT[k].label}</option>)}
             </select>
           </div>
           <div className="col-span-2">
             <label className="block text-xs font-medium text-gray-500 mb-1">Job</label>
-            <select value={asnForm.job_id || ''} onChange={af('job_id')}
-              className="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-1 focus:ring-blue-500">
+            <select value={asnForm.job_id || ''} onChange={e => {
+              const j = jobs.find(x => x.id === e.target.value)
+              setAsnForm(p => ({ ...p, job_id: e.target.value, client: j?.client }))
+            }}
+              className="w-full bg-white border border-black/20 rounded-lg px-3 py-2 text-[13px] focus:outline-none focus:ring-1 focus:ring-blue-500">
               <option value="">— Select job —</option>
-              {jobs.filter(j => ['Not Started','Scheduled','In Progress','Hourly Rate Accepted'].includes(j.status)).map(j => (
-                <option key={j.id} value={j.id}>{j.id} — {j.client}</option>
-              ))}
+              {jobs.map(j => <option key={j.id} value={j.id}>{j.id} — {j.client}</option>)}
             </select>
           </div>
-          <Input label="Date" type="date" value={asnForm.date || ''} onChange={af('date')} />
-          <Select label="Time slot" value={asnForm.time_slot || ''} onChange={af('time_slot')} options={TIME_SLOTS} />
-          <Input label="Hours" type="number" value={asnForm.hours || ''} onChange={e => setAsnForm(prev => ({ ...prev, hours: parseFloat(e.target.value) || null }))} min={0} step={0.5} />
-          <TextArea label="Notes" value={asnForm.notes || ''} onChange={af('notes')} wrapperClassName="col-span-2" />
+          <Input label="Notes" value={asnForm.notes || ''} onChange={e => setAsnForm(p => ({ ...p, notes: e.target.value }))} wrapperClassName="col-span-2" />
         </div>
-        <div className="flex justify-between mt-5 pt-4 border-t border-gray-200">
-          <div>{selectedAsnId && <button onClick={handleDeleteAsn} className="flex items-center gap-1.5 text-sm text-red-400 hover:text-red-300"><Trash2 size={14} /> Delete</button>}</div>
-          <div className="flex gap-2">
-            <button onClick={() => setAsnModalOpen(false)} className="text-sm px-4 py-2 rounded-lg bg-gray-50 text-gray-500 hover:text-gray-900">Cancel</button>
-            <button onClick={saveAsn} disabled={saving} className="flex items-center gap-1.5 text-sm px-5 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-gray-900 font-semibold disabled:opacity-50">
-              {saving && <Loader2 size={13} className="animate-spin" />} Save
-            </button>
+
+        {/* Existing assignments for this job+day */}
+        {asnForm.job_id && asnForm.date && (
+          <div className="mt-4 pt-3 border-t border-black/10">
+            <div className="text-[10px] font-bold uppercase tracking-wider text-[#666] mb-1.5">Already assigned this day</div>
+            {assignments.filter(a => a.job_id === asnForm.job_id && a.date === asnForm.date).map(a => (
+              <div key={a.id} className="flex items-center justify-between py-1 text-xs border-b border-black/[0.05]">
+                <span>{a.crew_name} · {SLOT[slotOf(a)].label}</span>
+                <button onClick={() => delAsn.mutate(a.id)} className="text-[#c0392b] hover:underline">Remove</button>
+              </div>
+            ))}
+            {assignments.filter(a => a.job_id === asnForm.job_id && a.date === asnForm.date).length === 0 && (
+              <div className="text-xs text-[#666]">Nobody assigned yet.</div>
+            )}
           </div>
+        )}
+
+        <div className="flex justify-end gap-2 mt-5 pt-4 border-t border-black/10">
+          <button onClick={() => setAsnModal(false)} className="px-4 py-2 text-[13px] rounded-lg bg-[#f5f4f0] text-gray-600 border border-black/10 hover:bg-gray-200">Cancel</button>
+          <button onClick={saveAsn} className="px-5 py-2 text-[13px] rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-semibold">Assign</button>
         </div>
       </Modal>
     </div>
