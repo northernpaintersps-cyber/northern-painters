@@ -7,6 +7,7 @@ import { Modal } from '@/components/ui/Modal'
 import { Input, Select, TextArea } from '@/components/ui/Field'
 import { fmtCurrency, fmtDate, calcOwed, invStatus, genId, today } from '@/lib/utils'
 import { Plus, Search, Loader2, Trash2, CheckCircle, Printer } from 'lucide-react'
+import { useBusinessSettings } from '@/pages/SettingsPage'
 
 type Invoice = Record<string, any>
 
@@ -67,6 +68,7 @@ const STATUS_FILTERS = ['All', 'Unpaid', 'Part Paid', 'Paid']
 export default function Invoices() {
   const { data: invoices = [], isLoading } = useInvoices()
   const { data: jobs = [] } = useJobs()
+  const { data: bizSettings } = useBusinessSettings()
   const upsert = useUpsertInvoice()
   const del = useDeleteInvoice()
 
@@ -144,9 +146,9 @@ export default function Invoices() {
   }
 
   function printInvoice(inv: Invoice) {
-    const html = buildInvoiceHTML(inv)
+    const html = buildInvoiceHTML(inv, bizSettings)
     const w = window.open('', '_blank')
-    if (w) { w.document.write(html); w.document.close(); w.print() }
+    if (w) { w.document.write(html); w.document.close(); setTimeout(() => w.print(), 400) }
   }
 
   return (
@@ -286,43 +288,59 @@ export default function Invoices() {
 }
 
 // ── Invoice print HTML ───────────────────────────────────────
-function buildInvoiceHTML(inv: Invoice): string {
+function buildInvoiceHTML(inv: Invoice, biz?: any): string {
   const exGST = inv.agreed_ex_gst ?? 0
   const gst = inv.gst ?? exGST * 0.1
   const total = inv.total_inc_gst ?? exGST * 1.1
   const received = inv.received ?? 0
-  const owed = Math.max(0, total - received)
+  const deposit = inv.deposit ?? 0
+  const owed = Math.max(0, total - received - deposit)
+  const companyName = biz?.company_name || 'Northern Painters'
+  const abn = biz?.abn ? `ABN: ${biz.abn}` : ''
+  const licence = biz?.licence ? ` · Licence: ${biz.licence}` : ''
+  const hasBankDetails = biz?.bsb || biz?.account_no
   return `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Invoice ${inv.id}</title>
 <style>
-  body{font-family:Arial,sans-serif;font-size:13px;color:#1a1a18;margin:0;padding:40px}
-  .header{display:flex;justify-content:space-between;margin-bottom:32px}
-  .company{font-size:22px;font-weight:700;color:#1a1a18}
-  .inv-title{font-size:28px;font-weight:700;color:#2563eb;text-align:right}
+  body{font-family:Arial,sans-serif;font-size:13px;color:#111;margin:0;padding:40px;max-width:800px}
+  .header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:32px}
+  .company{font-size:22px;font-weight:700} .meta{color:#555;font-size:12px;line-height:1.8;margin-top:4px}
+  .inv-title{font-size:28px;font-weight:700;color:#1d4ed8;text-align:right}
+  .inv-meta{text-align:right;color:#555;font-size:12px;line-height:1.8;margin-top:4px}
   table{width:100%;border-collapse:collapse;margin:16px 0}
-  th{background:#f5f4f0;padding:8px 12px;text-align:left;font-size:12px;color:#666;border-bottom:1px solid #ddd}
+  th{background:#f5f5f3;padding:8px 12px;text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#555;border-bottom:1px solid #ddd}
   td{padding:8px 12px;border-bottom:1px solid #eee}
-  .total-row td{font-weight:700;font-size:14px;border-top:2px solid #ddd}
-  .footer{margin-top:32px;padding-top:16px;border-top:1px solid #ddd;font-size:11px;color:#888}
+  .total-row td{font-weight:700;font-size:14px;border-top:2px solid #ddd;border-bottom:none}
+  .payment{background:#f5f5f3;padding:16px;border-radius:8px;margin-top:16px;font-size:12px}
+  .footer{margin-top:32px;padding-top:16px;border-top:1px solid #ddd;font-size:11px;color:#999}
+  @media print{body{padding:24px}}
 </style></head><body>
 <div class="header">
-  <div><div class="company">Northern Painters</div><div style="color:#666;margin-top:4px">ABN: — · NSW Fair Trading Licence</div></div>
-  <div><div class="inv-title">TAX INVOICE</div><div style="text-align:right;color:#666;margin-top:4px">Invoice #${inv.id || ''}<br>Date: ${fmtDate(inv.date)}<br>${inv.due_date ? 'Due: ' + fmtDate(inv.due_date) : ''}</div></div>
+  <div>
+    <div class="company">${companyName}</div>
+    <div class="meta">${abn}${licence}${biz?.address ? '<br>' + biz.address : ''}${biz?.phone ? '<br>' + biz.phone : ''}${biz?.email ? ' · ' + biz.email : ''}</div>
+  </div>
+  <div>
+    <div class="inv-title">TAX INVOICE</div>
+    <div class="inv-meta">Invoice #${inv.id || ''}<br>Date: ${fmtDate(inv.date)}${inv.due_date ? '<br>Due: ' + fmtDate(inv.due_date) : ''}</div>
+  </div>
 </div>
-<div style="margin-bottom:24px"><strong>Bill to:</strong><br>${inv.client || ''}<br>${inv.address || ''}</div>
+<div style="margin-bottom:24px"><strong>Bill to:</strong><br>${inv.client || ''}${inv.address ? '<br>' + inv.address : ''}</div>
 <table>
-  <thead><tr><th>Description</th><th style="text-align:right">Amount</th></tr></thead>
+  <thead><tr><th>Description</th><th style="text-align:right">Amount (ex GST)</th></tr></thead>
   <tbody>
-    <tr><td>${inv.notes || 'Painting services'}</td><td style="text-align:right">${fmtCurrency(exGST)}</td></tr>
-    <tr><td>GST (10%)</td><td style="text-align:right">${fmtCurrency(gst)}</td></tr>
+    <tr><td>${inv.notes || 'Painting services as agreed'}</td><td style="text-align:right">${fmtCurrency(exGST)}</td></tr>
+    <tr><td style="color:#555">GST (10%)</td><td style="text-align:right;color:#555">${fmtCurrency(gst)}</td></tr>
     <tr class="total-row"><td>Total inc GST</td><td style="text-align:right">${fmtCurrency(total)}</td></tr>
-    ${received > 0 ? `<tr><td>Amount received</td><td style="text-align:right">(${fmtCurrency(received)})</td></tr><tr class="total-row"><td>Balance owing</td><td style="text-align:right">${fmtCurrency(owed)}</td></tr>` : ''}
+    ${deposit > 0 ? `<tr><td style="color:#555">Deposit received</td><td style="text-align:right;color:#555">(${fmtCurrency(deposit)})</td></tr>` : ''}
+    ${received > 0 ? `<tr><td style="color:#555">Amount received</td><td style="text-align:right;color:#555">(${fmtCurrency(received)})</td></tr>` : ''}
+    ${(deposit > 0 || received > 0) ? `<tr class="total-row"><td>Balance owing</td><td style="text-align:right">${fmtCurrency(owed)}</td></tr>` : ''}
   </tbody>
 </table>
-<div style="background:#f5f4f0;padding:16px;border-radius:8px;margin-top:16px">
+${hasBankDetails ? `<div class="payment">
   <strong>Payment details</strong><br>
-  Bank Transfer: BSB 067 873 · Account 2252 1951<br>
-  Reference: ${inv.id || inv.client || ''}
-</div>
-<div class="footer">This invoice is issued in accordance with the Building and Construction Industry Security of Payment Act 1999 (NSW).</div>
+  Bank Transfer: BSB ${biz.bsb} · Account ${biz.account_no}${biz.account_name ? ' · ' + biz.account_name : ''}<br>
+  Reference: ${inv.id || inv.client || ''}${biz?.invoice_terms ? '<br><em>' + biz.invoice_terms + '</em>' : ''}
+</div>` : ''}
+<div class="footer">${biz?.invoice_footer || 'This invoice is issued in accordance with the Building and Construction Industry Security of Payment Act 1999 (NSW).'}</div>
 </body></html>`
 }

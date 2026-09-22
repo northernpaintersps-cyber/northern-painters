@@ -1,9 +1,10 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/lib/auth'
 import { fmtCurrency, genId, today } from '@/lib/utils'
-import { Plus, Loader2, Trash2, Edit2, ChevronDown, ChevronUp, Printer, Copy } from 'lucide-react'
+import { Plus, Loader2, Trash2, ChevronDown, ChevronUp, Printer } from 'lucide-react'
+import { useBusinessSettings } from '@/pages/SettingsPage'
 
 // ── Constants ─────────────────────────────────────────────────
 const SURFACE_TYPES = ['Walls','Ceiling','Trim/Cornice','Doors','Windows','Facade/Exterior','Deck/Timber','Fence','Other']
@@ -263,7 +264,7 @@ function buildQuoteHTML(job: any, items: QuoteItem[], settings: any) {
   </style></head><body>
   <div class="header">
     <div>
-      <div class="logo">Northern Painters</div>
+      <div class="logo">${(settings as any).company_name || 'Northern Painters'}</div>
       <div class="meta">
         ABN: ${settings.abn || '—'}<br>
         ${settings.address || ''}<br>
@@ -300,8 +301,8 @@ function buildQuoteHTML(job: any, items: QuoteItem[], settings: any) {
   ${settings.payment_terms ? `<div class="note" style="margin-top:12px"><strong>Payment terms:</strong><br>${settings.payment_terms.replace(/\n/g,'<br>')}</div>` : ''}
 
   <div class="footer">
-    This quote is valid for ${settings.valid_days || 30} days from the date above. Prices are in Australian dollars.
-    All work carried out by licensed, insured painters. Northern Painters — ${settings.phone || ''} — ${settings.email || ''}
+    This quote is valid for ${settings.valid_days || 30} days from the date above. Prices are in Australian dollars.<br>
+    All work carried out by licensed, insured painters. ${(settings as any).company_name || 'Northern Painters'} — ${settings.phone || ''} — ${settings.email || ''}
   </div>
   </body></html>`
 }
@@ -310,6 +311,7 @@ function buildQuoteHTML(job: any, items: QuoteItem[], settings: any) {
 export default function QuotingTool() {
   const { data: jobs = [], isLoading } = useJobs()
   const saveQuote = useSaveQuote()
+  const { data: bizSettings } = useBusinessSettings()
 
   const [selJobId, setSelJobId] = useState<string>('')
   const [items, setItems] = useState<QuoteItem[]>([])
@@ -319,6 +321,21 @@ export default function QuotingTool() {
     notes: 'All surfaces to be cleaned and prepared before painting.\nAll furniture and floor coverings to be protected during works.',
     payment_terms: '50% deposit on commencement, balance on completion.',
   })
+
+  // Pre-fill from business settings once loaded
+  useEffect(() => {
+    if (bizSettings) {
+      setSettings(s => ({
+        ...s,
+        abn: s.abn || bizSettings.abn || '',
+        address: s.address || bizSettings.address || '',
+        phone: s.phone || bizSettings.phone || '',
+        email: s.email || bizSettings.email || '',
+        valid_days: bizSettings.quote_valid_days || s.valid_days,
+        notes: bizSettings.quote_footer || s.notes,
+      }))
+    }
+  }, [bizSettings])
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
@@ -338,7 +355,13 @@ export default function QuotingTool() {
     if (extra.quote_settings) setSettings(s => ({ ...s, ...extra.quote_settings }))
   }
 
-  function addItem() { setItems(prev => [...prev, defaultItem()]) }
+  function addItem() {
+    setItems(prev => [...prev, {
+      ...defaultItem(),
+      labour_rate: bizSettings?.default_labour_rate ?? 65,
+      markup_pct: bizSettings?.default_markup_pct ?? 20,
+    }])
+  }
 
   function updateItem(id: string, updated: QuoteItem) {
     setItems(prev => prev.map(it => it.id === id ? updated : it))
@@ -360,7 +383,7 @@ export default function QuotingTool() {
 
   function printQuote() {
     if (!selJob) return
-    const html = buildQuoteHTML(selJob, items, settings)
+    const html = buildQuoteHTML(selJob, items, { ...settings, company_name: bizSettings?.company_name })
     const w = window.open('', '_blank')
     if (!w) return
     w.document.write(html)
