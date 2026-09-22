@@ -6,7 +6,8 @@ import {
   LayoutDashboard, Briefcase, FileText, Users, Calendar,
   DollarSign, ClipboardList, Settings, LogOut, Phone,
   BarChart2, Menu, X, MapPin, Receipt, Megaphone, Calculator,
-  Package, GitBranch, UserCheck, Shield, TrendingUp, PieChart
+  Package, GitBranch, UserCheck, Shield, TrendingUp, PieChart,
+  Paintbrush, MessageCircle
 } from 'lucide-react'
 
 const nav = [
@@ -32,6 +33,8 @@ const nav = [
   ]},
   { group: 'Resources', items: [
     { to: '/quotes',     label: 'Quote Builder', icon: Calculator },
+    { to: '/paintcalc',  label: 'Paint Calc',    icon: Paintbrush },
+    { to: '/insights',   label: 'AI Chat',       icon: MessageCircle },
     { to: '/materials',  label: 'Materials',     icon: Package },
     { to: '/crew',       label: 'Crew',          icon: Users },
     { to: '/legal',      label: 'Legal Docs',    icon: Shield },

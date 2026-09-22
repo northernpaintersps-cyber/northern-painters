@@ -13,7 +13,10 @@ export interface InvoiceExtraction {
   notes: string
 }
 
-async function callClaude(apiKey: string, messages: any[], system?: string): Promise<string> {
+async function callClaude(
+  apiKey: string, messages: any[], system?: string,
+  opts?: { model?: string; maxTokens?: number },
+): Promise<string> {
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
@@ -23,8 +26,8 @@ async function callClaude(apiKey: string, messages: any[], system?: string): Pro
       'content-type': 'application/json',
     },
     body: JSON.stringify({
-      model: 'claude-haiku-4-5-20251001',
-      max_tokens: 1024,
+      model: opts?.model ?? 'claude-haiku-4-5-20251001',
+      max_tokens: opts?.maxTokens ?? 1024,
       system: system ?? 'You are a helpful assistant for a painting business in Australia.',
       messages,
     }),
@@ -52,6 +55,21 @@ async function fileToBase64(file: File): Promise<{ base64: string; mediaType: st
     reader.onerror = reject
     reader.readAsDataURL(file)
   })
+}
+
+// ── Business chat (V16 askInsights) ──────────────────────────
+export type ChatTurn = { role: 'user' | 'assistant'; content: string }
+
+export async function askBusiness(apiKey: string, history: ChatTurn[], context: string): Promise<string> {
+  const system = `You are an expert business analyst and painting industry consultant for Northern Painters, a painting company based in Byron Bay, NSW, Australia. You have access to all their real business data below.
+
+Answer questions about their jobs, costs, margins, profitability, and business performance. Be specific — use real numbers from the data. Calculate averages, rates per m², best/worst performers, trends. Format answers clearly with numbers highlighted. If you spot anything worth flagging (e.g. low-margin jobs, high material spend) mention it.
+
+When calculating rate per m², note that substrate areas aren't always logged — work with what's available (agreed price ÷ estimated days as a proxy if needed).
+
+${context}`
+
+  return callClaude(apiKey, history, system, { model: 'claude-sonnet-4-6', maxTokens: 1500 })
 }
 
 // ── Invoice / receipt OCR ─────────────────────────────────────
