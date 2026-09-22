@@ -24,6 +24,7 @@ import Costs from '@/pages/Costs'
 import Profitability from '@/pages/Profitability'
 import Insights from '@/pages/Insights'
 import PaintCalc from '@/pages/PaintCalc'
+import Payments from '@/pages/Payments'
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const { session, loading } = useAuth()
@@ -62,6 +63,7 @@ export default function App() {
         <Route path="/profitability" element={<Profitability />} />
         <Route path="/insights" element={<Insights />} />
         <Route path="/paintcalc" element={<PaintCalc />} />
+        <Route path="/payments" element={<Payments />} />
         <Route path="/settings" element={<SettingsPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/dashboard" replace />} />
