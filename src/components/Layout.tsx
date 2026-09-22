@@ -5,7 +5,7 @@ import { useRealtime } from '@/lib/useRealtime'
 import { useInstall } from '@/lib/useInstall'
 import {
   LayoutDashboard, Briefcase, FileText, Users, Calendar,
-  DollarSign, ClipboardList, Settings, LogOut, Phone,
+  ClipboardList, Settings, LogOut, Phone,
   BarChart2, Menu, X, MapPin, Receipt, Megaphone, Calculator,
   Package, GitBranch, UserCheck, Shield, TrendingUp, PieChart,
   Paintbrush, MessageCircle, Banknote, ReceiptText, Clock, Wallet, CalendarDays,
@@ -14,27 +14,27 @@ import {
 
 const nav = [
   { group: 'Overview', items: [
-    { to: '/dashboard',  label: 'Dashboard',    icon: LayoutDashboard },
+    { to: '/dashboard',  label: 'Dashboard',     icon: LayoutDashboard },
     { to: '/pipeline',   label: 'Pipeline',      icon: GitBranch },
     { to: '/calendar',   label: 'Calendar',      icon: Calendar },
     { to: '/schedule',   label: 'Schedule',      icon: CalendarDays },
-    { to: '/todos',      label: 'To‑do',         icon: ClipboardList },
   ]},
   { group: 'Work', items: [
     { to: '/jobs',       label: 'Jobs',          icon: Briefcase },
     { to: '/enquiries',  label: 'Enquiries',     icon: Phone },
     { to: '/visits',     label: 'Site Visits',   icon: MapPin },
     { to: '/clients',    label: 'Clients',       icon: UserCheck },
+    { to: '/crew',       label: 'Crew',          icon: Users },
   ]},
   { group: 'Finance', items: [
     { to: '/invoices',      label: 'Invoices',      icon: FileText },
     { to: '/receipts',      label: 'Receipts',      icon: Receipt },
     { to: '/payments',      label: 'Pay Schedules', icon: Banknote },
     { to: '/labour',        label: 'Labour',        icon: Clock },
+    { to: '/materials',     label: 'Materials',     icon: Package },
     { to: '/expenses',      label: 'Expenses',      icon: Wallet },
     { to: '/costs',         label: 'Project Costs', icon: TrendingUp },
     { to: '/profitability', label: 'Profitability', icon: PieChart },
-    { to: '/finance',       label: 'Finance',       icon: DollarSign },
     { to: '/tax',           label: 'Tax & BAS',     icon: ReceiptText },
     { to: '/reports',       label: 'Reports',       icon: BarChart2 },
   ]},
@@ -42,8 +42,7 @@ const nav = [
     { to: '/quotes',     label: 'Quote Builder', icon: Calculator },
     { to: '/paintcalc',  label: 'Paint Calc',    icon: Paintbrush },
     { to: '/insights',   label: 'AI Chat',       icon: MessageCircle },
-    { to: '/materials',  label: 'Materials',     icon: Package },
-    { to: '/crew',       label: 'Crew',          icon: Users },
+    { to: '/todos',      label: 'To‑do',         icon: ClipboardList },
     { to: '/legal',      label: 'Legal Docs',    icon: Shield },
     { to: '/ads',        label: 'Ads Spend',     icon: Megaphone },
   ]},

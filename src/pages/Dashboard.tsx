@@ -488,7 +488,7 @@ export default function Dashboard() {
             <div className="text-[13px] font-bold text-gray-900 flex items-center gap-1.5">
               <BarChart3 size={14} className="text-[#0f766e]" /> In-Progress — Cost Tracker
             </div>
-            <button onClick={() => nav('/finance')}
+            <button onClick={() => nav('/costs')}
               className="flex items-center gap-1 px-2.5 py-1 text-[11px] bg-white border border-black/20 rounded-lg hover:bg-[#f5f4f0]">
               <ExternalLink size={11} /> Full view
             </button>
@@ -535,7 +535,7 @@ export default function Dashboard() {
               )
 
               return (
-                <div key={j.id} onClick={() => nav('/finance')}
+                <div key={j.id} onClick={() => nav('/costs')}
                   style={{
                     background: over ? '#fff1f2' : near ? '#fffbeb' : '#fff',
                     border: `1.5px solid ${over ? '#fca5a5' : near ? '#fde68a' : 'rgba(0,0,0,.12)'}`,

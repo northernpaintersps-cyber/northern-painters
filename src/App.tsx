@@ -7,7 +7,6 @@ import Jobs from '@/pages/Jobs'
 import Invoices from '@/pages/Invoices'
 import Crew from '@/pages/Crew'
 import CalendarPage from '@/pages/CalendarPage'
-import Finance from '@/pages/Finance'
 import Enquiries from '@/pages/Enquiries'
 import Todos from '@/pages/Todos'
 import Reports from '@/pages/Reports'
@@ -51,7 +50,6 @@ export default function App() {
         <Route path="/invoices/*" element={<Invoices />} />
         <Route path="/crew/*" element={<Crew />} />
         <Route path="/calendar" element={<CalendarPage />} />
-        <Route path="/finance" element={<Finance />} />
         <Route path="/enquiries/*" element={<Enquiries />} />
         <Route path="/todos" element={<Todos />} />
         <Route path="/reports" element={<Reports />} />
