@@ -1,5 +1,12 @@
-import { useState, useMemo, useEffect } from 'react'
-import { Plus, Copy, Trash2, Settings2, Calculator } from 'lucide-react'
+import { useState, useMemo, useEffect, useRef } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import { supabase } from '@/lib/supabase'
+import { useAuth } from '@/lib/auth'
+import { extractQuantities, type ExtractDoc, type QuantityExtraction } from '@/lib/ai'
+import {
+  Plus, Copy, Trash2, Settings2, Calculator, Sparkles, Upload,
+  FileText, Image as ImageIcon, X, Loader2, Check, Ruler,
+} from 'lucide-react'
 
 // ── V16 constants ────────────────────────────────────────────
 const UM2: Record<string, number> = {
@@ -146,6 +153,73 @@ export default function PaintCalc() {
     try { localStorage.setItem(LS_KEY, JSON.stringify({ rows, wastePct })) } catch {}
   }, [rows, wastePct])
 
+  // ── AI document extractor (V16) ─────────────────────────
+  const { user } = useAuth()
+  const { data: settings } = useQuery({
+    queryKey: ['np_settings', 'business', user?.id],
+    queryFn: async () => {
+      const { data } = await (supabase.from('np_settings') as any)
+        .select('value').eq('user_id', user!.id).eq('key', 'business').maybeSingle()
+      return (data?.value ?? {}) as any
+    },
+    enabled: !!user,
+  })
+  const apiKey = settings?.ai_api_key || ''
+
+  const [docs, setDocs] = useState<ExtractDoc[]>([])
+  const [scopeNotes, setScopeNotes] = useState('')
+  const [extracting, setExtracting] = useState(false)
+  const [extractErr, setExtractErr] = useState('')
+  const [result, setResult] = useState<QuantityExtraction | null>(null)
+  const fileRef = useRef<HTMLInputElement>(null)
+
+  function addDocs(e: React.ChangeEvent<HTMLInputElement>) {
+    const picked = Array.from(e.target.files ?? [])
+    if (picked.length) setDocs(d => [...d, ...picked.map(f => ({ file: f, measurements: '' }))])
+    if (fileRef.current) fileRef.current.value = ''
+  }
+
+  async function runExtract() {
+    if (!docs.length) return
+    if (!apiKey) { setExtractErr('No API key set. Add your Anthropic API key in Settings.'); return }
+    setExtracting(true); setExtractErr(''); setResult(null)
+    try {
+      setResult(await extractQuantities(apiKey, docs, scopeNotes))
+    } catch (err: any) {
+      setExtractErr(err?.message ?? 'Extraction failed')
+    } finally {
+      setExtracting(false)
+    }
+  }
+
+  // Rows the extraction matched against our substrate keys
+  const extractedRows = useMemo(() => {
+    if (!result) return []
+    const out: { sec: Section; key: string; label: string; unit: string; val: number }[] = []
+    ;(['interior', 'exterior', 'specialty'] as Section[]).forEach(sec => {
+      const vals = (result as any)[sec] as Record<string, number> | undefined
+      if (!vals) return
+      rows[sec].forEach(r => {
+        const v = r.key ? vals[r.key] : undefined
+        if (typeof v === 'number' && v > 0) out.push({ sec, key: r.key!, label: r.label, unit: r.unit, val: v })
+      })
+    })
+    return out
+  }, [result, rows])
+
+  // V16 _pcApplyExtract — write the extracted quantities into the calculator
+  function applyExtract() {
+    setRows(prev => {
+      const next = { ...prev }
+      extractedRows.forEach(({ sec, key, val }) => {
+        next[sec] = next[sec].map(r => (r.key === key ? { ...r, qty: val } : r))
+      })
+      return next
+    })
+    const firstSec = extractedRows[0]?.sec
+    if (firstSec) setTab(firstSec)
+  }
+
   function update(sec: Section, id: number, patch: Partial<Row>) {
     setRows(prev => ({ ...prev, [sec]: prev[sec].map(r => r.id === id ? { ...r, ...patch } : r) }))
   }
@@ -263,6 +337,128 @@ export default function PaintCalc() {
       <div className="grid gap-3.5 items-start" style={{ gridTemplateColumns: 'minmax(0,1fr) 340px' }}>
         {/* Substrates */}
         <div>
+          {/* AI document extractor */}
+          <div className="bg-white border border-black/[0.12] rounded-xl p-3.5 mb-3">
+            <div className="flex items-center justify-between flex-wrap gap-2 mb-2">
+              <div className="text-[13px] font-bold flex items-center gap-1.5">
+                <Sparkles size={14} className="text-[#7c3aed]" /> Extract quantities from drawings
+              </div>
+              <div className="flex gap-2">
+                <button onClick={() => fileRef.current?.click()}
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs bg-white border border-black/20 rounded-lg hover:bg-[#f5f4f0]">
+                  <Upload size={13} /> Add files
+                </button>
+                <input ref={fileRef} type="file" multiple accept="application/pdf,image/*" className="hidden" onChange={addDocs} />
+                {docs.length > 0 && (
+                  <button onClick={runExtract} disabled={extracting}
+                    className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs bg-blue-600 hover:bg-blue-700 text-white rounded-lg disabled:opacity-50">
+                    {extracting ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
+                    {extracting ? 'Reading drawings…' : 'Extract quantities'}
+                  </button>
+                )}
+              </div>
+            </div>
+            <div className="text-[11px] text-[#666] mb-2">
+              Upload floor plans, elevations, finishes schedules, specs or site photos (PDF or image).
+              Add known measurements per file to fix the scale.
+            </div>
+
+            {docs.map((d, i) => {
+              const isPdf = d.file.type === 'application/pdf'
+              return (
+                <div key={i} className="bg-[#f5f4f0] rounded-[7px] px-2.5 py-1.5 mb-1.5">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {isPdf ? <FileText size={15} className="text-[#2563eb] shrink-0" /> : <ImageIcon size={15} className="text-[#2563eb] shrink-0" />}
+                    <span className="flex-1 text-xs min-w-0 truncate">{d.file.name}</span>
+                    <span className="text-[10px] text-[#666]">{(d.file.size / 1024).toFixed(0)} KB</span>
+                    <button onClick={() => setDocs(x => x.filter((_, j) => j !== i))}
+                      className="text-[#c0392b] text-lg leading-none px-1">×</button>
+                  </div>
+                  <div className="w-full mt-1.5 pt-1.5 border-t border-black/[0.07] flex items-center gap-1.5 flex-wrap">
+                    <Ruler size={12} className="text-[#2563eb] shrink-0" />
+                    <span className="text-[10px] text-[#666] shrink-0">Known measurements (helps AI scale)</span>
+                    <input value={d.measurements ?? ''} placeholder="e.g. front wall 8m · ceiling 2.7m · door 2.1m"
+                      onChange={e => setDocs(x => x.map((y, j) => (j === i ? { ...y, measurements: e.target.value } : y)))}
+                      className="flex-1 min-w-[160px] px-1.5 py-1 border border-black/[0.18] rounded-[5px] text-[11px] bg-white focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                  </div>
+                </div>
+              )
+            })}
+
+            {docs.length > 0 && (
+              <textarea value={scopeNotes} onChange={e => setScopeNotes(e.target.value)} rows={2}
+                placeholder="Scope notes — anything the drawings don't show (e.g. ceilings excluded, only rear facade in scope)"
+                className="w-full mt-1 px-2.5 py-2 border border-black/20 rounded-lg text-xs resize-none focus:outline-none focus:ring-1 focus:ring-blue-500" />
+            )}
+
+            {extractErr && (
+              <div className="mt-2 text-xs text-[#c0392b] bg-[#fef2f2] rounded-lg px-2.5 py-2 whitespace-pre-wrap">{extractErr}</div>
+            )}
+
+            {result && (
+              <div className="mt-2.5 border border-[#86efac] rounded-[10px] overflow-hidden">
+                <div className="bg-[#f0fdf4] px-3.5 py-2.5 flex justify-between items-center flex-wrap gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <strong className="text-[13px] flex items-center gap-1">
+                      <Check size={14} className="text-[#16a34a]" />
+                      {extractedRows.length} substrate{extractedRows.length !== 1 ? 's' : ''} extracted
+                    </strong>
+                    {result.jobType && <span className="text-[11px] text-[#666]">{result.jobType}</span>}
+                    {!!result.totalFloorArea && <span className="text-[11px] text-[#666]">· {result.totalFloorArea}m² floor area</span>}
+                    {result.confidence && (() => {
+                      const c = result.confidence.toLowerCase()
+                      const col = c.startsWith('high') ? '#16a34a' : c.startsWith('medium') ? '#b45309' : '#c0392b'
+                      const bg = c.startsWith('high') ? '#f0fdf4' : c.startsWith('medium') ? '#fef3c7' : '#fef2f2'
+                      return <span className="text-[10px] font-bold px-2 py-0.5 rounded" style={{ background: bg, color: col }}>{result.confidence.toUpperCase()}</span>
+                    })()}
+                  </div>
+                  <button onClick={applyExtract} disabled={!extractedRows.length}
+                    className="flex items-center gap-1 px-2.5 py-1 text-xs bg-blue-600 hover:bg-blue-700 text-white rounded-lg disabled:opacity-50">
+                    <Check size={12} /> Apply to calculator
+                  </button>
+                </div>
+                <div className="px-3.5 py-2.5">
+                  <div className="grid gap-1" style={{ gridTemplateColumns: 'repeat(auto-fill,minmax(150px,1fr))' }}>
+                    {extractedRows.map(r => (
+                      <div key={`${r.sec}-${r.key}`} className="flex justify-between items-baseline bg-[#f5f4f0] rounded px-2 py-1">
+                        <span className="text-[11px] truncate">{r.label}</span>
+                        <span className="text-xs font-mono font-bold ml-1 whitespace-nowrap">{r.val} {r.unit}</span>
+                      </div>
+                    ))}
+                  </div>
+                  {result.finishes && result.finishes.length > 0 && (
+                    <details className="mt-2">
+                      <summary className="text-[11px] text-[#2563eb] cursor-pointer">Finishes schedule ({result.finishes.length})</summary>
+                      <table className="w-full text-[11px] mt-1.5 border-collapse">
+                        <tbody>
+                          {result.finishes.map((f, i) => (
+                            <tr key={i} className="border-b border-black/[0.06]">
+                              <td className="py-1 pr-2 font-medium">{f.area}</td>
+                              <td className="py-1 pr-2 text-[#666]">{f.product}</td>
+                              <td className="py-1 pr-2 text-[#666]">{f.colour}</td>
+                              <td className="py-1 text-[#666] text-center">{f.coats}×</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </details>
+                  )}
+                  {result.extractionSummary && (
+                    <details className="mt-2">
+                      <summary className="text-[11px] text-[#2563eb] cursor-pointer">Room-by-room breakdown</summary>
+                      <pre className="text-[10px] whitespace-pre-wrap mt-1.5 text-[#444] max-h-64 overflow-auto">{result.extractionSummary}</pre>
+                    </details>
+                  )}
+                  {result.scopeNotes && (
+                    <div className="mt-2 text-[11px] text-[#92400e] bg-[#fffbeb] rounded px-2 py-1.5">
+                      <strong>Notes:</strong> {result.scopeNotes}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+
           <div className="flex gap-[3px] bg-[#f5f4f0] border border-black/[0.12] rounded-lg p-[3px] mb-2.5 w-fit">
             {SECTIONS.map(s => (
               <button key={s.id} onClick={() => setTab(s.id)}

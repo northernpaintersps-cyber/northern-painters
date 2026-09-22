@@ -72,6 +72,195 @@ ${context}`
   return callClaude(apiKey, history, system, { model: 'claude-sonnet-4-6', maxTokens: 1500 })
 }
 
+// ── Drawing / document quantity takeoff (V16 paint-calc extractor) ──
+export interface ExtractDoc {
+  file: File
+  /** Known dimensions the estimator supplies — treated as absolute scale truth. */
+  measurements?: string
+}
+
+export interface QuantityExtraction {
+  jobType?: string
+  interior?: Record<string, number>
+  exterior?: Record<string, number>
+  specialty?: Record<string, number>
+  finishes?: Array<{ area: string; product: string; colour: string; coats: number; notes: string }>
+  scopeNotes?: string
+  totalFloorArea?: number
+  extractionSummary?: string
+  confidence?: string
+}
+
+const TAKEOFF_PROMPT = `You are a senior Australian painting estimator and quantity surveyor with 25+ years experience. You specialise in reading architectural drawings, floor plans, elevations, sections, finishes schedules, specification documents, and scope-of-works for residential and commercial painting projects.
+
+MISSION: Extract EVERY paintable surface quantity from the uploaded documents with maximum precision. Be thorough — missing a surface costs money. Every surface visible in a drawing that can be painted must be quantified.
+
+STEP 1 — DOCUMENT TYPE IDENTIFICATION
+For each document, identify:
+- Type: floor plan / elevation drawing / section / finishes schedule / specification / site photo / sketch / scope of works / quote / other
+- Scale: explicit scale bar, stated scale (1:100, 1:50 etc.), or NTS with labelled dimensions
+- Orientation: north point, floor levels, grid lines if present
+- Coverage: which rooms / levels / facades are shown
+
+STEP 2 — ESTABLISH SCALE AND REFERENCE DIMENSIONS
+- If a scale bar is printed: measure a known feature against it to confirm the ratio
+- If dimensions are labelled directly on the drawing: use those as primary reference
+- If it is a photo of a hand sketch: read every written number and dimension note
+- If multiple drawings are uploaded: cross-reference room names between floor plan and elevations to validate dimensions
+- If drawings are in imperial: convert to metric (1 foot = 0.305m, 1 inch = 25.4mm)
+- If NTS with no labels: state "cannot determine scale — used industry average room size as fallback" and apply conservative estimates (bedroom 3x3.5m, living 4x5m, bathroom 1.8x2.4m)
+- Known measurements provided by the estimator override all other scale references — use them as absolute ground truth
+
+STEP 3 — ROOM-BY-ROOM INTERIOR QUANTITY TAKEOFF
+WALLS:
+  - Perimeter: (L*2 + W*2) * H = gross wall area
+  - Deduct standard door opening: 0.9m x 2.1m = 1.89m2 per door leaf
+  - Deduct window openings: use labelled dims or assume 1.2m x 1.0m = 1.2m2 per window
+  - Do NOT deduct architraves or skirtings from wall area — measured separately
+  - Round up to nearest 0.5m2
+CEILINGS:
+  - L x W = ceiling area; for raked/vaulted measure actual sloped surface area
+  - Wet area ceilings (bathrooms, laundry, ensuite) listed separately
+CORNICES: L+W*2 linear metres (room perimeter)
+SKIRTINGS: L+W*2 linear metres per room
+ARCHITRAVES: count door openings x 2 (each side) x typical 2.5 lm each (~5lm per door), or read schedule
+DOORS: count each painted face (interior doors typically painted both sides = 2 faces per door)
+WINDOWS: count total window units (interior frames only)
+BUILT-IN WARDROBES: count each unit, or measure internal surface area
+FEATURE WALLS: if called out in finishes schedule or notes, extract m2
+
+STEP 4 — EXTERIOR QUANTITY TAKEOFF
+For each facade (front, rear, left side, right side):
+  - Weatherboards / cladding: facade width x wall height, deduct door/window openings
+  - Eaves: overhang depth x facade length (check eave width from section drawings)
+  - Fascia: perimeter of roofline in linear metres
+  - Gutters: perimeter of roofline in linear metres (same as fascia unless different on drawings)
+  - Downpipes: count each downpipe
+  - Windows (exterior frames): count each window unit
+  - Exterior doors: count each painted door face
+  - Balustrades / handrails: linear metres from drawings or stair schedule
+  - Posts and columns: count each
+  - Garage doors: count each (typically 2.4m x 2.1m = 5m2 per single panel)
+  - Roof: ridge-to-eave x length x both slopes if applicable
+  - Concrete / paving: L x W from site plan
+
+STEP 5 — SPECIALTY / FEATURE SURFACES
+  - Decks: L x W in m2; identify if timber, composite, or concrete
+  - Limewash or decorative finishes: extract area from finishes schedule or notes
+  - Timber staining (internal/external): doors, joinery, feature timbers — note product if specified
+  - Stone finishes, render, texture coatings: extract m2
+
+STEP 6 — FINISHES SCHEDULE EXTRACTION
+If a finishes schedule is present, for each room/area extract surface, paint product and brand, colour reference or code, number of coats, and any special instructions.
+
+STEP 7 — CROSS-CHECKS AND SANITY
+- Total wall area / number of rooms should average 30-60m2 for typical rooms
+- Total ceiling area should approximately equal total floor area
+- Exterior wall area should make sense for the building footprint
+- If a value seems impossible, flag it in scopeNotes with your reasoning
+- List every surface you COULD NOT determine and why
+
+STEP 8 — OUTPUT FORMAT
+Output ONLY a single valid JSON object — no markdown fences, no prose before or after.
+Put your detailed room-by-room breakdown in "extractionSummary" (newline-separated).
+Put product/colour/finish information in "finishes" array.
+Put uncertainties and exclusions in "scopeNotes".
+Set "confidence" to "high", "medium", or "low — [specific reason]".
+
+JSON format:
+{"jobType":"detected type","interior":{"walls":0,"ceilings":0,"cornice":0,"skirtings":0,"architraves":0,"doors_i":0,"win_i":0,"wardrobes":0,"feature":0,"wet_walls":0,"wet_ceil":0},"exterior":{"weatherboards":0,"cladding":0,"render":0,"eaves":0,"fascia":0,"gutters":0,"downpipes":0,"fences":0,"balustrades":0,"posts":0,"doors_e":0,"win_e":0,"architraves_e":0,"garage_e":0,"roof":0,"concrete":0},"specialty":{"deck_oil":0,"deck_tinted":0,"deck_stain":0,"limewash":0,"stone":0,"timber":0},"finishes":[{"area":"room or surface","product":"paint product","colour":"colour name or code","coats":2,"notes":"any special instructions"}],"scopeNotes":"surfaces excluded, assumptions made, or unclear items","totalFloorArea":0,"extractionSummary":"detailed room-by-room breakdown with all dimensions and calculations","confidence":"high"}
+
+Only include keys with non-zero values. Use real extracted values — never invent numbers.
+
+Now analyse the following documents:`
+
+async function fileToB64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader()
+    r.onload = () => resolve((r.result as string).split(',')[1])
+    r.onerror = reject
+    r.readAsDataURL(file)
+  })
+}
+
+// V16 _pcApplyExtractResult — strip fences, then take the first balanced object
+function parseExtraction(raw: string): QuantityExtraction {
+  let text = raw.replace(/```(?:json)?/gi, '').trim()
+  const fb = text.indexOf('{')
+  if (fb > 0) text = text.slice(fb)
+  let depth = 0, end = -1
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] === '{') depth++
+    else if (text[i] === '}') { depth--; if (depth === 0) { end = i + 1; break } }
+  }
+  if (end > 0) text = text.slice(0, end)
+  return JSON.parse(text)
+}
+
+export async function extractQuantities(
+  apiKey: string, docs: ExtractDoc[], scopeNotes = '',
+): Promise<QuantityExtraction> {
+  const content: any[] = [{ type: 'text', text: TAKEOFF_PROMPT }]
+
+  if (scopeNotes.trim()) {
+    content.push({
+      type: 'text',
+      text: 'ESTIMATOR SCOPE NOTES (authoritative — these override or clarify the drawings):\n' + scopeNotes.trim(),
+    })
+  }
+
+  for (const d of docs) {
+    const b64 = await fileToB64(d.file)
+    const meas = d.measurements?.trim()
+    content.push({
+      type: 'text',
+      text: `[${d.file.name}]${meas ? ` — KNOWN MEASUREMENTS: ${meas}` : ''}${meas ? '\nUse these measurements as absolute scale reference for this document.' : ''}`,
+    })
+    if (d.file.type === 'application/pdf') {
+      content.push({ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: b64 } })
+    } else if (d.file.type.startsWith('image/')) {
+      content.push({ type: 'image', source: { type: 'base64', media_type: d.file.type, data: b64 } })
+    }
+  }
+
+  const call = async (model: string) => {
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true',
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        model,
+        max_tokens: 16000,
+        thinking: { type: 'enabled', budget_tokens: 10000 },
+        messages: [{ role: 'user', content }],
+      }),
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data?.error?.message ?? `API error ${res.status}`)
+    const text = (data.content ?? []).find((b: any) => b.type === 'text')?.text ?? '{}'
+    return text as string
+  }
+
+  // V16 tries the strongest model, then falls back if it is unavailable on the key
+  let raw: string
+  try {
+    raw = await call('claude-opus-4-5')
+  } catch (e: any) {
+    if (/model|not_found/i.test(e?.message ?? '')) raw = await call('claude-sonnet-4-6')
+    else throw e
+  }
+
+  try {
+    return parseExtraction(raw)
+  } catch {
+    throw new Error('AI returned unexpected format. Raw response:\n' + raw.slice(0, 400))
+  }
+}
+
 // ── Invoice / receipt OCR ─────────────────────────────────────
 export async function extractInvoice(apiKey: string, file: File): Promise<InvoiceExtraction> {
   const { base64, mediaType } = await fileToBase64(file)
