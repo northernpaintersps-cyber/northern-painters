@@ -1,33 +1,95 @@
-import { useState } from 'react'
-import { useJobs, useUpsertJob, useDeleteJob } from '@/hooks/useJobs'
-import { Plus, Search, ChevronRight, Loader2 } from 'lucide-react'
-import type { Job } from '@/hooks/useJobs'
+import { useState, useMemo } from 'react'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/lib/auth'
+import { Badge } from '@/components/ui/Badge'
+import { Modal } from '@/components/ui/Modal'
+import { Input, Select, TextArea } from '@/components/ui/Field'
+import {
+  fmtCurrency, fmtDate, nextJobId, genId, normaliseDate,
+  getJobScheduledDates, today
+} from '@/lib/utils'
+import {
+  Plus, Search, ChevronRight, Loader2, ExternalLink,
+  Trash2, Copy, Calendar, DollarSign, Users
+} from 'lucide-react'
 
-const STATUS_COLORS: Record<string, string> = {
-  'Active':     'bg-green-500/20 text-green-400',
-  'Quoting':    'bg-yellow-500/20 text-yellow-400',
-  'Completed':  'bg-blue-500/20 text-blue-400',
-  'Invoiced':   'bg-purple-500/20 text-purple-400',
-  'On Hold':    'bg-gray-500/20 text-gray-400',
-  'Cancelled':  'bg-red-500/20 text-red-400',
-}
+// ── Types ────────────────────────────────────────────────────
+type Job = Record<string, any>
 
 const JOB_TYPES = [
   'Interior repaint','Exterior repaint','Full repaint','Deck/timber coating',
   'Hourly rate','New build - exterior','New build - interior','Limewash / specialty','Other'
 ]
-const JOB_STATUSES = ['Quoting','Active','On Hold','Completed','Invoiced','Cancelled']
+const JOB_STATUSES = ['Not Started','Scheduled','In Progress','Hourly Rate Accepted','Finished','Closed']
+const QUOTE_STATUSES = [
+  'Info Collected','Site Visit','Quote Created','Sent','Negotiating',
+  'Accepted','Booked','Not Accepted','Lost'
+]
+const TERMS = ['Labour only','Labour and materials','Hourly rate','Estimate']
+const LEAD_SOURCES = ['Website/Google','Facebook/Instagram','Builder/Trade','Referral','Existing Client','Other']
+const ON_BOOKS = ['Invoiced','Cash']
+const WEATHER = ['None','High - exterior']
 
-function fmtCurrency(n: number | null) {
-  if (!n) return '—'
-  return new Intl.NumberFormat('en-AU', { style: 'currency', currency: 'AUD', maximumFractionDigits: 0 }).format(n)
+// ── Hooks ────────────────────────────────────────────────────
+function useJobs() {
+  const { user } = useAuth()
+  return useQuery({
+    queryKey: ['np_jobs', user?.id],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('np_jobs').select('*').eq('user_id', user!.id).order('created_at', { ascending: false })
+      if (error) throw error
+      return (data ?? []) as Job[]
+    },
+    enabled: !!user,
+  })
 }
 
-function genId() {
-  return 'NP-' + Date.now().toString(36).toUpperCase()
+function useUpsertJob() {
+  const qc = useQueryClient()
+  const { user } = useAuth()
+  return useMutation({
+    mutationFn: async (job: Job) => {
+      const { error } = await supabase.from('np_jobs').upsert({ ...job, user_id: user!.id, updated_at: new Date().toISOString() } as any)
+      if (error) throw error
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['np_jobs'] }),
+  })
 }
 
+function useDeleteJob() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await supabase.from('np_jobs').delete().eq('id', id)
+      if (error) throw error
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['np_jobs'] }),
+  })
+}
+
+// ── Quote number generation ──────────────────────────────────
+function genQuoteNo(existingNos: string[]): string {
+  const d = new Date()
+  const base = `${String(d.getDate()).padStart(2,'0')}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getFullYear()).slice(-2)}`
+  if (!existingNos.includes(base)) return base
+  for (let i = 2; i < 20; i++) {
+    const candidate = base + i
+    if (!existingNos.includes(candidate)) return candidate
+  }
+  return base + Date.now()
+}
+
+// ── Empty form ────────────────────────────────────────────────
+function emptyForm(): Job {
+  return {
+    status: 'Not Started', quote_status: 'Info Collected',
+    type: 'Interior repaint', terms: 'Labour and materials',
+    on_books: 'Invoiced', weather: 'None', lead_source: '',
+  }
+}
+
+// ── Main component ────────────────────────────────────────────
 export default function Jobs() {
   const { data: jobs = [], isLoading } = useJobs()
   const upsert = useUpsertJob()
@@ -36,74 +98,89 @@ export default function Jobs() {
 
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('All')
-  const [selected, setSelected] = useState<Job | null>(null)
-  const [showForm, setShowForm] = useState(false)
-  const [form, setForm] = useState<Partial<Job>>({})
+  const [quoteFilter, setQuoteFilter] = useState('All')
+  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [form, setForm] = useState<Job>(emptyForm())
+  const [modalOpen, setModalOpen] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [tab, setTab] = useState<'details'|'schedule'|'financials'>('details')
 
-  const filtered = jobs.filter(j => {
-    const matchSearch = !search || [j.client, j.address, j.id, j.type].some(v =>
-      v?.toLowerCase().includes(search.toLowerCase())
-    )
-    const matchStatus = statusFilter === 'All' || j.status === statusFilter
-    return matchSearch && matchStatus
-  })
+  const filtered = useMemo(() => {
+    return jobs.filter(j => {
+      const s = search.toLowerCase()
+      const matchSearch = !s || [j.client, j.address, j.id, j.type, j.job_desc].some(v => v?.toLowerCase().includes(s))
+      const matchStatus = statusFilter === 'All' || j.status === statusFilter
+      const matchQuote = quoteFilter === 'All' || j.quote_status === quoteFilter
+      return matchSearch && matchStatus && matchQuote
+    })
+  }, [jobs, search, statusFilter, quoteFilter])
 
   function openNew() {
-    setForm({ status: 'Quoting', type: 'Interior repaint' })
-    setSelected(null)
-    setShowForm(true)
+    setForm(emptyForm())
+    setSelectedId(null)
+    setTab('details')
+    setModalOpen(true)
   }
 
   function openEdit(j: Job) {
-    setForm(j)
-    setSelected(j)
-    setShowForm(true)
+    setForm({ ...j })
+    setSelectedId(j.id)
+    setTab('details')
+    setModalOpen(true)
   }
+
+  function set(k: string, v: any) { setForm(prev => ({ ...prev, [k]: v })) }
+  const fld = (k: string) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => set(k, e.target.value)
+  const num = (k: string) => (e: React.ChangeEvent<HTMLInputElement>) => set(k, e.target.value === '' ? null : parseFloat(e.target.value))
 
   async function handleSave() {
     setSaving(true)
     try {
+      const existingNos = jobs.map((j: Job) => j.quote_no).filter(Boolean)
+      const id = selectedId || nextJobId(jobs.map((j: Job) => j.id))
+      const quoteNo = form.quote_no || genQuoteNo(existingNos)
+      // Recalculate scheduled dates if start/days changed
+      const schedDates = getJobScheduledDates(form)
       await upsert.mutateAsync({
-        id: form.id || genId(),
         ...form,
-      } as Job)
-      setShowForm(false)
+        id,
+        quote_no: quoteNo,
+        scheduled_dates: schedDates.length ? schedDates : (form.scheduled_dates ?? []),
+        created_at: form.created_at || new Date().toISOString(),
+      })
+      setModalOpen(false)
+    } catch (e: any) {
+      alert('Save failed: ' + e.message)
     } finally {
       setSaving(false)
     }
   }
 
   async function handleDelete() {
-    if (!selected || !confirm(`Delete job ${selected.id}?`)) return
-    await del.mutateAsync(selected.id)
-    setShowForm(false)
-    setSelected(null)
+    if (!selectedId || !confirm(`Delete job ${selectedId}? This cannot be undone.`)) return
+    await del.mutateAsync(selectedId)
+    setModalOpen(false)
   }
 
-  const f = (k: keyof Job) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) =>
-    setForm(prev => ({ ...prev, [k]: e.target.value }))
+  const selected = jobs.find(j => j.id === selectedId)
 
   return (
-    <div className="flex h-full">
-      {/* List panel */}
-      <div className="w-full max-w-md border-r border-gray-800 flex flex-col h-full">
-        <div className="px-4 py-4 border-b border-gray-800 space-y-3">
-          <div className="flex items-center justify-between">
-            <h1 className="text-lg font-bold text-white">Jobs</h1>
-            <button onClick={openNew} className="flex items-center gap-1.5 bg-yellow-400 hover:bg-yellow-300 text-gray-900 font-semibold text-sm px-3 py-1.5 rounded-lg transition-colors">
-              <Plus size={14} /> New job
-            </button>
-          </div>
-          <div className="relative">
-            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
-            <input
-              value={search} onChange={e => setSearch(e.target.value)}
-              placeholder="Search jobs…"
-              className="w-full bg-gray-800 border border-gray-700 rounded-lg pl-8 pr-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-yellow-400"
-            />
-          </div>
-          <div className="flex gap-1.5 overflow-x-auto pb-0.5">
+    <div className="h-full flex flex-col">
+      {/* Header */}
+      <div className="px-6 py-4 border-b border-gray-800 space-y-3 shrink-0">
+        <div className="flex items-center justify-between">
+          <h1 className="text-lg font-bold text-white">Jobs & Quotes</h1>
+          <button onClick={openNew} className="flex items-center gap-1.5 bg-yellow-400 hover:bg-yellow-300 text-gray-900 font-semibold text-sm px-3 py-1.5 rounded-lg transition-colors">
+            <Plus size={14} /> New job
+          </button>
+        </div>
+        <div className="relative">
+          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
+          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search client, address, job ID…"
+            className="w-full bg-gray-800 border border-gray-700 rounded-lg pl-8 pr-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-yellow-400" />
+        </div>
+        <div className="flex gap-2 overflow-x-auto pb-0.5">
+          <div className="flex gap-1 shrink-0">
             {['All', ...JOB_STATUSES].map(s => (
               <button key={s} onClick={() => setStatusFilter(s)}
                 className={`shrink-0 text-xs px-2.5 py-1 rounded-full transition-colors ${statusFilter === s ? 'bg-yellow-400 text-gray-900 font-semibold' : 'bg-gray-800 text-gray-400 hover:text-white'}`}>
@@ -111,140 +188,167 @@ export default function Jobs() {
               </button>
             ))}
           </div>
+          <div className="w-px bg-gray-700 shrink-0" />
+          <div className="flex gap-1 shrink-0">
+            {['All', ...QUOTE_STATUSES].map(s => (
+              <button key={s} onClick={() => setQuoteFilter(s)}
+                className={`shrink-0 text-xs px-2.5 py-1 rounded-full transition-colors ${quoteFilter === s ? 'bg-blue-500 text-white font-semibold' : 'bg-gray-800 text-gray-400 hover:text-white'}`}>
+                {s}
+              </button>
+            ))}
+          </div>
         </div>
+        <p className="text-xs text-gray-500">{filtered.length} of {jobs.length} jobs</p>
+      </div>
 
-        <div className="flex-1 overflow-y-auto divide-y divide-gray-800">
-          {isLoading && (
-            <div className="flex items-center justify-center py-16">
-              <Loader2 size={20} className="animate-spin text-yellow-400" />
-            </div>
-          )}
-          {!isLoading && filtered.length === 0 && (
-            <div className="text-center py-16 text-gray-500 text-sm">No jobs found</div>
-          )}
-          {filtered.map(j => (
+      {/* List */}
+      <div className="flex-1 overflow-y-auto divide-y divide-gray-800">
+        {isLoading && (
+          <div className="flex items-center justify-center py-16">
+            <Loader2 size={20} className="animate-spin text-yellow-400" />
+          </div>
+        )}
+        {!isLoading && filtered.length === 0 && (
+          <div className="text-center py-16 text-gray-500 text-sm">No jobs found</div>
+        )}
+        {filtered.map(j => {
+          const dates = Array.isArray(j.scheduled_dates) ? j.scheduled_dates : []
+          return (
             <button key={j.id} onClick={() => openEdit(j)}
-              className={`w-full text-left px-4 py-3.5 hover:bg-gray-800/50 transition-colors ${selected?.id === j.id ? 'bg-gray-800' : ''}`}>
-              <div className="flex items-start justify-between gap-2">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2 mb-0.5">
+              className="w-full text-left px-6 py-4 hover:bg-gray-800/40 transition-colors">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2 mb-1 flex-wrap">
                     <span className="text-xs text-gray-500 font-mono">{j.id}</span>
-                    {j.status && (
-                      <span className={`text-xs px-1.5 py-0.5 rounded-full font-medium ${STATUS_COLORS[j.status] || 'bg-gray-700 text-gray-300'}`}>
-                        {j.status}
+                    {j.status && <Badge label={j.status} />}
+                    {j.quote_status && <Badge label={j.quote_status} />}
+                  </div>
+                  <div className="text-sm font-semibold text-white truncate">{j.client || '—'}</div>
+                  <div className="text-xs text-gray-400 truncate mt-0.5">{j.address || '—'}</div>
+                  <div className="flex items-center gap-3 mt-1.5 flex-wrap">
+                    {j.type && <span className="text-xs text-gray-500">{j.type}</span>}
+                    {dates.length > 0 && (
+                      <span className="flex items-center gap-1 text-xs text-gray-500">
+                        <Calendar size={10} />
+                        {fmtDate(dates[0])}{dates.length > 1 ? ` +${dates.length - 1}d` : ''}
                       </span>
                     )}
                   </div>
-                  <div className="text-sm font-medium text-white truncate">{j.client || '—'}</div>
-                  <div className="text-xs text-gray-400 truncate">{j.address || '—'}</div>
                 </div>
                 <div className="text-right shrink-0">
-                  <div className="text-sm font-semibold text-white">{fmtCurrency(j.agreed_ex_gst)}</div>
-                  <div className="text-xs text-gray-500">{j.type}</div>
+                  <div className="text-sm font-bold text-white">{fmtCurrency(j.agreed_ex_gst || j.quote_ex_gst)}</div>
+                  {j.agreed_ex_gst && j.quote_ex_gst && j.agreed_ex_gst !== j.quote_ex_gst && (
+                    <div className="text-xs text-gray-500">quoted {fmtCurrency(j.quote_ex_gst)}</div>
+                  )}
+                  <div className="text-xs text-gray-500 mt-0.5">{j.quote_no || ''}</div>
                 </div>
               </div>
             </button>
-          ))}
-        </div>
+          )
+        })}
       </div>
 
-      {/* Detail / form panel */}
-      {showForm && (
-        <div className="flex-1 overflow-y-auto p-6">
-          <div className="max-w-2xl">
-            <div className="flex items-center justify-between mb-6">
-              <h2 className="text-xl font-bold text-white">{selected ? `Edit ${selected.id}` : 'New Job'}</h2>
-              <div className="flex gap-2">
-                {selected && (
-                  <button onClick={handleDelete} className="text-sm px-3 py-1.5 rounded-lg bg-red-500/20 text-red-400 hover:bg-red-500/30 transition-colors">
-                    Delete
-                  </button>
-                )}
-                <button onClick={() => setShowForm(false)} className="text-sm px-3 py-1.5 rounded-lg bg-gray-800 text-gray-400 hover:text-white transition-colors">
-                  Cancel
-                </button>
-                <button onClick={handleSave} disabled={saving}
-                  className="flex items-center gap-1.5 text-sm px-4 py-1.5 rounded-lg bg-yellow-400 hover:bg-yellow-300 text-gray-900 font-semibold transition-colors disabled:opacity-50">
-                  {saving && <Loader2 size={13} className="animate-spin" />}
-                  Save
-                </button>
-              </div>
-            </div>
+      {/* Edit/New Modal */}
+      <Modal open={modalOpen} onClose={() => setModalOpen(false)} size="xl"
+        title={selectedId ? `Edit ${selectedId}` : 'New Job'}>
 
-            <div className="grid grid-cols-2 gap-4">
-              <Field label="Client" value={form.client || ''} onChange={f('client')} />
-              <Field label="Address" value={form.address || ''} onChange={f('address')} />
-              <SelectField label="Type" value={form.type || ''} onChange={f('type')} options={JOB_TYPES} />
-              <SelectField label="Status" value={form.status || ''} onChange={f('status')} options={JOB_STATUSES} />
-              <Field label="Quote (ex GST)" value={form.quote_ex_gst?.toString() || ''} onChange={f('quote_ex_gst')} type="number" />
-              <Field label="Agreed (ex GST)" value={form.agreed_ex_gst?.toString() || ''} onChange={f('agreed_ex_gst')} type="number" />
-              <Field label="Est. Labour (ex GST)" value={form.est_labour_ex?.toString() || ''} onChange={f('est_labour_ex')} type="number" />
-              <Field label="Est. Materials (ex GST)" value={form.est_materials_ex?.toString() || ''} onChange={f('est_materials_ex')} type="number" />
-              <Field label="Labour Rate ($/hr)" value={form.labour_rate?.toString() || ''} onChange={f('labour_rate')} type="number" />
-              <Field label="Sched. Start" value={form.sched_start || ''} onChange={f('sched_start')} type="date" />
-              <Field label="Est. Days" value={form.est_days?.toString() || ''} onChange={f('est_days')} type="number" />
-              <Field label="Quote No." value={form.quote_no || ''} onChange={f('quote_no')} />
-              <SelectField label="Lead Source" value={form.lead_source || ''} onChange={f('lead_source')}
-                options={['Google Ads','Word of mouth','Referral','Facebook','Instagram','Walk-in','Other']} />
-              <Field label="Drive Link" value={form.drive_link || ''} onChange={f('drive_link')} />
-              <div className="col-span-2">
-                <TextArea label="Description" value={form.job_desc || ''} onChange={f('job_desc')} />
-              </div>
-              <div className="col-span-2">
-                <TextArea label="Notes" value={form.notes || ''} onChange={f('notes')} />
+        {/* Tabs */}
+        <div className="flex gap-1 mb-5 bg-gray-800 p-1 rounded-lg">
+          {(['details','schedule','financials'] as const).map(t => (
+            <button key={t} onClick={() => setTab(t)}
+              className={`flex-1 text-xs py-1.5 rounded-md font-medium transition-colors capitalize ${tab === t ? 'bg-gray-700 text-white' : 'text-gray-400 hover:text-white'}`}>
+              {t}
+            </button>
+          ))}
+        </div>
+
+        {tab === 'details' && (
+          <div className="grid grid-cols-2 gap-3">
+            <Input label="Client name" value={form.client || ''} onChange={fld('client')} wrapperClassName="col-span-2" />
+            <Input label="Site address" value={form.address || ''} onChange={fld('address')} wrapperClassName="col-span-2" />
+            <Select label="Job type" value={form.type || ''} onChange={fld('type')} options={JOB_TYPES} />
+            <Select label="Terms" value={form.terms || ''} onChange={fld('terms')} options={TERMS} />
+            <Select label="Job status" value={form.status || ''} onChange={fld('status')} options={JOB_STATUSES} placeholder="—" />
+            <Select label="Quote status" value={form.quote_status || ''} onChange={fld('quote_status')} options={QUOTE_STATUSES} placeholder="—" />
+            <Select label="Lead source" value={form.lead_source || ''} onChange={fld('lead_source')} options={LEAD_SOURCES} placeholder="—" />
+            <Select label="On books" value={form.on_books || ''} onChange={fld('on_books')} options={ON_BOOKS} />
+            <Select label="Weather" value={form.weather || ''} onChange={fld('weather')} options={WEATHER} />
+            <Input label="Quote number" value={form.quote_no || ''} onChange={fld('quote_no')} placeholder="Auto-generated" />
+            <Input label="Drive link" value={form.drive_link || ''} onChange={fld('drive_link')} wrapperClassName="col-span-2" />
+            <TextArea label="Description" value={form.job_desc || ''} onChange={fld('job_desc')} wrapperClassName="col-span-2" />
+            <TextArea label="Notes" value={form.notes || ''} onChange={fld('notes')} wrapperClassName="col-span-2" />
+          </div>
+        )}
+
+        {tab === 'schedule' && (
+          <div className="grid grid-cols-2 gap-3">
+            <Input label="Scheduled start" type="date" value={form.sched_start || ''} onChange={fld('sched_start')} />
+            <Input label="Est. days" type="number" value={form.est_days || ''} onChange={num('est_days')} min={0} step={0.5} />
+            <Input label="Quote sent date" type="date" value={form.quote_sent || ''} onChange={fld('quote_sent')} />
+            <div className="col-span-2">
+              {form.sched_start && form.est_days ? (
+                <div className="bg-gray-800 rounded-lg p-3">
+                  <p className="text-xs text-gray-400 mb-2">Calculated working days:</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {getJobScheduledDates(form).map(d => (
+                      <span key={d} className="text-xs bg-blue-500/20 text-blue-400 px-2 py-0.5 rounded">{fmtDate(d)}</span>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <p className="text-xs text-gray-500">Enter start date and estimated days to see scheduled dates.</p>
+              )}
+            </div>
+          </div>
+        )}
+
+        {tab === 'financials' && (
+          <div className="grid grid-cols-2 gap-3">
+            <Input label="Quote ex GST ($)" type="number" value={form.quote_ex_gst || ''} onChange={num('quote_ex_gst')} min={0} />
+            <Input label="Agreed ex GST ($)" type="number" value={form.agreed_ex_gst || ''} onChange={num('agreed_ex_gst')} min={0} />
+            <Input label="Est. labour ex GST ($)" type="number" value={form.est_labour_ex || ''} onChange={num('est_labour_ex')} min={0} />
+            <Input label="Est. materials ex GST ($)" type="number" value={form.est_materials_ex || ''} onChange={num('est_materials_ex')} min={0} />
+            <Input label="Labour rate ($/hr)" type="number" value={form.labour_rate || ''} onChange={num('labour_rate')} min={0} />
+            <div className="col-span-2 bg-gray-800 rounded-lg p-3 space-y-1">
+              <p className="text-xs text-gray-400">Estimated financials</p>
+              <div className="grid grid-cols-3 gap-2 mt-2">
+                {[
+                  { label: 'Quote inc GST', value: fmtCurrency((form.quote_ex_gst || 0) * 1.1) },
+                  { label: 'Agreed inc GST', value: fmtCurrency((form.agreed_ex_gst || 0) * 1.1) },
+                  { label: 'Est. cost', value: fmtCurrency((form.est_labour_ex || 0) + (form.est_materials_ex || 0)) },
+                  { label: 'Est. profit', value: fmtCurrency((form.agreed_ex_gst || 0) - (form.est_labour_ex || 0) - (form.est_materials_ex || 0)) },
+                  { label: 'Est. margin', value: form.agreed_ex_gst ? `${(((form.agreed_ex_gst - (form.est_labour_ex || 0) - (form.est_materials_ex || 0)) / form.agreed_ex_gst) * 100).toFixed(1)}%` : '—' },
+                ].map(({ label, value }) => (
+                  <div key={label} className="bg-gray-700/50 rounded p-2">
+                    <p className="text-xs text-gray-500">{label}</p>
+                    <p className="text-sm font-semibold text-white">{value}</p>
+                  </div>
+                ))}
               </div>
             </div>
           </div>
-        </div>
-      )}
+        )}
 
-      {!showForm && (
-        <div className="flex-1 flex items-center justify-center text-gray-600">
-          <div className="text-center">
-            <ChevronRight size={32} className="mx-auto mb-2 opacity-30" />
-            <p className="text-sm">Select a job or create a new one</p>
+        <div className="flex items-center justify-between mt-6 pt-4 border-t border-gray-800">
+          <div>
+            {selectedId && (
+              <button onClick={handleDelete} className="flex items-center gap-1.5 text-sm text-red-400 hover:text-red-300 transition-colors">
+                <Trash2 size={14} /> Delete job
+              </button>
+            )}
+          </div>
+          <div className="flex gap-2">
+            <button onClick={() => setModalOpen(false)} className="text-sm px-4 py-2 rounded-lg bg-gray-800 text-gray-400 hover:text-white transition-colors">
+              Cancel
+            </button>
+            <button onClick={handleSave} disabled={saving}
+              className="flex items-center gap-1.5 text-sm px-5 py-2 rounded-lg bg-yellow-400 hover:bg-yellow-300 text-gray-900 font-semibold transition-colors disabled:opacity-50">
+              {saving && <Loader2 size={13} className="animate-spin" />}
+              Save job
+            </button>
           </div>
         </div>
-      )}
-    </div>
-  )
-}
-
-function Field({ label, value, onChange, type = 'text' }: {
-  label: string; value: string; onChange: React.ChangeEventHandler<HTMLInputElement>; type?: string
-}) {
-  return (
-    <div>
-      <label className="block text-xs font-medium text-gray-400 mb-1">{label}</label>
-      <input type={type} value={value} onChange={onChange}
-        className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-yellow-400" />
-    </div>
-  )
-}
-
-function SelectField({ label, value, onChange, options }: {
-  label: string; value: string; onChange: React.ChangeEventHandler<HTMLSelectElement>; options: string[]
-}) {
-  return (
-    <div>
-      <label className="block text-xs font-medium text-gray-400 mb-1">{label}</label>
-      <select value={value} onChange={onChange}
-        className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-yellow-400">
-        <option value="">—</option>
-        {options.map(o => <option key={o}>{o}</option>)}
-      </select>
-    </div>
-  )
-}
-
-function TextArea({ label, value, onChange }: {
-  label: string; value: string; onChange: React.ChangeEventHandler<HTMLTextAreaElement>
-}) {
-  return (
-    <div>
-      <label className="block text-xs font-medium text-gray-400 mb-1">{label}</label>
-      <textarea value={value} onChange={onChange} rows={3}
-        className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-yellow-400 resize-none" />
+      </Modal>
     </div>
   )
 }
