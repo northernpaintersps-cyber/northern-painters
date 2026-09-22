@@ -207,11 +207,24 @@ export default function QuotingTool() {
       if (p.client) setClient(p.client)
       if (p.address) setAddress(p.address)
       if (p.jobType && JOB_TYPES.includes(p.jobType)) setJobType(p.jobType)
+      // Ticked substrates from the site visit come across directly
+      if (p.substrates && typeof p.substrates === 'object') {
+        setQty(q => ({ ...q, ...p.substrates }))
+      }
+      if (p.siteNotes) setSiteNotes(p.siteNotes)
       if (Array.isArray(p.areas) && p.areas.length) {
-        const walls = p.areas.reduce((s: number, a: any) => s + (a.sqm || 0), 0)
-        if (walls > 0) setQty(q => ({ ...q, walls: Math.round(walls) }))
-        setSiteNotes(p.areas.map((a: any) => `${a.area_name}: ${a.notes || ''}`)
-          .filter((l: string) => l.trim().length > 2).join('\n'))
+        // Only infer wall area when the visit did not tick substrates itself
+        if (!p.substrates || !Object.keys(p.substrates).length) {
+          const walls = p.areas.reduce((s: number, a: any) => s + (a.sqm || 0), 0)
+          if (walls > 0) setQty(q => ({ ...q, walls: Math.round(walls) }))
+        }
+        if (!p.siteNotes) {
+          setSiteNotes(p.areas.map((a: any) => `${a.area_name}: ${a.notes || ''}`)
+            .filter((l: string) => l.trim().length > 2).join('\n'))
+        }
+        setRooms(p.areas.filter((a: any) => a.length || a.height).map((a: any) => ({
+          id: genId('rm'), name: a.area_name ?? '', w: 0, l: a.length ?? 0, h: a.height ?? 2.4,
+        })))
       }
     } catch {}
   }, [])
