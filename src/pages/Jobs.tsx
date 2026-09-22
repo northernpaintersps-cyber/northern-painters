@@ -553,9 +553,9 @@ export default function Jobs() {
   const selected = jobs.find(j => j.id === selectedId)
 
   return (
-    <div className="h-full flex flex-col">
+    <div className="p-5">
       {/* Header */}
-      <div className="px-5 pt-5 shrink-0">
+      <div>
         <div className="flex items-center justify-between flex-wrap gap-2 mb-2">
           <h2 className="text-[17px] font-semibold text-gray-900">Jobs &amp; Quotes</h2>
           <button onClick={openNew}
@@ -639,8 +639,8 @@ export default function Jobs() {
       </div>
 
       {/* V16 inline-editable table */}
-      <div className="flex-1 overflow-hidden px-5 pb-5">
-        <div className="bg-white border border-black/[0.12] rounded-xl overflow-hidden h-full">
+      <div>
+        <div className="bg-white border border-black/[0.12] rounded-xl overflow-hidden">
           {isLoading ? (
             <div className="flex items-center justify-center py-16">
               <Loader2 size={20} className="animate-spin text-blue-600" />

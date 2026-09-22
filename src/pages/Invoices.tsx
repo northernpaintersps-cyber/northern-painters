@@ -582,60 +582,118 @@ function JobFinancialSummary({ jobs, invoices, paySchedules, onMarkPaid, onCash,
   )
 }
 
-// ── Invoice print HTML ───────────────────────────────────────
-function buildInvoiceHTML(inv: Invoice, biz?: any): string {
-  const exGST = inv.agreed_ex_gst ?? 0
-  const gst = inv.gst ?? exGST * 0.1
-  const total = inv.total_inc_gst ?? exGST * 1.1
-  const received = inv.received ?? 0
-  const deposit = inv.deposit ?? 0
-  const owed = Math.max(0, total - received - deposit)
-  const companyName = biz?.company_name || 'Northern Painters'
-  const abn = biz?.abn ? `ABN: ${biz.abn}` : ''
-  const licence = biz?.licence ? ` · Licence: ${biz.licence}` : ''
-  const hasBankDetails = biz?.bsb || biz?.account_no
-  return `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Invoice ${inv.id}</title>
-<style>
-  body{font-family:Arial,sans-serif;font-size:13px;color:#111;margin:0;padding:40px;max-width:800px}
-  .header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:32px}
-  .company{font-size:22px;font-weight:700} .meta{color:#555;font-size:12px;line-height:1.8;margin-top:4px}
-  .inv-title{font-size:28px;font-weight:700;color:#1d4ed8;text-align:right}
-  .inv-meta{text-align:right;color:#555;font-size:12px;line-height:1.8;margin-top:4px}
-  table{width:100%;border-collapse:collapse;margin:16px 0}
-  th{background:#f5f5f3;padding:8px 12px;text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#555;border-bottom:1px solid #ddd}
-  td{padding:8px 12px;border-bottom:1px solid #eee}
-  .total-row td{font-weight:700;font-size:14px;border-top:2px solid #ddd;border-bottom:none}
-  .payment{background:#f5f5f3;padding:16px;border-radius:8px;margin-top:16px;font-size:12px}
-  .footer{margin-top:32px;padding-top:16px;border-top:1px solid #ddd;font-size:11px;color:#999}
-  @media print{body{padding:24px}}
-</style></head><body>
-<div class="header">
-  <div>
-    <div class="company">${companyName}</div>
-    <div class="meta">${abn}${licence}${biz?.address ? '<br>' + biz.address : ''}${biz?.phone ? '<br>' + biz.phone : ''}${biz?.email ? ' · ' + biz.email : ''}</div>
+// ── Invoice print HTML — V16 _renderInvPreview() ─────────────
+const money0 = (v: any) => '$' + Number(v || 0).toLocaleString('en-AU', { maximumFractionDigits: 0 })
+const money2 = (v: any) => '$' + Number(v || 0).toLocaleString('en-AU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+const esc = (v: any) => String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+
+// V16 _buildInvTable()
+function buildInvTable(inv: Invoice, collapsed: boolean) {
+  const stored = inv.extra?.line_items
+  const rawItems = Array.isArray(stored) && stored.length
+    ? stored
+    : [{ qty: 1, description: inv.notes || 'Painting services', unitPrice: inv.agreed_ex_gst || 0, amount: inv.agreed_ex_gst || 0 }]
+
+  const normItems = rawItems.map((li: any) => ({
+    qty: li.qty || 1,
+    description: li.description || li.desc || 'Painting services',
+    unit: li.unit && isNaN(Number(li.unit)) ? li.unit : 'lot',
+    unitPrice: li.unitPrice !== undefined ? li.unitPrice : (isNaN(Number(li.unit)) ? 0 : Number(li.unit) || 0),
+    amount: li.amount !== undefined ? li.amount : (li.totalExGST || li.total || 0),
+  }))
+
+  const lineItems = collapsed
+    ? [{
+        qty: 1,
+        description: inv.notes || 'Painting services',
+        unit: 'lot',
+        unitPrice: normItems.reduce((s: number, l: any) => s + l.amount, 0),
+        amount: normItems.reduce((s: number, l: any) => s + l.amount, 0),
+      }]
+    : normItems
+
+  return {
+    lineItems,
+    emptyRows: Math.max(0, 5 - lineItems.length),
+    ex: Number(inv.agreed_ex_gst || 0),
+    inc: Number(inv.total_inc_gst || 0),
+    owed: calcOwed(inv),
+  }
+}
+
+function buildInvoiceHTML(inv: Invoice, biz?: any, collapsed = false): string {
+  const dateStr = new Date(inv.date || Date.now())
+    .toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: '2-digit' })
+    .replace(/ /g, '-')
+  const { lineItems, emptyRows, ex, inc, owed } = buildInvTable(inv, collapsed)
+  const origin = window.location.origin
+
+  const cell = 'border:1.5px solid #111;padding:3px 8px'
+  const rowsHtml = lineItems.map((li: any) => `<tr>
+    <td style="height:24px;${cell};text-align:center">${esc(li.qty || 1)}</td>
+    <td style="height:24px;${cell}">${esc(li.description)}</td>
+    <td style="height:24px;${cell};text-align:center;color:#555;font-size:12px">${esc(li.unit)}</td>
+    <td style="height:24px;${cell};text-align:right">${money0(li.unitPrice)}</td>
+    <td style="height:24px;${cell};text-align:right;background:#efefef">${money0(li.amount)}</td>
+  </tr>`).join('')
+
+  const emptyHtml = Array(emptyRows).fill(
+    `<tr>${Array(4).fill(`<td style="height:28px;${cell}">&nbsp;</td>`).join('')}<td style="height:28px;${cell};background:#efefef"></td></tr>`
+  ).join('')
+
+  const th = 'background:#f0f0f0;border:1.5px solid #111;padding:4px 8px;text-align:center;font-weight:700'
+  const tf = 'border:1.5px solid #111;background:#f0f0f0;padding:5px 8px;font-weight:700'
+  const totalRow = (label: string, value: string) =>
+    `<tr><td colspan="3" style="border:none"></td><td style="${tf};text-align:center">${label}</td><td style="${tf};text-align:right">${value}</td></tr>`
+
+  const bsb = biz?.bsb || '067 873'
+  const acc = biz?.account_no || '2252 1951'
+
+  const page = `<div id="inv-prev" class="np-invoice-sample" style="background:#fff;width:794px;min-height:1123px;margin:0 auto;padding:92px 78px 50px;font-family:Arial,Helvetica,sans-serif;color:#111;font-size:14px;line-height:1.25">
+  <div style="display:grid;grid-template-columns:1fr 1fr;align-items:end;border-bottom:2px solid #111;padding-bottom:8px">
+    <div><img src="${origin}/np-logo.png" alt="Northern Painters" style="width:300px;height:auto;display:block"></div>
+    <div style="text-align:right;font-size:54px;font-weight:800;letter-spacing:.5px;line-height:.9;padding-bottom:4px">TAX INVOICE</div>
   </div>
-  <div>
-    <div class="inv-title">TAX INVOICE</div>
-    <div class="inv-meta">Invoice #${inv.id || ''}<br>Date: ${fmtDate(inv.date)}${inv.due_date ? '<br>Due: ' + fmtDate(inv.due_date) : ''}</div>
+  <div style="display:grid;grid-template-columns:70px 1fr 70px 130px;align-items:center;margin:4px 0 30px;font-size:16px">
+    <div style="font-weight:700">To:</div><div>${esc(inv.client)}</div>
+    <div style="font-weight:700;text-align:left">Date:</div><div style="text-align:right">${dateStr}</div>
   </div>
-</div>
-<div style="margin-bottom:24px"><strong>Bill to:</strong><br>${inv.client || ''}${inv.address ? '<br>' + inv.address : ''}</div>
-<table>
-  <thead><tr><th>Description</th><th style="text-align:right">Amount (ex GST)</th></tr></thead>
-  <tbody>
-    <tr><td>${inv.notes || 'Painting services as agreed'}</td><td style="text-align:right">${fmtCurrency(exGST)}</td></tr>
-    <tr><td style="color:#555">GST (10%)</td><td style="text-align:right;color:#555">${fmtCurrency(gst)}</td></tr>
-    <tr class="total-row"><td>Total inc GST</td><td style="text-align:right">${fmtCurrency(total)}</td></tr>
-    ${deposit > 0 ? `<tr><td style="color:#555">Deposit received</td><td style="text-align:right;color:#555">(${fmtCurrency(deposit)})</td></tr>` : ''}
-    ${received > 0 ? `<tr><td style="color:#555">Amount received</td><td style="text-align:right;color:#555">(${fmtCurrency(received)})</td></tr>` : ''}
-    ${(deposit > 0 || received > 0) ? `<tr class="total-row"><td>Balance owing</td><td style="text-align:right">${fmtCurrency(owed)}</td></tr>` : ''}
-  </tbody>
-</table>
-${hasBankDetails ? `<div class="payment">
-  <strong>Payment details</strong><br>
-  Bank Transfer: BSB ${biz.bsb} · Account ${biz.account_no}${biz.account_name ? ' · ' + biz.account_name : ''}<br>
-  Reference: ${inv.id || inv.client || ''}${biz?.invoice_terms ? '<br><em>' + biz.invoice_terms + '</em>' : ''}
-</div>` : ''}
-<div class="footer">${biz?.invoice_footer || 'This invoice is issued in accordance with the Building and Construction Industry Security of Payment Act 1999 (NSW).'}</div>
-</body></html>`
+  <table style="width:100%;border-collapse:collapse;font-size:15px;margin-bottom:62px;table-layout:fixed">
+    <thead><tr>
+      <th style="width:60px;${th}">Qty</th>
+      <th style="${th}">Description</th>
+      <th style="width:70px;${th}">Unit</th>
+      <th style="width:140px;${th}">Unit Price</th>
+      <th style="width:130px;${th}">Line Total</th>
+    </tr></thead>
+    <tbody>${rowsHtml}${emptyHtml}</tbody>
+    <tfoot>
+      ${totalRow('Total (exc GST)', money2(ex))}
+      ${totalRow('Total (inc GST)', money2(inc))}
+      ${(inv.received || 0) > 0 && owed > 0 ? totalRow('Balance owing', money2(owed)) : ''}
+    </tfoot>
+  </table>
+  <div style="display:grid;grid-template-columns:1fr 260px;align-items:start;margin-top:14px">
+    <div style="font-size:16px;line-height:1.7;padding-top:26px">
+      <div style="font-size:17px;margin-bottom:8px">Payment Details</div>
+      <div style="padding-left:54px;color:#555">BSB&nbsp; ${esc(bsb)}</div>
+      <div style="padding-left:54px;color:#555">Acc&nbsp; ${esc(acc)}</div>
+    </div>
+    <div style="text-align:center"><img src="${origin}/ft-logo.png" alt="NSW Fair Trading Licensed Contractor" style="width:220px;height:auto;display:inline-block"></div>
+  </div>
+  <div style="text-align:center;font-size:17px;line-height:1.3;margin-top:34px">
+    This is a payment claim made under the Building and<br>
+    construction Industry Security of Payment Act 1999 NSW
+  </div>
+</div>`
+
+  const safe = (v: string) => (v || '').replace(/[\/:*?"<>|]/g, '').replace(/\s+/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '')
+  const title = 'Invoice' + (inv.id ? '_' + safe(inv.id) : '') + (inv.client ? '_' + safe(inv.client) : '')
+
+  return `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${title}</title><style>
+*{box-sizing:border-box;margin:0;padding:0}
+@page{size:A4 portrait;margin:0}
+body{font-family:Arial,Helvetica,sans-serif;background:#fff;color:#111}
+@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}button{display:none}}
+</style></head><body>${page}</body></html>`
 }

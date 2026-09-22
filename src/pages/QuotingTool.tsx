@@ -233,79 +233,133 @@ function ItemRow({ item, onChange, onDelete }: {
   )
 }
 
-// ── Print quote HTML ──────────────────────────────────────────
+// ── Print quote HTML — V16 _buildQuoteHTML() ─────────────────
+function safePart(v: string) {
+  return (v || '').replace(/[\\/:*?"<>|]/g, '').replace(/\s+/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '')
+}
+// V16 _buildQuoteFilename()
+function buildQuoteFilename(docType: string, qno: string, site: string, proj: string) {
+  return [docType || 'Quote', qno && safePart(qno), proj && safePart(proj), site && safePart(site)]
+    .filter(Boolean).join('_')
+}
+
 function buildQuoteHTML(job: any, items: QuoteItem[], settings: any) {
-  const totalExGST = items.reduce((s, it) => s + calcItem(it).total, 0)
-  const gst = totalExGST * 0.1
-  const totalIncGST = totalExGST + gst
-  const rows = items.map(it => {
-    const c = calcItem(it)
-    return `<tr>
-      <td>${it.area_name || it.surface_type}</td>
-      <td>${it.surface_type}</td>
-      <td>${c.sqm.toFixed(1)} m²</td>
-      <td>${it.coats} coats</td>
-      <td style="text-align:right">${fmtCurrency(c.total)}</td>
-    </tr>`
-  }).join('')
+  const esc = (v: any) => String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  const nl = (v: string) => esc(v).replace(/\n/g, '<br>')
+  const lineList = (v: string) => esc(v).split('\n').filter(Boolean).map((l: string) => `<li>${l}</li>`).join('')
 
-  return `<!DOCTYPE html><html><head><meta charset="utf-8">
-  <title>Quote ${job.quote_no || job.id}</title>
-  <style>
-    body{font-family:Arial,sans-serif;color:#111;max-width:800px;margin:40px auto;padding:0 24px;font-size:13px}
-    h1{font-size:22px;margin:0} .header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:32px}
-    .logo{font-size:18px;font-weight:700;color:#f59e0b} .meta{color:#555;font-size:12px;line-height:1.8}
-    table{width:100%;border-collapse:collapse;margin:16px 0}
-    th{background:#f3f4f6;text-align:left;padding:8px 10px;font-size:11px;text-transform:uppercase;letter-spacing:.05em}
-    td{padding:8px 10px;border-bottom:1px solid #e5e7eb}
-    .totals td{border:none;padding:6px 10px} .totals .label{color:#555} .grand{font-weight:700;font-size:15px}
-    .note{margin-top:32px;padding:16px;background:#fffbeb;border:1px solid #fcd34d;border-radius:6px;font-size:12px}
-    .footer{margin-top:40px;font-size:11px;color:#999;border-top:1px solid #e5e7eb;padding-top:16px}
-    @media print{body{margin:0}}
-  </style></head><body>
-  <div class="header">
-    <div>
-      <div class="logo">${(settings as any).company_name || 'Northern Painters'}</div>
-      <div class="meta">
-        ABN: ${settings.abn || '—'}<br>
-        ${settings.address || ''}<br>
-        ${settings.phone || ''} · ${settings.email || ''}
-      </div>
-    </div>
-    <div style="text-align:right">
-      <h1>QUOTE</h1>
-      <div class="meta">
-        Quote No: <strong>${job.quote_no || job.id}</strong><br>
-        Date: ${today()}<br>
-        Valid for: ${settings.valid_days || 30} days
-      </div>
-    </div>
+  const exGST = items.reduce((s, it) => s + calcItem(it).total, 0)
+  const lockedPrice: number = Number(settings.locked_price) || 0
+  const gstBase = lockedPrice || exGST
+  const gst2 = gstBase * 0.1
+
+  const docType: string = settings.doc_type || 'QUOTE'
+  const qno: string = job?.quote_no || ''
+  const site: string = job?.address || ''
+  const proj: string = job?.job_desc || job?.type || 'Painting works'
+  const to: string = job?.client || ''
+  const date = new Date().toLocaleDateString('en-AU', { day: 'numeric', month: 'long', year: 'numeric' })
+
+  const company = settings.company_name || 'Northern Painters'
+  const contactLine = [settings.abn ? `ABN ${settings.abn}` : '', settings.address || 'Byron Bay, NSW', settings.email || '']
+    .filter(Boolean).join(' · ')
+
+  // Pricing lines — one per quote item, or a single "as per scope" line
+  const lines = items.length
+    ? items.map(it => {
+        const c = calcItem(it)
+        return {
+          qty: `${c.sqm.toFixed(1)} m²`,
+          desc: `${it.area_name || it.surface_type}${it.surface_type && it.area_name ? ` — ${it.surface_type}` : ''} · ${it.coats} coats`,
+          unit: c.sqm ? (c.total / c.sqm).toFixed(2) : '—',
+          total: c.total.toFixed(2),
+        }
+      })
+    : [{ qty: '1', desc: 'Painting services — as per scope', unit: gstBase.toFixed(2), total: gstBase.toFixed(2) }]
+
+  // Coating system rows, derived from the quote items
+  const coatRows = items.map(it => ({
+    sub: it.area_name || it.surface_type,
+    sys: it.surface_type || '—',
+    coats: String(it.coats ?? 2),
+    app: it.prep_level || 'Brush / roller',
+    mat: it.notes || '—',
+  }))
+
+  const lockedRow = lockedPrice && lockedPrice !== exGST
+    ? `<tr style="background:#dcfce7"><td colspan="3" style="font-weight:700;color:#166534"><i>🔒 Locked / Agreed Price</i></td><td style="font-weight:800;font-size:13px;color:#15803d;text-align:right">$${lockedPrice.toFixed(2)}</td></tr>`
+    : ''
+
+  const lockedBanner = lockedPrice && lockedPrice !== exGST
+    ? `<div class="locked-banner"><div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:#166534;margin-bottom:4px">🔒 Locked / Agreed Price</div><div style="font-size:20px;font-weight:800;color:#15803d">$${lockedPrice.toFixed(2)} <span style="font-size:12px;font-weight:600">ex GST</span> &nbsp;&nbsp; $${(lockedPrice * 1.1).toFixed(2)} <span style="font-size:12px;font-weight:600">inc GST</span></div></div>`
+    : ''
+
+  const durationBlock = job?.est_days
+    ? `<div class="section"><div class="label">Estimated Duration</div><div>${esc(job.est_days)} day${Number(job.est_days) === 1 ? '' : 's'}</div></div>`
+    : ''
+  const scopeBlock = settings.scope
+    ? `<div class="section"><h2>Scope of Works</h2><p style="line-height:1.6">${nl(settings.scope)}</p></div>`
+    : ''
+  const inclBlock = settings.inclusions
+    ? `<div class="section"><h2>Inclusions</h2><ul style="padding-left:16px;line-height:1.8">${lineList(settings.inclusions)}</ul></div>`
+    : ''
+  const coatBlock = coatRows.length
+    ? `<div class="section"><h2>Coating System — Finishes Schedule</h2><table><thead><tr><th>Substrate / Area</th><th>Paint System</th><th>Coats</th><th>Application</th><th>Specified Materials</th></tr></thead><tbody>${coatRows.map(r => `<tr><td>${esc(r.sub)}</td><td>${esc(r.sys)}</td><td style="text-align:center">${esc(r.coats)}</td><td>${esc(r.app)}</td><td>${esc(r.mat)}</td></tr>`).join('')}</tbody></table></div>`
+    : ''
+  const termsBlock = settings.payment_terms
+    ? `<div class="section"><h2>Payment Terms</h2><p style="line-height:1.6">${nl(settings.payment_terms)}</p></div>`
+    : ''
+  const exclBlock = settings.exclusions
+    ? `<div class="section"><h2>Exclusions</h2><ul style="padding-left:16px;line-height:1.8">${lineList(settings.exclusions)}</ul></div>`
+    : ''
+  const qnoBlock = qno ? `<div style="font-size:11px;color:#555;margin-top:2px">No. ${esc(qno)}</div>` : ''
+
+  return `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${esc(buildQuoteFilename(docType, qno, site, proj))}</title><style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:Arial,Helvetica,sans-serif;font-size:11.5px;color:#1a1a18;padding:28px 32px;max-width:860px;margin:0 auto}
+h1{font-size:20px;font-weight:800;letter-spacing:-.5px}h2{font-size:13px;font-weight:700;margin:16px 0 6px}
+table{width:100%;border-collapse:collapse;margin-bottom:12px}
+th{background:#1a1a18;color:#fff;padding:6px 8px;text-align:left;font-size:11px}
+td{padding:5px 8px;border-bottom:1px solid #e5e5e0;font-size:11px}tr:last-child td{border-bottom:none}
+.total-row td{font-weight:700;background:#f5f4f0}.gst-row td{color:#555}
+.grand-row td{background:#1a1a18;color:#fff;font-weight:800;font-size:13px}
+.section{margin-bottom:18px}
+.label{font-size:10px;color:#888;text-transform:uppercase;letter-spacing:.5px;margin-bottom:2px}
+.two-col{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+.locked-banner{background:#dcfce7;border:2px solid #16a34a;border-radius:8px;padding:12px 16px;margin-bottom:16px}
+@media print{button{display:none!important}}
+</style></head><body>
+<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:24px;padding-bottom:16px;border-bottom:2px solid #1a1a18">
+  <div><h1>${esc(company)}</h1><div style="font-size:10px;color:#888;margin-top:3px">${esc(contactLine)}</div></div>
+  <div style="text-align:right">
+    <div style="font-size:20px;font-weight:800;text-transform:uppercase;letter-spacing:1px;color:#1a1a18">${esc(docType)}</div>
+    ${qnoBlock}
+    <div style="font-size:11px;color:#555">${date}</div>
   </div>
-
-  <div style="margin-bottom:24px">
-    <strong>${job.client || ''}</strong><br>
-    <span style="color:#555">${job.address || ''}</span>
-  </div>
-
-  <table>
-    <thead><tr><th>Area / Room</th><th>Surface</th><th>Area</th><th>Coats</th><th style="text-align:right">Price (ex GST)</th></tr></thead>
-    <tbody>${rows}</tbody>
-  </table>
-
-  <table class="totals">
-    <tr><td class="label">Subtotal (ex GST)</td><td style="text-align:right">${fmtCurrency(totalExGST)}</td></tr>
-    <tr><td class="label">GST (10%)</td><td style="text-align:right">${fmtCurrency(gst)}</td></tr>
-    <tr class="grand"><td>TOTAL (inc GST)</td><td style="text-align:right">${fmtCurrency(totalIncGST)}</td></tr>
-  </table>
-
-  ${settings.notes ? `<div class="note"><strong>Notes:</strong><br>${settings.notes.replace(/\n/g,'<br>')}</div>` : ''}
-  ${settings.payment_terms ? `<div class="note" style="margin-top:12px"><strong>Payment terms:</strong><br>${settings.payment_terms.replace(/\n/g,'<br>')}</div>` : ''}
-
-  <div class="footer">
-    This quote is valid for ${settings.valid_days || 30} days from the date above. Prices are in Australian dollars.<br>
-    All work carried out by licensed, insured painters. ${(settings as any).company_name || 'Northern Painters'} — ${settings.phone || ''} — ${settings.email || ''}
-  </div>
-  </body></html>`
+</div>
+${lockedBanner}
+<div class="two-col section">
+  <div><div class="label">To</div><div style="font-weight:600">${esc(to)}</div></div>
+  <div><div class="label">Project</div><div style="font-weight:600">${esc(proj)}</div><div class="label" style="margin-top:6px">Site</div><div>${esc(site)}</div></div>
+</div>
+${durationBlock}
+${scopeBlock}
+${inclBlock}
+${coatBlock}
+<div class="section"><h2>Pricing</h2><table>
+<thead><tr><th>Qty</th><th>Description</th><th>Unit ($)</th><th style="text-align:right">Total ($)</th></tr></thead>
+<tbody>${lines.map(l => `<tr><td>${esc(l.qty)}</td><td>${esc(l.desc)}</td><td>${esc(l.unit)}</td><td style="text-align:right">${esc(l.total)}</td></tr>`).join('')}</tbody>
+<tfoot>
+<tr class="total-row"><td colspan="3">Subtotal ex GST</td><td style="text-align:right">$${gstBase.toFixed(2)}</td></tr>
+${lockedRow}
+<tr class="gst-row"><td colspan="3">GST (10%)</td><td style="text-align:right">$${gst2.toFixed(2)}</td></tr>
+<tr class="grand-row"><td colspan="3">TOTAL inc GST</td><td style="text-align:right">$${(gstBase + gst2).toFixed(2)}</td></tr>
+</tfoot></table></div>
+${termsBlock}
+${exclBlock}
+<div style="margin-top:32px;padding-top:16px;border-top:1px solid #e5e5e0;font-size:10px;color:#888;text-align:center">${esc(company)} · ${esc(contactLine)} · This ${esc(docType.toLowerCase())} is valid for ${settings.valid_days || 30} days from the date of issue.</div>
+<button onclick="window.print()" style="margin-top:16px;padding:10px 24px;background:#1a1a18;color:#fff;border:none;border-radius:6px;font-size:13px;cursor:pointer">Print / Save as PDF</button>
+</body></html>`
 }
 
 // ── Main page ─────────────────────────────────────────────────
@@ -318,7 +372,13 @@ export default function QuotingTool() {
   const [items, setItems] = useState<QuoteItem[]>([])
   const [settings, setSettings] = useState({
     abn: '', address: '', phone: '', email: '',
+    company_name: '',
     valid_days: 30,
+    doc_type: 'QUOTE',
+    locked_price: '' as string | number,
+    scope: '',
+    inclusions: 'All surfaces cleaned and prepared before painting.\nFurniture and floor coverings protected during works.\nSite left clean on completion.',
+    exclusions: 'Repairs to damaged or rotten substrates.\nColour changes after works commence.',
     notes: 'All surfaces to be cleaned and prepared before painting.\nAll furniture and floor coverings to be protected during works.',
     payment_terms: '50% deposit on commencement, balance on completion.',
   })
@@ -333,6 +393,7 @@ export default function QuotingTool() {
         phone: s.phone || bizSettings.phone || '',
         email: s.email || bizSettings.email || '',
         valid_days: bizSettings.quote_valid_days || s.valid_days,
+        company_name: bizSettings.company_name || s.company_name,
         notes: bizSettings.quote_footer || s.notes,
       }))
     }
@@ -403,7 +464,7 @@ export default function QuotingTool() {
         }),
         totalExGST: totals.exGST,
       })
-      setSettings(s => ({ ...s, notes: scope }))
+      setSettings(s => ({ ...s, scope }))
       setSettingsOpen(true)
     } catch (err: any) {
       setAiError(err?.message || 'AI failed. Check your API key.')
@@ -496,6 +557,21 @@ export default function QuotingTool() {
           </div>
           <div><label className="text-xs text-gray-500 block mb-1">Notes (printed on quote)</label>
             <textarea value={settings.notes} onChange={se('notes')} rows={2} className={`${INP} resize-none`} /></div>
+          <div><label className="text-xs text-gray-500 block mb-1">Document type</label>
+            <select value={settings.doc_type} onChange={se('doc_type')} className={INP}>
+              <option value="QUOTE">Quote</option>
+              <option value="ESTIMATE">Estimate</option>
+              <option value="VARIATION">Variation</option>
+            </select></div>
+          <div><label className="text-xs text-gray-500 block mb-1">Locked / agreed price (ex GST)</label>
+            <input type="number" placeholder="Leave blank to use calculated total" value={settings.locked_price}
+              onChange={se('locked_price')} className={INP} /></div>
+          <div className="sm:col-span-2"><label className="text-xs text-gray-500 block mb-1">Scope of works</label>
+            <textarea value={settings.scope} onChange={se('scope')} rows={3} className={`${INP} resize-none`} /></div>
+          <div className="sm:col-span-2"><label className="text-xs text-gray-500 block mb-1">Inclusions (one per line)</label>
+            <textarea value={settings.inclusions} onChange={se('inclusions')} rows={3} className={`${INP} resize-none`} /></div>
+          <div className="sm:col-span-2"><label className="text-xs text-gray-500 block mb-1">Exclusions (one per line)</label>
+            <textarea value={settings.exclusions} onChange={se('exclusions')} rows={2} className={`${INP} resize-none`} /></div>
           <div><label className="text-xs text-gray-500 block mb-1">Payment terms</label>
             <textarea value={settings.payment_terms} onChange={se('payment_terms')} rows={2} className={`${INP} resize-none`} /></div>
         </div>
