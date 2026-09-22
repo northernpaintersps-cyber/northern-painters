@@ -1,27 +1,30 @@
 import { useState } from 'react'
 import { NavLink, Outlet } from 'react-router-dom'
 import { useAuth } from '@/lib/auth'
+import { useRealtime } from '@/lib/useRealtime'
 import {
   LayoutDashboard, Briefcase, FileText, Users, Calendar,
   DollarSign, ClipboardList, Settings, LogOut, Phone,
-  BarChart2, Menu, X, Wrench
+  BarChart2, Menu, X, MapPin
 } from 'lucide-react'
 
 const nav = [
-  { to: '/dashboard',  label: 'Dashboard',  icon: LayoutDashboard },
-  { to: '/jobs',       label: 'Jobs',        icon: Briefcase },
-  { to: '/invoices',   label: 'Invoices',    icon: FileText },
-  { to: '/crew',       label: 'Crew',        icon: Users },
-  { to: '/calendar',   label: 'Calendar',    icon: Calendar },
-  { to: '/finance',    label: 'Finance',     icon: DollarSign },
-  { to: '/enquiries',  label: 'Enquiries',   icon: Phone },
-  { to: '/todos',      label: 'To‑do',       icon: ClipboardList },
-  { to: '/reports',    label: 'Reports',     icon: BarChart2 },
+  { to: '/dashboard',  label: 'Dashboard',   icon: LayoutDashboard },
+  { to: '/jobs',       label: 'Jobs',         icon: Briefcase },
+  { to: '/invoices',   label: 'Invoices',     icon: FileText },
+  { to: '/crew',       label: 'Crew',         icon: Users },
+  { to: '/calendar',   label: 'Calendar',     icon: Calendar },
+  { to: '/finance',    label: 'Finance',      icon: DollarSign },
+  { to: '/enquiries',  label: 'Enquiries',    icon: Phone },
+  { to: '/visits',     label: 'Site Visits',  icon: MapPin },
+  { to: '/todos',      label: 'To‑do',        icon: ClipboardList },
+  { to: '/reports',    label: 'Reports',      icon: BarChart2 },
 ]
 
 export default function Layout() {
   const { signOut } = useAuth()
   const [mobileOpen, setMobileOpen] = useState(false)
+  useRealtime()
 
   const sidebar = (
     <aside className="flex flex-col h-full bg-gray-900 border-r border-gray-800">

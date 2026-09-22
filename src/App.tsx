@@ -12,6 +12,7 @@ import Enquiries from '@/pages/Enquiries'
 import Todos from '@/pages/Todos'
 import Reports from '@/pages/Reports'
 import SettingsPage from '@/pages/SettingsPage'
+import SiteVisits from '@/pages/SiteVisits'
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const { session, loading } = useAuth()
@@ -38,6 +39,7 @@ export default function App() {
         <Route path="/enquiries/*" element={<Enquiries />} />
         <Route path="/todos" element={<Todos />} />
         <Route path="/reports" element={<Reports />} />
+        <Route path="/visits" element={<SiteVisits />} />
         <Route path="/settings" element={<SettingsPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/dashboard" replace />} />

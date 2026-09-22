@@ -10,9 +10,136 @@ import {
   getJobScheduledDates, today
 } from '@/lib/utils'
 import {
-  Plus, Search, ChevronRight, Loader2, ExternalLink,
-  Trash2, Copy, Calendar, DollarSign, Users
+  Plus, Search, Loader2,
+  Trash2, Calendar, Edit2
 } from 'lucide-react'
+
+const VAR_STATUSES = ['Pending','Approved','Rejected']
+
+function useVariations(jobId: string | null) {
+  const { user } = useAuth()
+  return useQuery<any[]>({
+    queryKey: ['np_variations', jobId, user?.id],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('np_variations').select('*')
+        .eq('user_id', user!.id).eq('job_id', jobId!).order('date', { ascending: false })
+      if (error) throw error
+      return data ?? []
+    },
+    enabled: !!user && !!jobId,
+  })
+}
+
+function useUpsertVariation() {
+  const qc = useQueryClient()
+  const { user } = useAuth()
+  return useMutation({
+    mutationFn: async (row: any) => {
+      const { error } = await supabase.from('np_variations').upsert({ ...row, user_id: user!.id, updated_at: new Date().toISOString() } as any)
+      if (error) throw error
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['np_variations'] }),
+  })
+}
+
+function useDeleteVariation() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await supabase.from('np_variations').delete().eq('id', id)
+      if (error) throw error
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['np_variations'] }),
+  })
+}
+
+function VariationsTab({ jobId }: { jobId: string | null }) {
+  const { data: vars = [], isLoading } = useVariations(jobId)
+  const upsert = useUpsertVariation()
+  const del = useDeleteVariation()
+  const [varForm, setVarForm] = useState<any | null>(null)
+  const [saving, setSaving] = useState(false)
+
+  const ef = (k: string) => (e: React.ChangeEvent<any>) =>
+    setVarForm((p: any) => ({ ...p, [k]: e.target.value }))
+
+  async function saveVar() {
+    if (!varForm || !jobId) return
+    setSaving(true)
+    try {
+      await upsert.mutateAsync({ ...varForm, job_id: jobId, id: varForm.id || genId('var') })
+      setVarForm(null)
+    } finally { setSaving(false) }
+  }
+
+  const totalApproved = vars.filter(v => v.var_status === 'Approved').reduce((s, v) => s + (v.amount_ex_gst ?? 0), 0)
+
+  if (!jobId) return <p className="text-sm text-gray-500 py-4">Save the job first to add variations.</p>
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div className="text-sm text-gray-400">
+          Approved variations: <span className="text-white font-semibold">{fmtCurrency(totalApproved)}</span>
+          <span className="text-gray-600 mx-2">·</span>
+          <span className="text-xs text-gray-500">{vars.length} total</span>
+        </div>
+        <button onClick={() => setVarForm({ date: today(), var_status: 'Pending', job_id: jobId })}
+          className="flex items-center gap-1 text-xs bg-yellow-400 hover:bg-yellow-300 text-gray-900 font-semibold px-2.5 py-1.5 rounded-lg">
+          <Plus size={12} /> Add
+        </button>
+      </div>
+
+      {isLoading
+        ? <div className="flex justify-center py-8"><Loader2 size={16} className="animate-spin text-yellow-400" /></div>
+        : (
+          <div className="space-y-2">
+            {vars.map(v => (
+              <div key={v.id} className="flex items-start gap-3 bg-gray-800 rounded-lg p-3 group">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 mb-0.5">
+                    <Badge label={v.var_status || 'Pending'} />
+                    <span className="text-xs text-gray-500">{fmtDate(v.date)}</span>
+                  </div>
+                  <p className="text-sm text-white">{v.var_desc || '—'}</p>
+                  {v.notes && <p className="text-xs text-gray-500 mt-0.5">{v.notes}</p>}
+                </div>
+                <div className="text-right shrink-0">
+                  <p className="text-sm font-semibold text-white">{fmtCurrency(v.amount_ex_gst)}</p>
+                  <p className="text-xs text-gray-500">ex GST</p>
+                </div>
+                <div className="flex flex-col gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <button onClick={() => setVarForm({ ...v })} className="text-gray-500 hover:text-yellow-400"><Edit2 size={12} /></button>
+                  <button onClick={() => { if (confirm('Delete variation?')) del.mutate(v.id) }} className="text-gray-500 hover:text-red-400"><Trash2 size={12} /></button>
+                </div>
+              </div>
+            ))}
+            {!vars.length && <p className="text-sm text-gray-500 text-center py-6">No variations yet</p>}
+          </div>
+        )
+      }
+
+      {varForm && (
+        <div className="bg-gray-800 rounded-xl border border-gray-700 p-4 space-y-3 mt-2">
+          <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">{varForm.id ? 'Edit variation' : 'New variation'}</p>
+          <div className="grid grid-cols-2 gap-3">
+            <Input label="Date" type="date" value={varForm.date || ''} onChange={ef('date')} />
+            <Select label="Status" value={varForm.var_status || 'Pending'} onChange={ef('var_status')} options={VAR_STATUSES} />
+          </div>
+          <Input label="Description" value={varForm.var_desc || ''} onChange={ef('var_desc')} />
+          <Input label="Amount ex GST ($)" type="number" value={varForm.amount_ex_gst ?? ''} onChange={ef('amount_ex_gst')} />
+          <TextArea label="Notes" value={varForm.notes || ''} onChange={ef('notes')} />
+          <div className="flex justify-end gap-2 pt-1">
+            <button onClick={() => setVarForm(null)} className="text-xs px-3 py-1.5 rounded-lg bg-gray-700 text-gray-400 hover:text-white">Cancel</button>
+            <button onClick={saveVar} disabled={saving} className="flex items-center gap-1 text-xs px-3 py-1.5 rounded-lg bg-yellow-400 hover:bg-yellow-300 text-gray-900 font-semibold disabled:opacity-50">
+              {saving && <Loader2 size={11} className="animate-spin" />} Save
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
 
 // ── Types ────────────────────────────────────────────────────
 type Job = Record<string, any>
@@ -103,7 +230,7 @@ export default function Jobs() {
   const [form, setForm] = useState<Job>(emptyForm())
   const [modalOpen, setModalOpen] = useState(false)
   const [saving, setSaving] = useState(false)
-  const [tab, setTab] = useState<'details'|'schedule'|'financials'>('details')
+  const [tab, setTab] = useState<'details'|'schedule'|'financials'|'variations'>('details')
 
   const filtered = useMemo(() => {
     return jobs.filter(j => {
@@ -254,7 +381,7 @@ export default function Jobs() {
 
         {/* Tabs */}
         <div className="flex gap-1 mb-5 bg-gray-800 p-1 rounded-lg">
-          {(['details','schedule','financials'] as const).map(t => (
+          {(['details','schedule','financials','variations'] as const).map(t => (
             <button key={t} onClick={() => setTab(t)}
               className={`flex-1 text-xs py-1.5 rounded-md font-medium transition-colors capitalize ${tab === t ? 'bg-gray-700 text-white' : 'text-gray-400 hover:text-white'}`}>
               {t}
@@ -328,6 +455,8 @@ export default function Jobs() {
             </div>
           </div>
         )}
+
+        {tab === 'variations' && <VariationsTab jobId={selectedId} />}
 
         <div className="flex items-center justify-between mt-6 pt-4 border-t border-gray-800">
           <div>
