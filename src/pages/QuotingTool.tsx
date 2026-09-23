@@ -52,6 +52,27 @@ type Equip = { id: string; name: string; cost: number }
 type ExtraMat = { id: string; name: string; cost: number }
 type Painter = { id: string; name: string; role: string; rate: number }
 const PAINTER_ROLES = ['Standard', 'Lead', 'Subcontractor', 'Custom']
+// V16 TIN_SIZES — the tin sizes the paint adjuster prices against
+const TIN_SIZES = [1, 2, 4, 10, 15]
+const TIN_LABEL: Record<number, string> = { 1: '1 L', 2: '2 L', 4: '4 L', 10: '10 L', 15: '15 L drum' }
+type PaintRow = { id: string; product: string; litres: number; qty: Record<number, number>; price: Record<number, number> }
+
+/** V16 suggestTins() — greedy fill from the largest tin down, then round up. */
+function suggestTins(litres: number): Record<number, number> {
+  const qty: Record<number, number> = {}
+  TIN_SIZES.forEach(t => { qty[t] = 0 })
+  if (litres <= 0) return qty
+  let rem = litres
+  ;[...TIN_SIZES].reverse().forEach(t => {
+    const n = Math.floor(rem / t)
+    if (n > 0) { qty[t] = n; rem = Math.round((rem - n * t) * 100) / 100 }
+  })
+  if (rem > 0.05) {
+    const smallest = TIN_SIZES.find(t => t >= rem)
+    if (smallest) qty[smallest] = (qty[smallest] || 0) + 1
+  }
+  return qty
+}
 // V16 phaseColors — one tint per workflow phase so the template reads as a sequence
 const WF_COLORS = ['#e8f5e9', '#e3f2fd', '#fff8e1', '#fce4ec', '#f3e5f5', '#e0f7fa',
   '#fff3e0', '#e8eaf6', '#f1f8e9', '#fbe9e7', '#e0f2f1', '#e8f5e9']
@@ -181,6 +202,24 @@ export default function QuotingTool() {
   const [equip, setEquip] = useState<Equip[]>([])
   const [logisticsNotes, setLogisticsNotes] = useState('')
 
+  // 7. Cost adjustments — V16 q-cost-adj / q-paint-adj / q-labour-adj.
+  // These appear once an estimate exists and are what the quote is priced from.
+  const [adjLab, setAdjLab] = useState(0)
+  const [adjMat, setAdjMat] = useState(0)
+  const [waste, setWaste] = useState(5)              // on materials
+  const [contingency, setContingency] = useState(10) // on labour
+  const [overheadPct, setOverheadPct] = useState(0)  // on subtotal
+  const [bufDays, setBufDays] = useState(0)
+  const [bufHrs, setBufHrs] = useState(0)
+  const [travelCost, setTravelCost] = useState(0)
+  const [paintRows, setPaintRows] = useState<PaintRow[]>([])
+  const [laHpd, setLaHpd] = useState(rates.hpd)
+  const [laPrep, setLaPrep] = useState(0)
+  const [laTop, setLaTop] = useState(0)
+  const [laBufD, setLaBufD] = useState(0)
+  const [laBufH, setLaBufH] = useState(0)
+  const [laRates, setLaRates] = useState<number[]>([])
+
   // Output
   const [estimate, setEstimate] = useState('')
   const [genBusy, setGenBusy] = useState(false)
@@ -283,6 +322,34 @@ export default function QuotingTool() {
 
   const subtotal = labourCost + materials.total + consTotal + equipTotal
   const gst = subtotal * 0.1
+
+  // ── V16 calcPaintTotal / calcLabourAdj / calcCostAdj ────────
+  const rowTins = (r: PaintRow) => TIN_SIZES.reduce(
+    (a, t) => ({ litres: a.litres + (r.qty[t] || 0) * t, cost: a.cost + (r.qty[t] || 0) * (r.price[t] || 0) }),
+    { litres: 0, cost: 0 })
+  const paintTotal = paintRows.reduce((s, r) => s + rowTins(r).cost, 0)
+
+  const laTotalDays = laPrep + laTop + laBufD
+  const laTotalHrs = laTotalDays * laHpd + laBufH
+  // V16 sums the painter rates outright here (not the average it uses per step)
+  const laRateSum = laRates.length ? laRates.reduce((s, r) => s + (r || 0), 0) : rateSum
+  const laCost = laTotalHrs * laRateSum
+
+  // V16 pushes each calculator's result into the cost-adjustment fields.
+  // Only when non-zero, so opening a calculator never wipes a figure that the
+  // process rows or the materials breakdown already supplied.
+  useEffect(() => { if (paintTotal > 0) setAdjMat(paintTotal) }, [paintTotal])
+  useEffect(() => { if (laTotalHrs > 0) setAdjLab(laCost) }, [laCost, laTotalHrs])
+
+  const labAdj = adjLab * (1 + contingency / 100)
+  const matAdj = (adjMat + consTotal) * (1 + waste / 100)
+  const adjSub = labAdj + matAdj
+  const adjTotalEx = adjSub * (1 + overheadPct / 100) + travelCost
+  const adjGst = adjTotalEx * 0.1
+  /** What the quote is actually priced at: the locked price, else the adjusted
+   *  total once an estimate exists, else the plain running subtotal. */
+  const quotePrice = typeof lockedPrice === 'number' && lockedPrice > 0 ? lockedPrice
+    : estimate ? adjTotalEx : subtotal
 
   function addDocFiles(e: React.ChangeEvent<HTMLInputElement>) {
     const picked = Array.from(e.target.files ?? [])
@@ -417,14 +484,36 @@ export default function QuotingTool() {
         siteNotes, logisticsNotes,
       })
       setEstimate(text)
+      // V16 seeds the adjustment panels from the estimate it just built.
+      setAdjLab(labourCost)
+      setAdjMat(materials.total)
+      setLaHpd(rates.hpd)
+      setLaRates(painters.map(p => p.rate))
+      setPaintRows(materials.rows.length
+        ? materials.rows.map(r => newPaintRow(r.product, r.litres))
+        : [newPaintRow('', 0)])
     } catch (e: any) { setGenErr(e?.message ?? 'Quote generation failed') } finally { setGenBusy(false) }
   }
+
+  /** V16 addPaintRow() — tins suggested from the litres, prices pro-rata from
+   *  the trade price in the paint library. */
+  function newPaintRow(product: string, litres: number): PaintRow {
+    const hit = (biz?.paint_products ?? []).find((p: any) =>
+      (p.product ?? '').toLowerCase() === product.toLowerCase())
+    const perLitre = hit ? (hit.yours || 0) / (parseFloat(hit.size) || 4) : 0
+    const price: Record<number, number> = {}
+    TIN_SIZES.forEach(t => { price[t] = perLitre ? Math.round(perLitre * t * 100) / 100 : 0 })
+    return { id: genId('pt'), product, litres, qty: suggestTins(litres), price }
+  }
+
+  const patchPaint = (id: string, patch: Partial<PaintRow>) =>
+    setPaintRows(rs => rs.map(r => r.id === id ? { ...r, ...patch } : r))
 
   // V16 saveQJob — the quote becomes the job, no job needed up front
   const saveJob = useMutation({
     mutationFn: async () => {
       const id = nextJobId(jobs.map(j => j.id))
-      const agreed = typeof lockedPrice === 'number' && lockedPrice > 0 ? lockedPrice : subtotal
+      const agreed = quotePrice
       const { error } = await (supabase.from('np_jobs') as any).upsert({
         id, user_id: user!.id,
         client, address, type: jobType, terms,
@@ -464,6 +553,8 @@ export default function QuotingTool() {
       client, address, jobType, terms, substrates, prep, ceilingHeight, access,
       method, coats, processes, prepLevels, consPrep, consTotal, consNotes, extraMats,
       painters, travelKm, equip, siteNotes, logisticsNotes, estimate, lockedPrice, rooms,
+      adjLab, adjMat, waste, contingency, overheadPct, bufDays, bufHrs, travelCost,
+      paintRows, laHpd, laPrep, laTop, laBufD, laBufH, laRates,
     }
   }
 
@@ -480,12 +571,18 @@ export default function QuotingTool() {
     setTravelKm(d.travelKm ?? ''); setEquip(d.equip ?? []); setSiteNotes(d.siteNotes ?? '')
     setLogisticsNotes(d.logisticsNotes ?? ''); setEstimate(d.estimate ?? '')
     setLockedPrice(d.lockedPrice ?? ''); setRooms(d.rooms ?? [])
+    setAdjLab(d.adjLab ?? 0); setAdjMat(d.adjMat ?? 0)
+    setWaste(d.waste ?? 5); setContingency(d.contingency ?? 10); setOverheadPct(d.overheadPct ?? 0)
+    setBufDays(d.bufDays ?? 0); setBufHrs(d.bufHrs ?? 0); setTravelCost(d.travelCost ?? 0)
+    setPaintRows(d.paintRows ?? [])
+    setLaHpd(d.laHpd ?? rates.hpd); setLaPrep(d.laPrep ?? 0); setLaTop(d.laTop ?? 0)
+    setLaBufD(d.laBufD ?? 0); setLaBufH(d.laBufH ?? 0); setLaRates(d.laRates ?? [])
   }
 
   // ── Lock & Save — the permanent record, not a draft ──────
   const lockAndSave = useMutation({
     mutationFn: async () => {
-      const price = typeof lockedPrice === 'number' && lockedPrice > 0 ? lockedPrice : subtotal
+      const price = quotePrice
       const row = {
         id: quoteId ?? genId('QT-'),
         user_id: user!.id,
@@ -535,14 +632,16 @@ export default function QuotingTool() {
     setPrepLevels(defaultPrepLevels(jobType))
     setConsTotal(0); setConsNotes(''); setExtraMats([]); setEquip([]); setRooms([])
     setSiteNotes(''); setLogisticsNotes(''); setEstimate(''); setLockedPrice(''); setDocs([]); setExtractRes(null)
+    setAdjLab(0); setAdjMat(0); setWaste(5); setContingency(10); setOverheadPct(0)
+    setBufDays(0); setBufHrs(0); setTravelCost(0); setPaintRows([])
+    setLaHpd(rates.hpd); setLaPrep(0); setLaTop(0); setLaBufD(0); setLaBufH(0); setLaRates([])
     setQuoteId(null); setQuoteNo('')
   }
 
   function exportQuote() {
     const w = window.open('', '_blank')
     if (!w) return
-    const locked = typeof lockedPrice === 'number' && lockedPrice > 0 ? lockedPrice : 0
-    const price = locked > 0 ? locked : subtotal
+    const price = quotePrice
     // V16 getCoatRows(): the system is the finish, the coats the top-coat count,
     // and exterior substrates are suffixed "(ext)". This app has no per-substrate
     // undercoat field, so no "N + M" coats string arises.
@@ -1040,6 +1139,197 @@ export default function QuotingTool() {
             )}
           </Card>
 
+          {estimate && (
+            <>
+              <Card>
+                <div className={CT}>Cost Adjustments</div>
+                <div className="text-xs text-[#666] mb-3">
+                  Base costs come from the estimate above. Adjustments apply live and set the quoted price.
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 mb-3">
+                  {([
+                    ['Labour ex GST ($)', adjLab, setAdjLab, ''],
+                    ['Materials ex GST ($)', adjMat, setAdjMat, ''],
+                    ['Waste %', waste, setWaste, 'on materials'],
+                    ['Contingency %', contingency, setContingency, 'on labour'],
+                    ['Overhead %', overheadPct, setOverheadPct, 'on subtotal'],
+                    ['Buffer days', bufDays, setBufDays, ''],
+                    ['Buffer hours', bufHrs, setBufHrs, ''],
+                    ['Travel expenses ($)', travelCost, setTravelCost, 'ex GST'],
+                  ] as [string, number, (n: number) => void, string][]).map(([label, val, set, hint]) => (
+                    <div key={label}>
+                      <label className="block text-[10px] uppercase font-bold text-[#666] mb-1">
+                        {label} {hint && <span className="font-normal normal-case">({hint})</span>}
+                      </label>
+                      <input type="number" min={0} value={val || ''} placeholder="0"
+                        onChange={e => set(parseFloat(e.target.value) || 0)} className={INP} />
+                    </div>
+                  ))}
+                </div>
+                <div className="bg-[#f5f4f0] rounded-lg px-3.5 py-3">
+                  <div className="grid grid-cols-3 gap-2.5">
+                    {([['Labour (adj)', labAdj], ['Materials+cons (adj)', matAdj],
+                       ['Overhead', adjSub * (overheadPct / 100)]] as [string, number][]).map(([l, v]) => (
+                      <div key={l}>
+                        <div className="text-[10px] text-[#666] font-semibold uppercase mb-0.5">{l}</div>
+                        <div className="text-[15px] font-bold">{fmtCurrency(v)}</div>
+                      </div>
+                    ))}
+                  </div>
+                  {consTotal > 0 && (
+                    <div className="flex justify-between items-center py-1 mt-2 border-t border-black/[0.06]">
+                      <span className="text-[10px] text-[#666] font-semibold uppercase">↳ Consumables (incl. in materials)</span>
+                      <span className="text-xs text-[#666]">{fmtCurrency(consTotal)}</span>
+                    </div>
+                  )}
+                  {travelCost > 0 && (
+                    <div className="flex justify-between items-center py-1 border-t border-black/[0.06]">
+                      <span className="text-[10px] text-[#666] font-semibold uppercase">Travel expenses</span>
+                      <span className="text-sm font-bold">{fmtCurrency(travelCost)}</span>
+                    </div>
+                  )}
+                  <div className="grid grid-cols-3 gap-2.5 mt-2">
+                    {([['Total ex GST', adjTotalEx, true], ['GST (10%)', adjGst, false],
+                       ['Total inc GST', adjTotalEx + adjGst, false]] as [string, number, boolean][]).map(([l, v, hl]) => (
+                      <div key={l}>
+                        <div className="text-[10px] text-[#666] font-semibold uppercase mb-0.5">{l}</div>
+                        <div className="text-base font-bold" style={hl ? { color: '#2563eb' } : undefined}>{fmtCurrency(v)}</div>
+                      </div>
+                    ))}
+                  </div>
+                  {(bufDays > 0 || bufHrs > 0) && (
+                    <div className="text-xs text-[#666] border-t border-black/[0.08] pt-1.5 mt-1.5">
+                      Buffer: {bufDays > 0 && `${bufDays} day${bufDays !== 1 ? 's' : ''} `}
+                      {bufHrs > 0 && `${bufHrs} hr${bufHrs !== 1 ? 's' : ''}`} added to schedule
+                    </div>
+                  )}
+                </div>
+              </Card>
+
+              <Card>
+                <div className="flex justify-between items-center mb-2.5">
+                  <div className={`${CT} m-0`}>Paint Quantity Adjuster</div>
+                  <button onClick={() => setPaintRows(r => [...r, newPaintRow('', 0)])} className={BTN}>
+                    <Plus size={12} /> Add product
+                  </button>
+                </div>
+                <div className="text-[11px] text-[#666] mb-2.5">
+                  Enter litres needed per product. Choose tin sizes, set prices — materials cost recalculates live.
+                </div>
+                {paintRows.map(r => {
+                  const t = rowTins(r)
+                  return (
+                    <div key={r.id} className="border border-black/10 rounded-lg px-3 py-2.5 mb-2">
+                      <div className="flex gap-2 items-center mb-2 flex-wrap">
+                        <input value={r.product} placeholder="Product name (e.g. Wash and Wear Low Sheen)"
+                          onChange={e => patchPaint(r.id, { product: e.target.value })}
+                          className="flex-1 min-w-[180px] px-2 py-1.5 text-xs bg-white border border-black/20 rounded-lg focus:outline-none" />
+                        <div className="flex items-center gap-1">
+                          <input type="number" min={0} step="0.5" value={r.litres || ''}
+                            onChange={e => {
+                              const l = parseFloat(e.target.value) || 0
+                              patchPaint(r.id, { litres: l, qty: suggestTins(l) })
+                            }}
+                            className="w-16 px-1.5 py-1.5 text-center text-xs bg-white border border-black/20 rounded-lg focus:outline-none" />
+                          <span className="text-[11px] text-[#666]">L needed</span>
+                        </div>
+                        <button onClick={() => patchPaint(r.id, { qty: suggestTins(r.litres) })} className={BTN} title="Auto-suggest tins">
+                          <Sparkles size={11} /> Suggest tins
+                        </button>
+                        <button onClick={() => setPaintRows(x => x.filter(y => y.id !== r.id))} className="text-[#c0392b]"><Trash2 size={12} /></button>
+                      </div>
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-xs border-collapse min-w-[420px]">
+                          <thead>
+                            <tr className="bg-[#f5f4f0]">
+                              {TIN_SIZES.map(s => <th key={s} className="px-2 py-1.5 text-center font-semibold">{TIN_LABEL[s]}</th>)}
+                              <th className="px-2 py-1.5 text-right font-semibold">Total L</th>
+                              <th className="px-2 py-1.5 text-right font-semibold">Cost ex GST</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            <tr>
+                              {TIN_SIZES.map(s => (
+                                <td key={s} className="px-1 py-1.5 text-center">
+                                  <div className="flex flex-col gap-1 items-center">
+                                    <input type="number" min={0} value={r.qty[s] || 0}
+                                      onChange={e => patchPaint(r.id, { qty: { ...r.qty, [s]: parseInt(e.target.value) || 0 } })}
+                                      className="w-11 px-1 py-1 text-center text-xs bg-white border border-black/20 rounded focus:outline-none" />
+                                    <input type="number" min={0} step="0.01" value={r.price[s] || ''} placeholder="$"
+                                      onChange={e => patchPaint(r.id, { price: { ...r.price, [s]: parseFloat(e.target.value) || 0 } })}
+                                      className="w-14 px-1 py-1 text-center text-[11px] text-[#666] bg-white border border-black/20 rounded focus:outline-none" />
+                                  </div>
+                                </td>
+                              ))}
+                              <td className="px-2 py-1.5 text-right font-semibold whitespace-nowrap">{t.litres.toFixed(1)} L</td>
+                              <td className="px-2 py-1.5 text-right font-bold text-[#2563eb]">{fmtCurrency(t.cost)}</td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )
+                })}
+                {paintRows.length > 0 && (
+                  <div className="flex justify-between items-center mt-2.5 px-3 py-2.5 bg-[#f5f4f0] rounded-lg">
+                    <span className="text-xs text-[#666]">Total materials ex GST</span>
+                    <span className="font-bold text-base text-[#2563eb]">{fmtCurrency(paintTotal)}</span>
+                  </div>
+                )}
+              </Card>
+
+              <Card>
+                <div className={CT}>Labour Calculator</div>
+                <div className="text-[11px] text-[#666] mb-2.5">
+                  Break down labour days by phase. Rates auto-fill from your painters above.
+                </div>
+                <div className="grid grid-cols-3 sm:grid-cols-5 gap-2.5 mb-2.5">
+                  {([['Hrs per day', laHpd, setLaHpd], ['Days — Prep', laPrep, setLaPrep],
+                     ['Days — Top coats', laTop, setLaTop], ['Buffer days', laBufD, setLaBufD],
+                     ['Buffer hours', laBufH, setLaBufH]] as [string, number, (n: number) => void][]).map(([l, v, set]) => (
+                    <div key={l}>
+                      <label className="block text-[10px] uppercase font-bold text-[#666] mb-1">{l}</label>
+                      <input type="number" min={0} step="0.5" value={v || ''} placeholder="0"
+                        onChange={e => set(parseFloat(e.target.value) || 0)} className={INP} />
+                    </div>
+                  ))}
+                </div>
+                <div className="mb-2.5">
+                  {painters.map((p, i) => (
+                    <div key={p.id} className="flex items-center gap-2 mb-1.5 text-xs">
+                      <span className="w-24 text-[#666] truncate">{p.name || `Painter ${i + 1}`}</span>
+                      <span className="text-[#666]">$</span>
+                      <input type="number" min={0} value={laRates[i] ?? p.rate}
+                        onChange={e => setLaRates(r => {
+                          const n = painters.map((q, j) => r[j] ?? q.rate)
+                          n[i] = parseFloat(e.target.value) || 0
+                          return n
+                        })}
+                        className="w-16 px-1.5 py-1 text-xs bg-white border border-black/20 rounded-lg focus:outline-none" />
+                      <span className="text-[10px] text-[#999]">/hr</span>
+                    </div>
+                  ))}
+                </div>
+                <div className="bg-[#f5f4f0] rounded-lg px-3 py-2.5">
+                  <div className="grid grid-cols-3 gap-2">
+                    {([['Total days', (laPrep + laTop).toFixed(1)],
+                       ['Buffer', laBufD > 0 || laBufH > 0 ? `${laBufD > 0 ? laBufD + 'd ' : ''}${laBufH > 0 ? laBufH + 'h' : ''}` : '—'],
+                       ['Total hours', laTotalHrs.toFixed(1)]] as [string, string][]).map(([l, v]) => (
+                      <div key={l}>
+                        <div className="text-[10px] text-[#666] font-semibold uppercase mb-0.5">{l}</div>
+                        <div className="text-[15px] font-bold">{v}</div>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="flex justify-between items-center pt-2 mt-2 border-t border-black/[0.08]">
+                    <span className="text-xs text-[#666]">Labour cost ex GST</span>
+                    <span className="text-lg font-bold text-[#2563eb]">{fmtCurrency(laCost)}</span>
+                  </div>
+                </div>
+              </Card>
+            </>
+          )}
+
           <Card>
             <div className={CT}>Running Totals</div>
             {([
@@ -1073,7 +1363,7 @@ export default function QuotingTool() {
               {typeof lockedPrice === 'number' && lockedPrice > 0 && (
                 <div className="text-[11px] text-[#666] mt-1.5">
                   {fmtCurrency(lockedPrice)} ex GST · {fmtCurrency(lockedPrice * 1.1)} inc GST
-                  {subtotal > 0 && <> · {lockedPrice >= subtotal ? '+' : ''}{(((lockedPrice - subtotal) / subtotal) * 100).toFixed(1)}% vs calculated</>}
+                  {adjTotalEx > 0 && <> · {lockedPrice >= adjTotalEx ? '+' : ''}{(((lockedPrice - adjTotalEx) / adjTotalEx) * 100).toFixed(1)}% vs calculated</>}
                 </div>
               )}
             </div>
