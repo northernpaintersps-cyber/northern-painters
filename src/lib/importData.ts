@@ -1,4 +1,5 @@
 import { supabase } from './supabase'
+import { toNum, normaliseLineItems } from './utils'
 
 // ── Sanitisers ────────────────────────────────────────────────
 function toDate(v: any): string | null {
@@ -16,11 +17,6 @@ function toDate(v: any): string | null {
   }
   return s
 }
-function toNum(v: any): number | null {
-  if (v == null || v === '' || v === 'null' || v === 'undefined') return null
-  const n = Number(v)
-  return isNaN(n) ? null : n
-}
 function toBool(v: any): boolean {
   if (v == null || v === '') return false
   return Boolean(v)
@@ -28,16 +24,6 @@ function toBool(v: any): boolean {
 function uid(prefix: string, ...parts: any[]): string {
   const base = parts.map(p => String(p ?? '').replace(/\s+/g, '').slice(0, 10)).join('-')
   return `${prefix}-${base || Date.now()}-${Math.random().toString(36).slice(2, 6)}`
-}
-
-/** V16 line items use mixed field names across versions. */
-function normaliseLineItems(raw: any): any[] {
-  if (!Array.isArray(raw)) return []
-  return raw.map((li: any) => ({
-    description: li.description ?? li.desc ?? '',
-    qty: toNum(li.qty) ?? 1,
-    total_ex_gst: toNum(li.totalExGST ?? li.total_ex_gst ?? li.total ?? li.unitPrice) ?? 0,
-  })).filter(li => li.description || li.total_ex_gst)
 }
 
 // ── Mappers ───────────────────────────────────────────────────
@@ -311,26 +297,6 @@ function mapAdsSpend(a: any, userId: string) {
 // rather than losing the rows — the caller still gets a warning.
 const MISSING_COL = /Could not find the '([^']+)' column/i
 
-async function upsertChunk(
-  table: string, chunk: any[], dropped: Set<string>,
-): Promise<{ ok: boolean; message?: string }> {
-  for (let attempt = 0; attempt < 6; attempt++) {
-    const payload = dropped.size
-      ? chunk.map(r => {
-          const c = { ...r }
-          dropped.forEach(k => delete c[k])
-          return c
-        })
-      : chunk
-    const { error } = await (supabase.from(table as any) as any).upsert(payload, { onConflict: 'id' })
-    if (!error) return { ok: true }
-    const missing = error.message?.match(MISSING_COL)?.[1]
-    if (!missing || dropped.has(missing)) return { ok: false, message: error.message }
-    dropped.add(missing)      // retry without it
-  }
-  return { ok: false, message: 'too many missing columns' }
-}
-
 async function batchUpsert(table: string, rows: any[], chunkSize = 50): Promise<{ count: number; errors: string[] }> {
   if (!rows.length) return { count: 0, errors: [] }
   // Deduplicate by id — keep last occurrence
@@ -342,11 +308,24 @@ async function batchUpsert(table: string, rows: any[], chunkSize = 50): Promise<
   const dropped = new Set<string>()
   let count = 0
 
+  // The mappers build these rows fresh and nothing else holds them, so a missing
+  // column is stripped in place, once, instead of copying every row per attempt.
+  const strip = (col: string) => {
+    dropped.add(col)
+    for (const r of deduped) delete r[col]
+  }
+
   for (let i = 0; i < deduped.length; i += chunkSize) {
     const chunk = deduped.slice(i, i + chunkSize)
-    const res = await upsertChunk(table, chunk, dropped)
-    if (res.ok) count += chunk.length
-    else errors.push(`${table}: ${res.message}`)
+    // Each pass either finishes the chunk or learns one more missing column.
+    // Columns are finite and never re-added, so this always terminates.
+    for (;;) {
+      const { error } = await (supabase.from(table as any) as any).upsert(chunk, { onConflict: 'id' })
+      if (!error) { count += chunk.length; break }
+      const missing = error.message?.match(MISSING_COL)?.[1]
+      if (!missing || dropped.has(missing)) { errors.push(`${table}: ${error.message}`); break }
+      strip(missing)      // retry without it
+    }
   }
 
   if (dropped.size) {

@@ -562,7 +562,7 @@ export default function QuotingTool() {
         </Card>
       )}
 
-      <div className="grid gap-3.5 items-start" style={{ gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr)' }}>
+      <div className="grid gap-3.5 items-start grid-cols-1 lg:grid-cols-2">
         {/* LEFT */}
         <div>
           <Card>

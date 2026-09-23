@@ -1,10 +1,10 @@
-import { useState, useMemo, useRef } from 'react'
+import { useState, useMemo, useRef, Fragment } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/lib/auth'
 import { Modal } from '@/components/ui/Modal'
 import { Input, Select, TextArea } from '@/components/ui/Field'
-import { fmtCurrency, fmtDate, genId, today } from '@/lib/utils'
+import { fmtCurrency, fmtDate, genId, today, toNum, lineItemsOf, type InvoiceLineItem } from '@/lib/utils'
 import { extractInvoice } from '@/lib/ai'
 import { useBusinessSettings } from '@/pages/SettingsPage'
 import {
@@ -13,17 +13,37 @@ import {
 } from 'lucide-react'
 
 const CATEGORIES = ['Paint', 'Primer/Undercoat', 'Filler/Putty', 'Tape/Masking', 'Brushes/Rollers', 'Sandpaper/Prep', 'Caulk/Sealant', 'Solvent/Cleaner', 'Hardware', 'Other']
-/** Line items live on the row; older imports may still nest them under extra. */
-const lineItemsOf = (m: any): any[] =>
-  Array.isArray(m?.line_items) ? m.line_items
-  : Array.isArray(m?.extra?.line_items) ? m.extra.line_items
-  : []
-
 const BILLING_TYPES = ['Fixed Quote', 'Hourly', 'Hourly/Estimate']
 
 // V16 .ii / .is — borderless inline table controls
 const II = 'border-none bg-transparent text-[12.5px] w-full focus:outline-none focus:bg-blue-50/60 rounded px-0.5'
 const IS = 'border-none bg-transparent text-xs cursor-pointer focus:outline-none max-w-[150px]'
+
+/** Scanned line items — shown both under an expanded row and in the scan preview. */
+function LineItemsTable({ items }: { items: InvoiceLineItem[] }) {
+  const th = 'px-1.5 py-1 border-b border-black/[0.12] text-[#666] font-medium'
+  const td = 'px-1.5 py-1 border-b border-black/[0.06]'
+  return (
+    <table className="w-full text-[11px] border-collapse">
+      <thead>
+        <tr>
+          <th className={`text-left ${th}`}>Description</th>
+          <th className={`w-12 text-center ${th}`}>Qty</th>
+          <th className={`w-24 text-right ${th}`}>Ex GST</th>
+        </tr>
+      </thead>
+      <tbody>
+        {items.map((li, i) => (
+          <tr key={i}>
+            <td className={td}>{li.description || '—'}</td>
+            <td className={`${td} text-center text-[#666]`}>{li.qty || 1}</td>
+            <td className={`${td} text-right whitespace-nowrap`}>{fmtCurrency(li.total_ex_gst)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  )
+}
 
 function useMaterials() {
   const { user } = useAuth()
@@ -91,6 +111,7 @@ function emptyForm() {
     total_inc_gst: '' as any,
     receipt_no: '',
     notes: '',
+    line_items: [] as InvoiceLineItem[],
   }
 }
 
@@ -110,8 +131,7 @@ export default function Materials() {
   const [scanning, setScanning] = useState(false)
   const [scanError, setScanError] = useState<string | null>(null)
   const [dupOf, setDupOf] = useState<any | null>(null)          // V16 duplicate invoice check
-  const [autoJob, setAutoJob] = useState<any | null>(null)       // job matched from the invoice address
-  const [scanItems, setScanItems] = useState<any[]>([])
+  const [matchedJobId, setMatchedJobId] = useState<string | null>(null) // job matched from the invoice address
   const [showItems, setShowItems] = useState(false)
   const [openRows, setOpenRows] = useState<Set<string>>(new Set())
   const [asc, setAsc] = useState(false)
@@ -123,7 +143,7 @@ export default function Materials() {
   async function handleHeaderScan(e: React.ChangeEvent<HTMLInputElement>) {
     if (!e.target.files?.[0]) return
     setForm(emptyForm())
-    setScanError(null)
+    resetScanState()
     setModalOpen(true)
     await handleScan(e)
   }
@@ -168,7 +188,7 @@ export default function Materials() {
   }), [filtered])
 
   function resetScanState() {
-    setScanError(null); setDupOf(null); setAutoJob(null); setScanItems([]); setShowItems(false)
+    setScanError(null); setDupOf(null); setMatchedJobId(null); setShowItems(false)
   }
 
   function openNew() {
@@ -178,7 +198,8 @@ export default function Materials() {
   }
 
   function openEdit(m: any) {
-    setForm({ ...emptyForm(), ...m })
+    // lineItemsOf keeps items from older rows that still nest them under extra.
+    setForm({ ...emptyForm(), ...m, line_items: lineItemsOf(m) })
     resetScanState()
     setModalOpen(true)
   }
@@ -212,8 +233,7 @@ export default function Materials() {
             return a.includes(addr.split(',')[0]) || addr.includes(a.split(',')[0])
           })
         : undefined
-      setAutoJob(matched ?? null)
-      setScanItems(result.items ?? [])
+      setMatchedJobId(matched?.id ?? null)
 
       setForm(f => ({
         ...f,
@@ -227,6 +247,7 @@ export default function Materials() {
         category:      result.category || f.category,
         notes:         result.notes ? (f.notes ? `${f.notes}\n${result.notes}` : result.notes) : f.notes,
         job_id:        matched?.id ?? f.job_id,
+        line_items:    result.items.length ? result.items : f.line_items,
       }))
     } catch (err: any) {
       setScanError(err?.message || 'Scan failed. Check your API key and try again.')
@@ -242,10 +263,9 @@ export default function Materials() {
       await upsert.mutateAsync({
         ...form,
         id: form.id || genId('mat'),
-        cost_ex_gst: parseFloat(form.cost_ex_gst) || 0,
-        gst: parseFloat(form.gst) || 0,
-        total_inc_gst: parseFloat(form.total_inc_gst) || 0,
-        ...(scanItems.length ? { line_items: scanItems } : {}),
+        cost_ex_gst: toNum(form.cost_ex_gst) ?? 0,
+        gst: toNum(form.gst) ?? 0,
+        total_inc_gst: toNum(form.total_inc_gst) ?? 0,
       })
       setModalOpen(false)
     } finally { setSaving(false) }
@@ -327,8 +347,11 @@ export default function Materials() {
                 </tr>
               </thead>
               <tbody>
-                {filtered.flatMap(m => [
-                  <tr key={m.id} className="border-b border-black/[0.06] hover:bg-[#fafaf8]">
+                {filtered.map(m => {
+                  const items = lineItemsOf(m)
+                  return (
+                  <Fragment key={m.id}>
+                  <tr className="border-b border-black/[0.06] hover:bg-[#fafaf8]">
                     <td className="px-2.5 py-[7px]">
                       <input type="date" defaultValue={m.date ?? ''} className={II} style={{ width: 118 }}
                         onBlur={e => { if (e.target.value !== (m.date ?? '')) quickEdit(m, { date: e.target.value || null }) }} />
@@ -350,13 +373,13 @@ export default function Materials() {
                     <td className="px-2.5 py-[7px]" style={{ maxWidth: 180 }}>
                       <input defaultValue={m.mat_desc ?? ''} className={II}
                         onBlur={e => { if (e.target.value !== (m.mat_desc ?? '')) quickEdit(m, { mat_desc: e.target.value }) }} />
-                      {lineItemsOf(m).length > 0 && (
+                      {items.length > 0 && (
                         <button onClick={() => setOpenRows(s => {
                           const n = new Set(s); n.has(m.id) ? n.delete(m.id) : n.add(m.id); return n
                         })}
                           className="flex items-center gap-1 text-[11px] text-[#2563eb] mt-1">
                           <ChevronDown size={10} className={openRows.has(m.id) ? 'rotate-180 transition-transform' : 'transition-transform'} />
-                          {lineItemsOf(m).length} line item{lineItemsOf(m).length !== 1 ? 's' : ''}
+                          {items.length} line item{items.length !== 1 ? 's' : ''}
                         </button>
                       )}
                     </td>
@@ -396,25 +419,17 @@ export default function Materials() {
                       <button onClick={() => { if (confirm('Delete this material?')) del.mutate(m.id) }} title="Delete"
                         className="ml-1 px-1.5 py-1 rounded-md bg-white border border-black/20 hover:bg-[#f5f4f0] align-middle text-[#c0392b]"><Trash2 size={12} /></button>
                     </td>
-                  </tr>,
-                  openRows.has(m.id) && lineItemsOf(m).length > 0 && (
-                    <tr key={`${m.id}-items`} className="border-b border-black/[0.06] bg-[#fafaf8]">
+                  </tr>
+                  {openRows.has(m.id) && items.length > 0 && (
+                    <tr className="border-b border-black/[0.06] bg-[#fafaf8]">
                       <td colSpan={11} className="px-2.5 py-2">
-                        <table className="w-full text-[11px]">
-                          <tbody>
-                            {lineItemsOf(m).map((li: any, i: number) => (
-                              <tr key={i}>
-                                <td className="py-0.5 text-[#666]">{li.description || '—'}</td>
-                                <td className="py-0.5 px-2 text-center text-[#666] whitespace-nowrap">{li.qty || 1} ×</td>
-                                <td className="py-0.5 text-right whitespace-nowrap w-24">{fmtCurrency(li.total_ex_gst)}</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
+                        <LineItemsTable items={items} />
                       </td>
                     </tr>
-                  ),
-                ])}
+                  )}
+                  </Fragment>
+                  )
+                })}
                 {filtered.length === 0 && (
                   <tr><td colSpan={11} className="text-center py-6 text-[#666]">No entries found.</td></tr>
                 )}
@@ -463,39 +478,22 @@ export default function Materials() {
           </div>
         )}
 
-        {autoJob && (
+        {/* Only while the form still holds the job the scan matched — once the
+            user picks a different job the banner would be describing the old one. */}
+        {matchedJobId && form.job_id === matchedJobId && (
           <div className="flex gap-2 items-center bg-[#f0fdf4] border border-[#86efac] rounded-lg px-3.5 py-2 mb-3.5 text-xs text-[#166534]">
             <MapPin size={14} className="shrink-0" />
-            Auto-matched to <strong>{autoJob.id}</strong> — {autoJob.client} from the address on the invoice.
+            Auto-matched to <strong>{matchedJobId}</strong> — {jobs.find(j => j.id === matchedJobId)?.client} from the address on the invoice.
           </div>
         )}
 
-        {scanItems.length > 0 && (
+        {form.line_items.length > 0 && (
           <div className="mb-3.5">
             <button onClick={() => setShowItems(v => !v)}
               className="w-full text-left text-xs font-semibold text-[#2563eb] px-3 py-2 bg-[#f5f4f0] rounded-lg">
-              {scanItems.length} line item{scanItems.length !== 1 ? 's' : ''} extracted — click to review
+              {form.line_items.length} line item{form.line_items.length !== 1 ? 's' : ''} — click to review
             </button>
-            {showItems && (
-              <table className="w-full text-xs mt-1.5 border-collapse">
-                <thead>
-                  <tr>
-                    <th className="text-left px-1.5 py-1 border-b border-black/[0.12] text-[#666] font-medium">Description</th>
-                    <th className="w-12 text-center px-1.5 py-1 border-b border-black/[0.12] text-[#666] font-medium">Qty</th>
-                    <th className="w-24 text-right px-1.5 py-1 border-b border-black/[0.12] text-[#666] font-medium">Ex GST</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {scanItems.map((it, i) => (
-                    <tr key={i}>
-                      <td className="px-1.5 py-1 border-b border-black/[0.06]">{it.description || '—'}</td>
-                      <td className="px-1.5 py-1 border-b border-black/[0.06] text-center text-[#666]">{it.qty || 1}</td>
-                      <td className="px-1.5 py-1 border-b border-black/[0.06] text-right">{fmtCurrency(it.total_ex_gst)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
+            {showItems && <div className="mt-1.5"><LineItemsTable items={form.line_items} /></div>}
           </div>
         )}
 

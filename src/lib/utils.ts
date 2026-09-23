@@ -17,6 +17,40 @@ export function fmtNumber(n: number | null | undefined, decimals = 1) {
   return n.toFixed(decimals)
 }
 
+// ── Numbers ─────────────────────────────────────────────────
+/** Coerce a form field or imported value to a number. Blank/garbage → null. */
+export function toNum(v: any): number | null {
+  if (v == null || v === '' || v === 'null' || v === 'undefined') return null
+  const n = Number(v)
+  return isNaN(n) ? null : n
+}
+
+// ── Invoice line items ──────────────────────────────────────
+export interface InvoiceLineItem {
+  description: string
+  qty: number
+  total_ex_gst: number
+}
+
+/** Line items reach us from the AI scanner and from V16 backups, which spell
+ *  the fields differently across versions. Accept every spelling in one place. */
+export function normaliseLineItems(raw: any): InvoiceLineItem[] {
+  if (!Array.isArray(raw)) return []
+  return raw.map((li: any) => ({
+    description: String(li.description ?? li.desc ?? ''),
+    qty: toNum(li.qty) ?? 1,
+    total_ex_gst:
+      toNum(li.total_ex_gst ?? li.totalExGST ?? li.total ?? li.unit_price ?? li.unitPrice) ?? 0,
+  })).filter(li => li.description || li.total_ex_gst)
+}
+
+/** Line items live on the row; older imports may still nest them under extra. */
+export function lineItemsOf(row: any): InvoiceLineItem[] {
+  return normaliseLineItems(
+    Array.isArray(row?.line_items) ? row.line_items : row?.extra?.line_items,
+  )
+}
+
 // ── GST ─────────────────────────────────────────────────────
 export function exToInc(ex: number) { return ex * 1.1 }
 export function exToGST(ex: number) { return ex * 0.1 }

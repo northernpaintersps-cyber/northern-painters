@@ -5,7 +5,7 @@ import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/lib/auth'
 import { Modal } from '@/components/ui/Modal'
 import { Input, TextArea } from '@/components/ui/Field'
-import { fmtCurrency, fmtDate, calcOwed, invStatus, genId, today } from '@/lib/utils'
+import { fmtCurrency, fmtDate, calcOwed, invStatus, genId, today, normaliseDate } from '@/lib/utils'
 import {
   Plus, Loader2, Trash2, Check, Banknote, Edit2, FileText, Receipt,
   ArrowUpDown, List, BarChart3, Info, MapPin,
@@ -182,8 +182,9 @@ export default function Invoices() {
       'Payment date (YYYY-MM-DD) — the date the money arrived, not today:',
       inv.date_paid || today())
     if (entered === null) return null                      // cancelled
-    const d = entered.trim()
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(d) || isNaN(Date.parse(d))) {
+    // normaliseDate accepts the dd/mm/yyyy the rest of the app takes, not just ISO.
+    const d = normaliseDate(entered.trim())
+    if (!d || isNaN(Date.parse(d))) {
       alert('Enter the date as YYYY-MM-DD, for example 2026-03-09.')
       return null
     }
@@ -193,15 +194,23 @@ export default function Invoices() {
     return d
   }
 
+  /** The unpaid→paid transition, in one place. Nothing here defaults date_paid
+   *  to today(): when a payment settles an invoice we ask when the money
+   *  arrived, and asking-only-once is a policy of this function, not its
+   *  callers. Returns null when the user cancels. */
+  function paidPatch(inv: Invoice, received: number, manualPaid = false) {
+    const fullyPaid = manualPaid || !!inv.manual_paid || received >= (inv.total_inc_gst || 0)
+    if (!fullyPaid) return { received, manual_paid: inv.manual_paid, date_paid: inv.date_paid }
+    const datePaid = inv.date_paid || askPaymentDate(inv)
+    if (!datePaid) return null
+    return { received, manual_paid: true, date_paid: datePaid }
+  }
+
   // V16 markInvPaid()
   async function markInvPaid(inv: Invoice) {
-    const paidOn = askPaymentDate(inv)
-    if (!paidOn) return
-    await upsert.mutateAsync({
-      ...inv, manual_paid: true,
-      received: inv.received || inv.total_inc_gst || 0,
-      date_paid: paidOn,
-    })
+    const patch = paidPatch(inv, inv.received || inv.total_inc_gst || 0, true)
+    if (!patch) return
+    await upsert.mutateAsync({ ...inv, ...patch })
   }
 
   // V16 recordCashPayment()
@@ -209,35 +218,20 @@ export default function Invoices() {
     const amt = prompt('Cash amount received ($):', String(inv.received || inv.total_inc_gst || ''))
     if (amt === null) return
     const v = parseFloat(amt) || 0
-    const total = inv.total_inc_gst || 0
-    const received = Math.min(total, (inv.received || 0) + v)
-    const fullyPaid = received >= total || inv.manual_paid
-    // Only ask for a date when this payment actually settles the invoice.
-    let datePaid = inv.date_paid
-    if (fullyPaid && !inv.date_paid) {
-      const paidOn = askPaymentDate(inv)
-      if (!paidOn) return
-      datePaid = paidOn
-    }
+    const received = Math.min(inv.total_inc_gst || 0, (inv.received || 0) + v)
+    const patch = paidPatch(inv, received)
+    if (!patch) return
     await upsert.mutateAsync({
-      ...inv,
+      ...inv, ...patch,
       extra: { ...(inv.extra ?? {}), cash_received: cashOf(inv) + v },
-      received,
-      manual_paid: fullyPaid ? true : inv.manual_paid,
-      date_paid: datePaid,
     })
   }
 
   // V16 inline received edit
   async function setReceived(inv: Invoice, raw: string) {
-    const received = parseFloat(raw) || 0
-    const total = inv.total_inc_gst || 0
-    const fullyPaid = received >= total
-    await upsert.mutateAsync({
-      ...inv, received,
-      manual_paid: fullyPaid ? true : inv.manual_paid,
-      date_paid: fullyPaid ? (inv.date_paid || today()) : inv.date_paid,
-    })
+    const patch = paidPatch(inv, parseFloat(raw) || 0)
+    if (!patch) return
+    await upsert.mutateAsync({ ...inv, ...patch })
   }
 
   async function deleteRow(inv: Invoice) {
@@ -420,7 +414,9 @@ export default function Invoices() {
           <Input label="Amount received ($)" type="number" value={form.received || ''} onChange={e => {
             const received = parseFloat(e.target.value) || 0
             const paid = received >= (form.total_inc_gst || 0)
-            setForm(prev => ({ ...prev, received, manual_paid: paid, date_paid: paid ? (prev.date_paid || today()) : prev.date_paid }))
+            // No today() default here either — the "Date paid" field below is
+            // the entry point, and this fires on every keystroke so it must not prompt.
+            setForm(prev => ({ ...prev, received, manual_paid: paid, date_paid: prev.date_paid }))
           }} min={0} />
           <Input label="Date paid" type="date" value={form.date_paid || ''} onChange={fld('date_paid')} />
           <Input label="Deposit ($)" type="number" value={form.deposit || ''} onChange={e => set('deposit', parseFloat(e.target.value) || 0)} />

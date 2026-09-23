@@ -1,11 +1,9 @@
 // AI utilities — calls Anthropic Claude API directly from the browser
 // using the key stored in business settings (np_settings key='business')
 
-export interface InvoiceLineItem {
-  description: string
-  qty: number
-  total_ex_gst: number
-}
+import { normaliseLineItems, type InvoiceLineItem } from './utils'
+
+export type { InvoiceLineItem }
 
 export interface InvoiceExtraction {
   supplier: string
@@ -559,13 +557,7 @@ If only ex-GST shown, calculate GST as ex-GST * 0.1 and total as ex-GST * 1.1.`,
       category:       String(parsed.category ?? 'Other'),
       notes:          String(parsed.notes ?? ''),
       job_address:    String(parsed.job_address ?? ''),
-      items: Array.isArray(parsed.items)
-        ? parsed.items.map((i: any) => ({
-            description: String(i.description ?? ''),
-            qty: Number(i.qty) || 1,
-            total_ex_gst: Number(i.total_ex_gst ?? i.unit_price) || 0,
-          }))
-        : [],
+      items: normaliseLineItems(parsed.items),
     }
   } catch {
     throw new Error('AI returned unexpected format. Check your API key and try again.')
