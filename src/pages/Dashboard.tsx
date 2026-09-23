@@ -328,7 +328,7 @@ export default function Dashboard() {
       </div>
 
       {/* Chart + Priority Tasks */}
-      <div className="grid gap-3.5 mb-3.5 items-start" style={{ gridTemplateColumns: '1.5fr 1fr' }}>
+      <div className="grid gap-3.5 mb-3.5 items-start grid-cols-1 lg:grid-cols-[1.5fr_1fr]">
         <Card className="px-4 py-3.5">
           <div className="flex justify-between items-center mb-3">
             <div className="text-[13px] font-bold text-gray-900">Monthly Revenue (ex GST)</div>

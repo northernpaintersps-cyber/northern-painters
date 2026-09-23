@@ -193,7 +193,7 @@ export default function AdsSpend() {
         ))}
       </div>
 
-      <div className="grid gap-3.5 mb-3.5" style={{ gridTemplateColumns: '1fr 1fr' }}>
+      <div className="grid gap-3.5 mb-3.5 grid-cols-1 md:grid-cols-2">
         {/* Funnel */}
         <Card className="p-4">
           <div className={CT}>Conversion funnel — Website / Google leads</div>
@@ -259,7 +259,7 @@ export default function AdsSpend() {
       <Card className="p-4 mb-3.5">
         <div className={CT}>Job type breakdown — Google leads</div>
         {m.typeRows.length ? (
-          <div className="grid gap-3.5" style={{ gridTemplateColumns: '1fr 1fr' }}>
+          <div className="grid gap-3.5 grid-cols-1 md:grid-cols-2">
             <div>
               {m.typeRows.map(([type, d]) => (
                 <div key={type} className="mb-2.5">

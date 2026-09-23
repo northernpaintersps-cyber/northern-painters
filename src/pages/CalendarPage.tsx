@@ -174,7 +174,7 @@ export default function CalendarPage() {
   }
 
   return (
-    <div className="h-full flex flex-col p-6">
+    <div className="min-h-full flex flex-col p-3 sm:p-6">
       {/* Header */}
       <div className="flex items-center justify-between mb-4 shrink-0">
         <h1 className="text-lg font-bold text-gray-900">Calendar</h1>
@@ -212,7 +212,7 @@ export default function CalendarPage() {
       {isLoading
         ? <div className="flex-1 flex items-center justify-center"><Loader2 size={20} className="animate-spin text-blue-600" /></div>
         : (
-          <div className="grid grid-cols-7 gap-1 flex-1 overflow-hidden">
+          <div className="grid grid-cols-7 gap-1 flex-1 min-h-0 auto-rows-[minmax(76px,1fr)]">
             {cells.map(({ date, isCurrentMonth }) => {
               const items = itemsByDate[date] || []
               const isToday = date === todayStr

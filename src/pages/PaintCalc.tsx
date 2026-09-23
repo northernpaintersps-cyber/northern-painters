@@ -334,7 +334,7 @@ export default function PaintCalc() {
         </div>
       </div>
 
-      <div className="grid gap-3.5 items-start" style={{ gridTemplateColumns: 'minmax(0,1fr) 340px' }}>
+      <div className="grid gap-3.5 items-start grid-cols-1 lg:grid-cols-[minmax(0,1fr)_340px]">
         {/* Substrates */}
         <div>
           {/* AI document extractor */}

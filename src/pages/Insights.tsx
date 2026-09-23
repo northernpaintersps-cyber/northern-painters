@@ -187,11 +187,11 @@ export default function Insights() {
         </button>
       </div>
 
-      <div className="grid gap-3.5 items-start" style={{ gridTemplateColumns: 'minmax(0,1fr) 320px' }}>
+      <div className="grid gap-3.5 items-start grid-cols-1 lg:grid-cols-[minmax(0,1fr)_320px]">
         {/* Chat column */}
         <div>
           <div ref={scrollRef}
-            className="min-h-[400px] max-h-[65vh] overflow-y-auto flex flex-col gap-3 px-0.5 py-1 mb-3">
+            className="min-h-[min(400px,50vh)] max-h-[65vh] overflow-y-auto flex flex-col gap-3 px-0.5 py-1 mb-3">
             {history.length === 0 && !thinking && (
               <div className="text-center px-5 py-10 text-[#666]">
                 <MessageCircle size={36} className="mx-auto mb-2.5 opacity-30" />
