@@ -541,11 +541,31 @@ export default function QuotingTool() {
   function exportQuote() {
     const w = window.open('', '_blank')
     if (!w) return
+    const locked = typeof lockedPrice === 'number' && lockedPrice > 0 ? lockedPrice : 0
+    // V16 builds the coating system table from the substrates actually quoted.
+    const coatRows = SUBSTRATES.filter(s => (totals[s.key] ?? 0) > 0).map(s => ({
+      sub: s.label,
+      sys: `Acrylic undercoat + ${s.defFinish.toLowerCase()}`,
+      coats: `1+${coats}`,
+      app: s.defMethod,
+      mat: s.paint,
+    }))
+    // V16 pre-populates the price lines from the cost drivers when none are typed.
+    const lines = [
+      labourCost && { desc: 'Labour — painting services (all areas)', total: labourCost },
+      materials.total && { desc: 'Materials — paint, primers and specified products', total: materials.total },
+      consTotal && { desc: 'Consumables — masking, preparation and ancillary items', total: consTotal },
+      extraMatTotal && { desc: 'Extra materials — as specified', total: extraMatTotal },
+      equipTotal && { desc: 'Access and equipment hire', total: equipTotal },
+    ].filter(Boolean) as { desc: string; total: number }[]
+
     w.document.write(buildQuoteHTML({
-      client, address, jobType, biz, estimate,
-      subtotal: typeof lockedPrice === 'number' && lockedPrice > 0 ? lockedPrice : subtotal,
-      lockedPrice: typeof lockedPrice === 'number' ? lockedPrice : 0,
-      substrateLines, days,
+      docType: terms === 'Estimate' ? 'Estimate' : 'Quotation',
+      to: client, proj: jobType, site: address,
+      qno: quoteNo || '', dur: days ? `${days.toFixed(1)} days` : '',
+      scope: estimate, incl: substrateLines, excl: '',
+      terms: biz?.invoice_terms ?? '', coatRows, lines,
+      lockedPrice: locked, origin: window.location.origin,
     }))
     w.document.close()
     setTimeout(() => w.print(), 500)
@@ -1100,69 +1120,119 @@ export default function QuotingTool() {
 }
 
 // ── Print quote HTML — V16 _buildQuoteHTML() ─────────────────
-function safePart(v: string) {
-  return (v || '').replace(/[\\/:*?"<>|]/g, '').replace(/\s+/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '')
-}
-
+/** V16 doExportQuote() — the full quotation document, section for section.
+ *  The body stays contenteditable as in V16 so the doc can be tweaked before
+ *  printing. Letterhead images come from /public, the convention Invoices.tsx
+ *  already uses, rather than V16's inline base64. */
 function buildQuoteHTML(o: {
-  client: string; address: string; jobType: string; biz: any
-  estimate: string; subtotal: number; lockedPrice: number; substrateLines: string; days: number
+  docType: string; to: string; proj: string; site: string
+  qno: string; dur: string; scope: string; incl: string; excl: string; terms: string
+  coatRows: { sub: string; sys: string; coats: string; app: string; mat: string }[]
+  lines: { desc: string; total: number }[]
+  lockedPrice: number; origin: string
 }): string {
   const esc = (v: any) => String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-  const gstBase = o.lockedPrice > 0 ? o.lockedPrice : o.subtotal
-  const gst2 = gstBase * 0.1
-  const company = o.biz?.company_name || 'Northern Painters'
-  const contactLine = [o.biz?.abn ? `ABN ${o.biz.abn}` : '', o.biz?.address || 'Byron Bay, NSW', o.biz?.email || '']
-    .filter(Boolean).join(' · ')
+  const money = (n: number) => '$' + n.toLocaleString('en-AU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
   const date = new Date().toLocaleDateString('en-AU', { day: 'numeric', month: 'long', year: 'numeric' })
-  const title = ['Quote', safePart(o.client), safePart(o.address)].filter(Boolean).join('_')
+  const fileTitle = [o.docType, o.qno, `${o.site} ${o.proj}`.trim()].filter(Boolean)
+    .join('_').replace(/[\\/:*?"<>|]/g, '').replace(/\s+/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '')
 
-  const lockedBanner = o.lockedPrice > 0 && o.lockedPrice !== o.subtotal
-    ? `<div class="locked-banner"><div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:#166534;margin-bottom:4px">🔒 Locked / Agreed Price</div><div style="font-size:20px;font-weight:800;color:#15803d">$${o.lockedPrice.toFixed(2)} <span style="font-size:12px;font-weight:600">ex GST</span> &nbsp;&nbsp; $${(o.lockedPrice * 1.1).toFixed(2)} <span style="font-size:12px;font-weight:600">inc GST</span></div></div>`
-    : ''
+  const exGST = o.lockedPrice > 0 ? o.lockedPrice : o.lines.reduce((s, l) => s + l.total, 0)
+  const bullets = (s: string) => s.split('\n').filter(x => x.trim()).map(x => `<li>${esc(x.trim())}</li>`).join('')
 
-  const scopeRows = o.substrateLines.split('\n').filter(Boolean).map(l => `<li>${esc(l)}</li>`).join('')
+  // V16 falls back to a worked example when no substrates are quoted yet.
+  const coatBody = o.coatRows.length
+    ? o.coatRows.map(r => `<tr><td>${esc(r.sub)}</td><td>${esc(r.sys)}</td><td style="text-align:center">${esc(r.coats)}</td><td>${esc(r.app)}</td><td>${esc(r.mat)}</td></tr>`).join('')
+    : `<tr><td>Ceilings</td><td>Acrylic undercoat + flat ceiling white</td><td style="text-align:center">1+2</td><td>Spray + Backroll</td><td>Dulux Ceiling White</td></tr>`
+      + `<tr><td>Walls</td><td>Acrylic undercoat + low sheen acrylic</td><td style="text-align:center">1+2</td><td>Cut &amp; Roll</td><td>Dulux Wash&amp;Wear</td></tr>`
+      + `<tr><td>Doors &amp; Trims</td><td>Undercoat + semi-gloss enamel</td><td style="text-align:center">1+2</td><td>Spray + Backroll</td><td>Dulux Aquaenamel</td></tr>`
 
-  return `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${esc(title)}</title><style>
+  return `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${esc(fileTitle)}</title><style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:Arial,Helvetica,sans-serif;font-size:11.5px;color:#1a1a18;padding:28px 32px;max-width:860px;margin:0 auto}
-h1{font-size:20px;font-weight:800;letter-spacing:-.5px}h2{font-size:13px;font-weight:700;margin:16px 0 6px}
-table{width:100%;border-collapse:collapse;margin-bottom:12px}
-th{background:#1a1a18;color:#fff;padding:6px 8px;text-align:left;font-size:11px}
-td{padding:5px 8px;border-bottom:1px solid #e5e5e0;font-size:11px}
-.total-row td{font-weight:700;background:#f5f4f0}.gst-row td{color:#555}
-.grand-row td{background:#1a1a18;color:#fff;font-weight:800;font-size:13px}
-.section{margin-bottom:18px}
-.label{font-size:10px;color:#888;text-transform:uppercase;letter-spacing:.5px;margin-bottom:2px}
-.two-col{display:grid;grid-template-columns:1fr 1fr;gap:20px}
-.locked-banner{background:#dcfce7;border:2px solid #16a34a;border-radius:8px;padding:12px 16px;margin-bottom:16px}
-.est{white-space:pre-wrap;line-height:1.6;font-size:11px}
-@media print{button{display:none!important}}
-</style></head><body>
-<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:24px;padding-bottom:16px;border-bottom:2px solid #1a1a18">
-  <div><h1>${esc(company)}</h1><div style="font-size:10px;color:#888;margin-top:3px">${esc(contactLine)}</div></div>
+.hdr{display:flex;justify-content:space-between;align-items:center;padding-bottom:14px;border-bottom:3px solid #1a1a18;margin-bottom:18px}
+.contact{text-align:right;font-size:10.5px;color:#555;line-height:1.8}
+h1{font-size:22px;font-weight:700;margin-bottom:14px}
+.meta{display:grid;grid-template-columns:110px 1fr;gap:2px 10px;font-size:11.5px;margin-bottom:16px;max-width:420px}
+.meta .lbl{font-weight:700}
+h2{font-size:12px;font-weight:700;margin:14px 0 6px;border-bottom:1.5px solid #1a1a18;padding-bottom:3px;text-transform:uppercase;letter-spacing:.4px}
+p{line-height:1.6;margin-bottom:8px}
+ul{margin-left:18px;margin-bottom:8px}li{margin-bottom:3px;line-height:1.5}
+table{width:100%;border-collapse:collapse;margin-bottom:10px;font-size:11px}
+.ct th{background:#f0efec;padding:6px 8px;text-align:left;border:1px solid #ccc;font-size:10.5px;font-weight:700}
+.ct td{border:1px solid #ccc;padding:5px 8px}
+.pt th{background:#1a1a18;color:#fff;padding:7px 10px;text-align:left;font-size:11px}
+.pt td{border:1px solid #ddd;padding:6px 10px}
+.pt tr:nth-child(even) td{background:#fafaf8}
+.tot-row td{font-weight:700;background:#f0efec;border:1px solid #ccc;padding:7px 10px}
+.footer{display:flex;justify-content:space-between;align-items:flex-end;margin-top:24px;padding-top:12px;border-top:1px solid #ccc}
+.gst-note{background:#fefce8;border:1px solid #fde68a;border-radius:6px;padding:8px 12px;font-size:11px;margin-top:6px;font-weight:600}
+@media print{button{display:none}body{padding:16px}}
+</style></head><body contenteditable="true">
+<div style="display:inline-block;background:${o.docType === 'Estimate' ? '#fefce8' : '#1a1a18'};color:${o.docType === 'Estimate' ? '#92400e' : '#fff'};font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;padding:4px 12px;border-radius:4px;margin-bottom:14px">${esc(o.docType)}</div>
+<div class="hdr">
+  <img src="${o.origin}/np-logo.png" alt="Northern Painters" style="width:300px;height:auto;display:block">
+  <div class="contact">www.northernpaintersps.com.au<br>Ph: 0449 783 461<br>Northern Rivers NSW<br><span style="font-size:9.5px;color:#aaa">Lic. No: 478971C &nbsp;|&nbsp; ABN 46 435 825 953</span></div>
+</div>
+<h1>${esc(o.docType)}</h1>
+<div class="meta">
+  <span class="lbl">To:</span><span>${esc(o.to)}</span>
+  <span class="lbl">Project:</span><span>${esc(o.proj)}</span>
+  <span class="lbl">Site Location:</span><span>${esc(o.site)}</span>
+  <span class="lbl">Date Issued:</span><span>${date}</span>
+  <span class="lbl">Quote No:</span><span>${esc(o.qno || '—')}</span>
+</div>
+<h2>Scope of Works</h2>
+<p>${esc(o.scope).replace(/\n/g, '<br>')}</p>
+${o.incl ? `<p><strong>Inclusions:</strong></p><ul>${bullets(o.incl)}</ul>` : ''}
+<h2>Coating System</h2>
+<table class="ct"><thead><tr><th>Substrate</th><th>System</th><th style="width:70px;text-align:center">Coats</th><th>Application Method</th><th>Materials</th></tr></thead>
+<tbody>${coatBody}</tbody></table>
+<h2>Surface Preparation</h2>
+<ul>
+  <li>Fill and sand all nail, screw and imperfection penetrations to a smooth finish</li>
+  <li>Seal paintable gaps at joints, trims and corners with flexible paintable sealant</li>
+  <li>Spot-prime all bare, cut or exposed substrates as required</li>
+  <li>Light sanding and dust-off between coats</li>
+  <li>Final tack-off and inspection prior to each coat</li>
+</ul>
+${o.excl ? `<h2>Exclusions</h2><ul>${bullets(o.excl)}</ul>` : ''}
+<h2>Work Plan and Duration</h2>
+<ul><li>Estimated duration: <strong>${esc(o.dur || 'To be confirmed')}</strong></li><li>Works subject to access availability and weather conditions</li><li>Scheduling to be confirmed prior to commencement</li></ul>
+<h2>Standards and Compliances</h2>
+<ul>
+  <li>AS/NZS 2311:2017 — Guide to the Painting of Buildings</li>
+  <li>Manufacturer technical data sheets and specified curing requirements</li>
+  <li>NSW Guide to Standards and Tolerances (2017) — workmanship expectations</li>
+</ul>
+<h2>Completion and Handover</h2>
+<ul>
+  <li>Removal of all masking, protection and associated materials</li>
+  <li>Full site clean-up on completion</li>
+  <li>Final walkthrough inspection with client prior to sign-off</li>
+</ul>
+<h2>Pricing</h2>
+<table class="pt"><thead><tr><th style="width:55px">Qty</th><th>Description</th><th style="width:110px">Price</th><th style="width:110px">Total</th></tr></thead>
+<tbody>
+${o.lines.map(l => `<tr><td>1</td><td>${esc(l.desc)}</td><td style="text-align:right">${money(l.total)}</td><td style="text-align:right;font-weight:600">${money(l.total)}</td></tr>`).join('')}
+</tbody>
+<tfoot>
+<tr><td colspan="2"></td><td style="text-align:right;padding:7px 10px;border:1px solid #ddd;font-weight:700">Total ex GST</td><td class="tot-row">${money(exGST)}</td></tr>
+</tfoot></table>
+<div class="gst-note">Note: 10% GST to be added on top of the quoted price. Total inc. GST: <strong>${money(exGST * 1.1)}</strong></div>
+<h2>Variations Clause</h2>
+<p>Any changes, additional works or variations requested by the client or builder will require a written variation order or revised quotation and may incur additional charges. Work will not proceed on variations until written approval is received.</p>
+<h2>Progress Claims and Payment Terms</h2>
+<p>${esc(o.terms).replace(/\n/g, '<br>')}</p>
+<div class="footer">
+  <div style="display:flex;gap:16px;align-items:center">
+    <img src="${o.origin}/ft-logo.png" alt="NSW Fair Trading Licensed Contractor" style="height:80px;width:auto">
+  </div>
   <div style="text-align:right">
-    <div style="font-size:20px;font-weight:800;text-transform:uppercase;letter-spacing:1px">QUOTE</div>
-    <div style="font-size:11px;color:#555">${date}</div>
+    <div style="font-size:13px;font-weight:700">NORTHERN PAINTERS</div>
+    <div style="font-size:9.5px;color:#666">PAINTING SOLUTIONS<br>Lic. No: 478971C | ABN 46 435 825 953</div>
   </div>
 </div>
-${lockedBanner}
-<div class="two-col section">
-  <div><div class="label">To</div><div style="font-weight:600">${esc(o.client)}</div></div>
-  <div><div class="label">Project</div><div style="font-weight:600">${esc(o.jobType)}</div><div class="label" style="margin-top:6px">Site</div><div>${esc(o.address)}</div></div>
-</div>
-${o.days ? `<div class="section"><div class="label">Estimated Duration</div><div>${o.days.toFixed(1)} days</div></div>` : ''}
-${scopeRows ? `<div class="section"><h2>Scope of Works</h2><ul style="padding-left:16px;line-height:1.8">${scopeRows}</ul></div>` : ''}
-${o.estimate ? `<div class="section"><h2>Estimate Detail</h2><div class="est">${esc(o.estimate)}</div></div>` : ''}
-<div class="section"><h2>Pricing</h2><table>
-<tbody><tr><td>Painting services — as per scope</td><td style="text-align:right">$${gstBase.toFixed(2)}</td></tr></tbody>
-<tfoot>
-<tr class="total-row"><td>Subtotal ex GST</td><td style="text-align:right">$${gstBase.toFixed(2)}</td></tr>
-<tr class="gst-row"><td>GST (10%)</td><td style="text-align:right">$${gst2.toFixed(2)}</td></tr>
-<tr class="grand-row"><td>TOTAL inc GST</td><td style="text-align:right">$${(gstBase + gst2).toFixed(2)}</td></tr>
-</tfoot></table></div>
-${o.biz?.invoice_terms ? `<div class="section"><h2>Payment Terms</h2><p style="line-height:1.6">${esc(o.biz.invoice_terms)}</p></div>` : ''}
-<div style="margin-top:32px;padding-top:16px;border-top:1px solid #e5e5e0;font-size:10px;color:#888;text-align:center">${esc(company)} · ${esc(contactLine)} · This quote is valid for ${o.biz?.quote_valid_days || 30} days from the date of issue.</div>
-<button onclick="window.print()" style="margin-top:16px;padding:10px 24px;background:#1a1a18;color:#fff;border:none;border-radius:6px;font-size:13px;cursor:pointer">Print / Save as PDF</button>
+<br><button onclick="window.print()" style="margin-top:12px;padding:10px 24px;background:#1a1a18;color:#fff;border:none;border-radius:6px;font-size:13px;cursor:pointer">Print / Save as PDF</button>
 </body></html>`
 }
