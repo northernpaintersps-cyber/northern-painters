@@ -11,7 +11,8 @@ import {
 } from '@/lib/ai'
 import {
   PROD_RATES, JOB_TYPES, QUOTE_TERMS,
-  PREP_OPTS, HEIGHT_OPTS, ACCESS_OPTS, METHOD_OPTS, CONS_PREP, WORKFLOWS,
+  PREP_OPTS, HEIGHT_OPTS, ACCESS_OPTS, METHOD_OPTS, CONS_PREP,
+  JOB_WORKFLOWS, PREP_LEVELS, workflowStepNames, defaultPrepLevels,
   BENCHMARKS,
 } from '@/lib/quoteData'
 import {
@@ -22,7 +23,7 @@ import SubstratePicker from '@/components/SubstratePicker'
 import {
   Plus, Trash2, Loader2, Sparkles, Save, ClipboardList, Settings2,
   FileText, Image as ImageIcon, Ruler, Hammer, RefreshCw,
-  FileDown, Lock, ArrowUp, ArrowDown, Check, CopyPlus,
+  FileDown, Lock, ArrowUp, ArrowDown, Check, CopyPlus, ListChecks, Download, Users,
 } from 'lucide-react'
 
 type Row = Record<string, any>
@@ -43,11 +44,17 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   )
 }
 
-type Process = { id: string; name: string; hours: number }
+/** np = painters on this step. V16 defaults it to the crew size but lets each
+ *  step differ, so a two-painter job can still have one painter on touch-ups. */
+type Process = { id: string; name: string; hours: number; np: number }
 type Room = { id: string; name: string; w: number; l: number; h: number }
 type Equip = { id: string; name: string; cost: number }
 type ExtraMat = { id: string; name: string; cost: number }
-type Painter = { id: string; name: string; rate: number }
+type Painter = { id: string; name: string; role: string; rate: number }
+const PAINTER_ROLES = ['Standard', 'Lead', 'Subcontractor', 'Custom']
+// V16 phaseColors — one tint per workflow phase so the template reads as a sequence
+const WF_COLORS = ['#e8f5e9', '#e3f2fd', '#fff8e1', '#fce4ec', '#f3e5f5', '#e0f7fa',
+  '#fff3e0', '#e8eaf6', '#f1f8e9', '#fbe9e7', '#e0f2f1', '#e8f5e9']
 
 // Markdown-ish rendering for the AI estimate, tables included
 function renderEstimate(src: string): string {
@@ -154,6 +161,9 @@ export default function QuotingTool() {
   const [procUnit, setProcUnit] = useState<'hrs' | 'days'>('hrs')
   const [processes, setProcesses] = useState<Process[]>([])
   const [suggesting, setSuggesting] = useState(false)
+  // Prep level per workflow item, keyed "<phaseId>-<itemId>" as V16 keys its selects.
+  const [prepLevels, setPrepLevels] = useState<Record<string, string>>(() => defaultPrepLevels(JOB_TYPES[0]))
+  const [wfOpen, setWfOpen] = useState(false)
 
   // 5. Consumables & extra materials
   const [consPrep, setConsPrep] = useState('medium')
@@ -164,8 +174,8 @@ export default function QuotingTool() {
 
   // 6. Painters & logistics
   const [painters, setPainters] = useState<Painter[]>([
-    { id: genId('p'), name: 'Painter 1', rate: rates.standard },
-    { id: genId('p'), name: 'Painter 2', rate: rates.standard },
+    { id: genId('p'), name: 'Painter 1', role: 'Standard', rate: rates.standard },
+    { id: genId('p'), name: 'Painter 2', role: 'Standard', rate: rates.standard },
   ])
   const [travelKm, setTravelKm] = useState('')
   const [equip, setEquip] = useState<Equip[]>([])
@@ -202,7 +212,10 @@ export default function QuotingTool() {
       const p = JSON.parse(raw)
       if (p.client) setClient(p.client)
       if (p.address) setAddress(p.address)
-      if (p.jobType && JOB_TYPES.includes(p.jobType)) setJobType(p.jobType)
+      if (p.jobType && JOB_TYPES.includes(p.jobType)) {
+        setJobType(p.jobType)
+        setPrepLevels(defaultPrepLevels(p.jobType))
+      }
       // The site visit's typed substrate lines come across whole
       if (p.substrateEntries) setSubstrates(normaliseSubstrates(p.substrateEntries))
       else if (p.substrates) setSubstrates(normaliseSubstrates(p.substrates))
@@ -233,8 +246,12 @@ export default function QuotingTool() {
     [totals])
 
   const rateSum = painters.reduce((s, p) => s + (p.rate || 0), 0)
+  // V16 calcProcessTotal: hours are elapsed crew time, so a step costs
+  // hrs × the average painter rate × however many painters are on that step.
+  const avgRate = painters.length ? rateSum / painters.length : rates.standard
+  const stepCost = (p: Process) => (p.hours || 0) * avgRate * Math.max(1, p.np || painters.length)
   const totalHours = processes.reduce((s, p) => s + (p.hours || 0), 0)
-  const labourCost = totalHours * rateSum
+  const labourCost = processes.reduce((s, p) => s + stepCost(p), 0)
   const days = rates.hpd > 0 ? totalHours / rates.hpd : 0
   const equipTotal = equip.reduce((s, e) => s + (e.cost || 0), 0)
   const extraMatTotal = extraMats.reduce((s, m) => s + (m.cost || 0), 0)
@@ -310,17 +327,29 @@ export default function QuotingTool() {
     applyQuantities({ ceilings: Math.round(ceil), walls: Math.round(wall) })
   }
 
+  const newStep = (name: string): Process => ({ id: genId('pr'), name, hours: 0, np: painters.length })
+
+  /** V16 loadWorkflowSteps() — replaces the step list from the template. */
   function loadWorkflow() {
-    const steps = WORKFLOWS[jobType] ?? WORKFLOWS['Interior repaint']
-    setProcesses(steps.map(name => ({ id: genId('pr'), name, hours: 0 })))
+    const names = workflowStepNames(jobType, prepLevels)
+    setProcesses((names.length ? names : workflowStepNames(JOB_TYPES[0], prepLevels)).map(newStep))
+  }
+
+  /** V16 onchange on the job type select: re-seed the prep levels and, for a new
+   *  build, switch to spray. V16 also forced a 1-coat Acrylic undercoat on each
+   *  substrate; this app has no per-substrate undercoat field, so that part of
+   *  the preset lives in the workflow's own "Spray undercoat" phase instead. */
+  function changeJobType(next: string) {
+    setJobType(next)
+    setPrepLevels(defaultPrepLevels(next))
+    if (/new build/i.test(next)) setMethod('spray')
   }
 
   async function aiSuggestHours() {
     if (!apiKey) { setGenErr('No API key set. Add your Anthropic API key in Settings.'); return }
     let list = processes
     if (!list.length) {
-      const steps = WORKFLOWS[jobType] ?? WORKFLOWS['Interior repaint']
-      list = steps.map(name => ({ id: genId('pr'), name, hours: 0 }))
+      list = workflowStepNames(jobType, prepLevels).map(newStep)
       setProcesses(list)
     }
     setSuggesting(true); setGenErr('')
@@ -371,7 +400,8 @@ export default function QuotingTool() {
         equipText: equip.map(e => e.name).filter(Boolean).join(', ') || 'None',
         equipTotal,
         substrates: substrateLines,
-        labourBreakdown: processes.map(p => `${p.name}: ${p.hours.toFixed(1)} hrs ($${Math.round(p.hours * rateSum)})`).join('\n'),
+        labourBreakdown: processes.map(p =>
+          `${p.name}: ${p.hours.toFixed(1)} hrs × ${Math.max(1, p.np || painters.length)} painter(s) ($${Math.round(stepCost(p))})`).join('\n'),
         totalHours, labourCost, days,
         consumables: consTotal,
         materialsBreakdown: materials.rows.length
@@ -432,7 +462,7 @@ export default function QuotingTool() {
   function captureState() {
     return {
       client, address, jobType, terms, substrates, prep, ceilingHeight, access,
-      method, coats, processes, consPrep, consTotal, consNotes, extraMats,
+      method, coats, processes, prepLevels, consPrep, consTotal, consNotes, extraMats,
       painters, travelKm, equip, siteNotes, logisticsNotes, estimate, lockedPrice, rooms,
     }
   }
@@ -443,6 +473,8 @@ export default function QuotingTool() {
     setSubstrates(normaliseSubstrates(d.substrates ?? d.qty))
     setPrep(d.prep ?? PREP_OPTS[1]); setCeilingHeight(d.ceilingHeight ?? HEIGHT_OPTS[0]); setAccess(d.access ?? ACCESS_OPTS[0])
     setMethod(d.method ?? 'roll'); setCoats(d.coats ?? '2'); setProcesses(d.processes ?? [])
+    // Drafts saved before per-item prep levels existed fall back to the type's defaults.
+    setPrepLevels(d.prepLevels ?? defaultPrepLevels(d.jobType ?? JOB_TYPES[0]))
     setConsPrep(d.consPrep ?? 'medium'); setConsTotal(d.consTotal ?? 0); setConsNotes(d.consNotes ?? '')
     setExtraMats(d.extraMats ?? []); if (d.painters?.length) setPainters(d.painters)
     setTravelKm(d.travelKm ?? ''); setEquip(d.equip ?? []); setSiteNotes(d.siteNotes ?? '')
@@ -500,6 +532,7 @@ export default function QuotingTool() {
   function clearAll() {
     if (!confirm('Start a new quote? Unsaved changes will be lost.')) return
     setClient(''); setAddress(''); setSubstrates(emptySubstrates()); setProcesses([])
+    setPrepLevels(defaultPrepLevels(jobType))
     setConsTotal(0); setConsNotes(''); setExtraMats([]); setEquip([]); setRooms([])
     setSiteNotes(''); setLogisticsNotes(''); setEstimate(''); setLockedPrice(''); setDocs([]); setExtractRes(null)
     setQuoteId(null); setQuoteNo('')
@@ -571,7 +604,7 @@ export default function QuotingTool() {
               <Field label="Client"><input value={client} onChange={e => setClient(e.target.value)} placeholder="e.g. Jenny and Garry" className={INP} /></Field>
               <Field label="Address"><input value={address} onChange={e => setAddress(e.target.value)} placeholder="e.g. Goonellabah, Northern Rivers" className={INP} /></Field>
               <Field label="Job type">
-                <select value={jobType} onChange={e => setJobType(e.target.value)} className={INP}>
+                <select value={jobType} onChange={e => changeJobType(e.target.value)} className={INP}>
                   {JOB_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
                 </select>
               </Field>
@@ -724,7 +757,7 @@ export default function QuotingTool() {
                 <button onClick={aiSuggestHours} disabled={suggesting} className={`${BTN} disabled:opacity-50`}>
                   {suggesting ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />} AI Suggest
                 </button>
-                <button onClick={() => setProcesses(p => [...p, { id: genId('pr'), name: '', hours: 0 }])} className={BTN}><Plus size={12} /></button>
+                <button onClick={() => setProcesses(p => [...p, newStep('')])} className={BTN}><Plus size={12} /></button>
               </div>
             </div>
             <div className="text-[11px] text-[#666] mb-2.5">
@@ -746,6 +779,56 @@ export default function QuotingTool() {
               </div>
             </div>
 
+            {/* V16 wf-panel — the template for this job type, prep levels first */}
+            {JOB_WORKFLOWS[jobType] && (
+              <div className="border border-black/10 rounded-lg overflow-hidden mb-2.5">
+                <button onClick={() => setWfOpen(o => !o)}
+                  className="w-full flex items-center justify-between px-3 py-2 bg-[#f5f4f0] text-left">
+                  <span className="text-xs font-bold text-[#2563eb] flex items-center gap-1.5">
+                    <ListChecks size={13} /> Workflow Template — {jobType}
+                  </span>
+                  <span className="text-[11px] text-[#666]">{wfOpen ? '▴ Hide' : '▾ Show'}</span>
+                </button>
+                {wfOpen && (
+                  <div className="px-3 py-2.5">
+                    {JOB_WORKFLOWS[jobType].phases.filter(p => p.isPrep).map(ph => (
+                      <div key={ph.id} className="mb-2">
+                        <div className="flex items-center gap-1.5 mb-1.5">
+                          <span className="text-[10px] font-bold uppercase text-[#b45309] bg-[#fef3c7] rounded px-1.5 py-0.5">1. {ph.name}</span>
+                          <span className="text-[10px] text-[#666]">— set level per item</span>
+                        </div>
+                        <div className="flex flex-col gap-1">
+                          {ph.items?.map(item => (
+                            <div key={item.id} className="flex items-center gap-2 px-1.5 py-1 bg-[#fffbeb] rounded">
+                              <select
+                                value={prepLevels[`${ph.id}-${item.id}`] ?? item.def}
+                                onChange={e => setPrepLevels(l => ({ ...l, [`${ph.id}-${item.id}`]: e.target.value }))}
+                                className="text-[11px] px-1.5 py-0.5 border border-[#fbbf24] rounded bg-white min-w-[80px] focus:outline-none">
+                                {PREP_LEVELS.map(l => <option key={l}>{l}</option>)}
+                              </select>
+                              <span className="text-xs">{item.label}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                    <div className="flex flex-col gap-0.5">
+                      {JOB_WORKFLOWS[jobType].phases.filter(p => !p.isPrep).map((ph, i) => (
+                        <div key={ph.id} className="flex items-center gap-1.5 px-2 py-1 rounded"
+                          style={{ background: WF_COLORS[i % WF_COLORS.length] }}>
+                          <span className="text-[11px] font-bold text-[#666] min-w-[18px]">{i + 2}.</span>
+                          <span className="text-xs">{ph.name}</span>
+                        </div>
+                      ))}
+                    </div>
+                    <button onClick={loadWorkflow} className={`${BTN_P} w-full justify-center mt-2.5`}>
+                      <Download size={13} /> Load Process Steps
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+
             {processes.length === 0 ? (
               <div className="text-[#666] text-xs py-1.5">
                 Use <b>Template</b> to load the steps for this job type, then <b>AI Suggest</b> to estimate times.
@@ -763,6 +846,12 @@ export default function QuotingTool() {
                     <input value={p.name} placeholder="Process step"
                       onChange={e => setProcesses(x => x.map(y => y.id === p.id ? { ...y, name: e.target.value } : y))}
                       className="flex-1 min-w-0 px-2 py-1.5 text-xs bg-white border border-black/20 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                    <div className="flex items-center gap-1 shrink-0" title="Painters on this step">
+                      <Users size={12} className="text-[#666]" />
+                      <input type="number" min={1} step={1} value={p.np || painters.length}
+                        onChange={e => setProcesses(x => x.map(y => y.id === p.id ? { ...y, np: Math.max(1, parseInt(e.target.value) || 1) } : y))}
+                        className="w-10 px-1 py-1.5 text-center text-xs bg-white border border-black/20 rounded-lg focus:outline-none" />
+                    </div>
                     <input type="number" step="0.5" min={0}
                       value={procUnit === 'days' ? (p.hours ? (p.hours / rates.hpd).toFixed(2).replace(/\.?0+$/, '') : '') : (p.hours || '')}
                       onChange={e => {
@@ -771,7 +860,8 @@ export default function QuotingTool() {
                       }}
                       className="w-16 px-1.5 py-1.5 text-right font-mono text-xs bg-white border border-black/20 rounded-lg focus:outline-none" />
                     <span className="text-[10px] text-[#999] w-7">{procUnit}</span>
-                    <span className="text-[11px] font-semibold text-[#2563eb] w-16 text-right">{fmtCurrency(p.hours * rateSum)}</span>
+                    <span className="text-[11px] font-semibold text-[#2563eb] w-16 text-right">
+                      {p.hours > 0 ? fmtCurrency(stepCost(p)) : '—'}</span>
                     <button onClick={() => setProcesses(x => x.filter(y => y.id !== p.id))} className="text-[#c0392b]"><Trash2 size={12} /></button>
                   </div>
                 ))}
@@ -846,16 +936,29 @@ export default function QuotingTool() {
                     onChange={e => {
                       const n = Math.max(1, Math.min(10, parseInt(e.target.value) || 1))
                       setPainters(p => n > p.length
-                        ? [...p, ...Array.from({ length: n - p.length }, (_, i) => ({ id: genId('p'), name: `Painter ${p.length + i + 1}`, rate: rates.standard }))]
+                        ? [...p, ...Array.from({ length: n - p.length }, (_, i) => ({ id: genId('p'), name: `Painter ${p.length + i + 1}`, role: 'Standard', rate: rates.standard }))]
                         : p.slice(0, n))
                     }}
                     className="w-16 px-2 py-1.5 text-[13px] bg-white border border-black/20 rounded-lg focus:outline-none" />
                   <span className="text-xs text-[#666]">painters · combined ${rateSum}/hr</span>
                 </div>
                 {painters.map(p => (
-                  <div key={p.id} className="flex items-center gap-2 mb-1.5">
+                  <div key={p.id} className="flex items-center gap-2 mb-1.5 flex-wrap">
                     <input value={p.name} onChange={e => setPainters(x => x.map(y => y.id === p.id ? { ...y, name: e.target.value } : y))}
-                      className="flex-1 min-w-0 px-2 py-1.5 text-xs bg-white border border-black/20 rounded-lg focus:outline-none" />
+                      className="flex-1 min-w-[90px] px-2 py-1.5 text-xs bg-white border border-black/20 rounded-lg focus:outline-none" />
+                    {/* V16: picking a role refills the rate from your settings; Custom leaves it alone */}
+                    <select value={p.role ?? 'Standard'}
+                      onChange={e => setPainters(x => x.map(y => {
+                        if (y.id !== p.id) return y
+                        const role = e.target.value
+                        const rate = role === 'Lead' ? rates.lead
+                          : role === 'Subcontractor' ? rates.sub
+                          : role === 'Standard' ? rates.standard : y.rate
+                        return { ...y, role, rate }
+                      }))}
+                      className="px-2 py-1.5 text-xs bg-white border border-black/20 rounded-lg focus:outline-none">
+                      {PAINTER_ROLES.map(r => <option key={r}>{r}</option>)}
+                    </select>
                     <span className="text-xs text-[#666]">$</span>
                     <input type="number" value={p.rate}
                       onChange={e => setPainters(x => x.map(y => y.id === p.id ? { ...y, rate: parseFloat(e.target.value) || 0 } : y))}

@@ -100,21 +100,261 @@ export const CONS_PREP = [
   { v: 'new_build', l: 'New build — prime and finish only' },
 ]
 
-// Workflow templates per job type — the phase list AI then estimates hours for
-export const WORKFLOWS: Record<string, string[]> = {
-  'Interior repaint': ['Setup and protection', 'Prep — sand, fill, gap', 'Spot prime', 'Ceilings — 2 coats', 'Walls — 2 coats', 'Trims, doors and architraves', 'Detail and touch-ups', 'Clean up and handover'],
-  'Exterior repaint': ['Setup and access', 'Pressure wash', 'Scrape, sand and prep', 'Prime bare areas', 'Fascia, gutters and eaves', 'Walls/cladding — 2 coats', 'Doors, windows and trims', 'Detail and clean up'],
-  'Full repaint interior and exterior': ['Setup and protection', 'Exterior wash and prep', 'Exterior prime and coat', 'Interior prep', 'Ceilings and walls', 'Trims and doors', 'Detail and touch-ups', 'Clean up and handover'],
-  'New build interior': ['Setup and protection', 'Fill and sand', 'Seal/prime all surfaces', 'Ceilings — 2 coats', 'Walls — 2 coats', 'Trims, doors and architraves', 'Final detail', 'Clean up and handover'],
-  'New build exterior': ['Setup and access', 'Prime all surfaces', 'Cladding — 2 coats', 'Fascia, eaves and gutters', 'Doors, windows and trims', 'Detail and clean up'],
-  'New build full': ['Setup and protection', 'Exterior prime and coat', 'Interior seal and prime', 'Ceilings and walls', 'Trims and doors', 'Final detail', 'Clean up and handover'],
-  'Deck and timber coating': ['Setup and protection', 'Clean and strip', 'Sand and prep', 'Apply oil/coating — coat 1', 'Apply oil/coating — coat 2', 'Detail and clean up'],
-  'Limewash and specialty': ['Setup and protection', 'Surface prep', 'Base/primer coat', 'Limewash application', 'Finish and detail', 'Clean up'],
-  'Kitchen cabinets': ['Setup and masking', 'Remove and label doors', 'Degrease, sand and prep', 'Prime', 'Spray finish coats', 'Reinstall and detail'],
-  'Roof coating': ['Setup and roof access', 'Pressure clean', 'Repairs and primer', 'Membrane — coat 1', 'Membrane — coat 2', 'Detail and clean up'],
-  'Concrete and driveway': ['Setup and protection', 'Degrease and pressure clean', 'Etch and prep', 'Primer coat', 'Top coats', 'Clean up'],
-  'Queenslander restoration': ['Setup and full access', 'Pressure wash', 'Strip and scrape', 'Timber repairs and filling', 'Prime all bare timber', 'Weatherboards — 2 coats', 'Trims, lattice and detail', 'Clean up and handover'],
-  'Multi-unit commercial': ['Setup, access and staging', 'Prep and make good', 'Prime', 'Ceilings and walls', 'Trims and doors', 'Common areas', 'Detail and defects', 'Clean up and handover'],
+// ── Workflow templates ───────────────────────────────────────
+// Verbatim from V16 JOB_WORKFLOWS. Every job type opens with a Prep phase whose
+// items each carry their own default level; the remaining phases are plain
+// steps. "Load process steps" emits one row per non-None prep item plus one per
+// later phase, which is what produces the quote's labour breakdown.
+export const PREP_LEVELS = ['None', 'Low', 'Medium', 'High', 'Full']
+
+export type PrepItem = { id: string; label: string; def: string }
+export type Phase = { id: string; name: string; isPrep?: boolean; items?: PrepItem[] }
+
+export const JOB_WORKFLOWS: Record<string, { phases: Phase[] }> = {
+  'Interior repaint': { phases: [
+    { id:'prep', name:'Prep', isPrep:true, items:[
+      { id:'site_setup', label:'Site set up',                     def:'None' },
+      { id:'cleaning',   label:'Cleaning (walls, surfaces)',      def:'None' },
+      { id:'furniture',  label:'Moving furniture',                def:'None' },
+      { id:'masking',    label:'Covering and masking',            def:'None' },
+      { id:'filling',    label:'Filling, sanding and dusting off',def:'None' },
+      { id:'gapping',    label:'Gapping',                         def:'None' },
+      { id:'spot_prime', label:'Spot priming and stain blocking', def:'None' },
+    ]},
+    { id:'ceilings', name:'Ceilings' },
+    { id:'trims',    name:'Trims and doors (semi-gloss)' },
+    { id:'walls',    name:'Walls' },
+    { id:'touchups', name:'Touch ups' },
+    { id:'cleanup',  name:'Clean up and pack up' },
+  ]},
+  'Exterior repaint': { phases: [
+    { id:'prep', name:'Prep', isPrep:true, items:[
+      { id:'site_setup',  label:'Site set up',                     def:'Low' },
+      { id:'press_wash',  label:'Pressure washing',                def:'Medium' },
+      { id:'mould_treat', label:'Mould treating',                  def:'Low' },
+      { id:'masking',     label:'Covering and masking',            def:'Medium' },
+      { id:'filling',     label:'Filling, sanding and dusting off',def:'Medium' },
+      { id:'gapping',     label:'Gapping',                         def:'Low' },
+      { id:'spot_prime',  label:'Spot priming and stain blocking', def:'Low' },
+      { id:'rust_treat',  label:'Rust treating',                   def:'None' },
+    ]},
+    { id:'roof',     name:'Roof' },
+    { id:'gutters',  name:'Gutters' },
+    { id:'fascia',   name:'Fascia boards' },
+    { id:'eaves',    name:'Eaves and soffits' },
+    { id:'gables',   name:'Gables' },
+    { id:'walls',    name:'Walls (weatherboards, cladding, rendered)' },
+    { id:'trims',    name:'Architraves, frames, windows, doors, handrails' },
+    { id:'floors',   name:'Floors, decks, hardwood oiling, concrete, driveway, steps' },
+    { id:'touchups', name:'Touch ups' },
+    { id:'cleanup',  name:'Clean up and pack up' },
+  ]},
+  'Full repaint interior and exterior': { phases: [
+    { id:'prep', name:'Prep', isPrep:true, items:[
+      { id:'site_setup',  label:'Site set up',                     def:'Low' },
+      { id:'cleaning',    label:'Cleaning (internal surfaces)',    def:'Medium' },
+      { id:'furniture',   label:'Moving furniture',                def:'Low' },
+      { id:'press_wash',  label:'Pressure washing (exterior)',     def:'Medium' },
+      { id:'mould_treat', label:'Mould treating',                  def:'Low' },
+      { id:'masking',     label:'Covering and masking',            def:'Medium' },
+      { id:'filling',     label:'Filling, sanding and dusting off',def:'Medium' },
+      { id:'gapping',     label:'Gapping',                         def:'Low' },
+      { id:'spot_prime',  label:'Spot priming and stain blocking', def:'Low' },
+      { id:'rust_treat',  label:'Rust treating',                   def:'None' },
+    ]},
+    { id:'ceilings', name:'Ceilings' },
+    { id:'trims_i',  name:'Trims and doors — interior (semi-gloss)' },
+    { id:'walls_i',  name:'Walls — interior' },
+    { id:'roof',     name:'Roof' },
+    { id:'gutters',  name:'Gutters' },
+    { id:'fascia',   name:'Fascia boards' },
+    { id:'eaves',    name:'Eaves and soffits' },
+    { id:'gables',   name:'Gables' },
+    { id:'walls_e',  name:'Walls — exterior' },
+    { id:'trims_e',  name:'Architraves, frames, windows, doors, handrails (exterior)' },
+    { id:'floors',   name:'Floors, decks, hardwood oiling, concrete, driveway, steps' },
+    { id:'touchups', name:'Touch ups' },
+    { id:'cleanup',  name:'Clean up and pack up' },
+  ]},
+  'New build interior': { phases: [
+    { id:'prep', name:'Prep', isPrep:true, items:[
+      { id:'site_setup', label:'Site set up',                     def:'None' },
+      { id:'masking',    label:'Covering and masking',            def:'None' },
+      { id:'filling',    label:'Filling, sanding and dusting off',def:'None' },
+    ]},
+    { id:'undercoat', name:'Spray undercoat to all substrates (1 coat Acrylic)' },
+    { id:'gapping',   name:'Gapping (after undercoat)' },
+    { id:'ceilings',  name:'Ceilings' },
+    { id:'trims',     name:'Trims and doors (semi-gloss)' },
+    { id:'walls',     name:'Walls' },
+    { id:'touchups',  name:'Touch ups' },
+    { id:'cleanup',   name:'Clean up and pack up' },
+  ]},
+  'New build exterior': { phases: [
+    { id:'prep', name:'Prep', isPrep:true, items:[
+      { id:'site_setup', label:'Site set up',                     def:'None' },
+      { id:'masking',    label:'Covering and masking',            def:'None' },
+      { id:'filling',    label:'Filling, sanding and dusting off',def:'None' },
+    ]},
+    { id:'undercoat', name:'Spray/brush undercoat to all substrates (1 coat Acrylic)' },
+    { id:'gapping',   name:'Gapping (after undercoat)' },
+    { id:'gutters',   name:'Gutters' },
+    { id:'fascia',    name:'Fascia boards' },
+    { id:'eaves',     name:'Eaves and soffits' },
+    { id:'gables',    name:'Gables' },
+    { id:'walls',     name:'Walls (weatherboards, cladding, rendered)' },
+    { id:'trims',     name:'Architraves, frames, windows, doors, handrails' },
+    { id:'floors',    name:'Floors, decks, concrete, driveway, steps' },
+    { id:'touchups',  name:'Touch ups' },
+    { id:'cleanup',   name:'Clean up and pack up' },
+  ]},
+  'New build full': { phases: [
+    { id:'prep', name:'Prep', isPrep:true, items:[
+      { id:'site_setup', label:'Site set up',                     def:'None' },
+      { id:'masking',    label:'Covering and masking',            def:'None' },
+      { id:'filling',    label:'Filling, sanding and dusting off',def:'None' },
+    ]},
+    { id:'undercoat', name:'Spray undercoat to all substrates (1 coat Acrylic)' },
+    { id:'gapping',   name:'Gapping (after undercoat)' },
+    { id:'ceilings',  name:'Ceilings' },
+    { id:'trims_i',   name:'Trims and doors — interior (semi-gloss)' },
+    { id:'walls_i',   name:'Walls — interior' },
+    { id:'gutters',   name:'Gutters' },
+    { id:'fascia',    name:'Fascia boards' },
+    { id:'eaves',     name:'Eaves and soffits' },
+    { id:'gables',    name:'Gables' },
+    { id:'walls_e',   name:'Walls — exterior' },
+    { id:'trims_e',   name:'Architraves, frames, windows, doors, handrails (exterior)' },
+    { id:'floors',    name:'Floors, decks, concrete, driveway, steps' },
+    { id:'touchups',  name:'Touch ups' },
+    { id:'cleanup',   name:'Clean up and pack up' },
+  ]},
+  'Deck and timber coating': { phases: [
+    { id:'prep', name:'Prep', isPrep:true, items:[
+      { id:'cleaning', label:'Cleaning',    def:'High' },
+      { id:'sanding',  label:'Sanding',     def:'High' },
+      { id:'dusting',  label:'Dusting off', def:'Medium' },
+    ]},
+    { id:'coating', name:'Coating (oil or paint)' },
+    { id:'cleanup', name:'Clean up and pack up' },
+  ]},
+  'Limewash and specialty': { phases: [
+    { id:'prep', name:'Prep', isPrep:true, items:[
+      { id:'site_setup', label:'Site set up',         def:'Low' },
+      { id:'furniture',  label:'Moving furniture',    def:'Low' },
+      { id:'masking',    label:'Masking and covering',def:'Medium' },
+      { id:'patching',   label:'Patching and sanding',def:'Medium' },
+      { id:'gapping',    label:'Gapping',             def:'Low' },
+    ]},
+    { id:'undercoat', name:'Acrylic undercoat' },
+    { id:'base',      name:'Special base coat' },
+    { id:'limewash',  name:'Limewash coating' },
+    { id:'cleanup',   name:'Clean up and pack up' },
+  ]},
+  'Kitchen cabinets': { phases: [
+    { id:'prep', name:'Prep', isPrep:true, items:[
+      { id:'site_setup', label:'Site set up',                 def:'Low' },
+      { id:'furniture',  label:'Moving furniture',            def:'Low' },
+      { id:'masking',    label:'Masking and covering',        def:'Medium' },
+      { id:'doors_hw',   label:'Removing doors and hardware', def:'Medium' },
+      { id:'degreasing', label:'Degreasing',                  def:'High' },
+    ]},
+    { id:'primer',   name:'Primer coat' },
+    { id:'topcoats', name:'Top coats' },
+    { id:'cleanup',  name:'Clean up and pack up' },
+  ]},
+  'Roof coating': { phases: [
+    { id:'prep', name:'Prep', isPrep:true, items:[
+      { id:'press_wash', label:'Pressure washing',     def:'High' },
+      { id:'rust_treat', label:'Rust treating',        def:'Medium' },
+      { id:'masking',    label:'Masking and covering', def:'Medium' },
+    ]},
+    { id:'priming',    name:'Priming' },
+    { id:'topcoating', name:'Top coating' },
+    { id:'touchups',   name:'Touch ups' },
+    { id:'cleanup',    name:'Clean up and pack up' },
+  ]},
+  'Concrete and driveway': { phases: [
+    { id:'prep', name:'Prep', isPrep:true, items:[
+      { id:'site_setup', label:'Site set up',                   def:'Low' },
+      { id:'moving',     label:'Moving stuff',                  def:'Low' },
+      { id:'press_wash', label:'Cleaning and pressure washing', def:'High' },
+      { id:'etch_prime', label:'Etch priming',                  def:'Medium' },
+      { id:'acid_wash',  label:'Acid washing',                  def:'None' },
+      { id:'masking',    label:'Masking and covering',          def:'Medium' },
+    ]},
+    { id:'sealer',     name:'Sealer coat' },
+    { id:'topcoating', name:'Top coating' },
+    { id:'touchups',   name:'Touch ups' },
+    { id:'cleanup',    name:'Clean up and pack up' },
+  ]},
+  'Queenslander restoration': { phases: [
+    { id:'prep', name:'Prep', isPrep:true, items:[
+      { id:'site_setup',    label:'Site set up',                  def:'Low' },
+      { id:'moving',        label:'Moving stuff',                 def:'Low' },
+      { id:'masking',       label:'Covering and masking',         def:'Medium' },
+      { id:'stripping',     label:'Paint stripping and scraping', def:'Full' },
+      { id:'oil_prime',     label:'Oil base priming',             def:'Full' },
+      { id:'filling',       label:'Filling and sanding',          def:'High' },
+      { id:'grain_fill',    label:'Grain filling',                def:'Medium' },
+      { id:'acrylic_prime', label:'Acrylic priming',              def:'Full' },
+      { id:'gapping',       label:'Gapping',                      def:'Medium' },
+    ]},
+    { id:'roof',     name:'Roof' },
+    { id:'gutters',  name:'Gutters' },
+    { id:'fascia',   name:'Fascia boards' },
+    { id:'eaves',    name:'Eaves and soffits' },
+    { id:'gables',   name:'Gables' },
+    { id:'walls',    name:'Walls (weatherboards, cladding)' },
+    { id:'trims',    name:'Architraves, frames, windows, doors, handrails' },
+    { id:'floors',   name:'Floors, decks, steps' },
+    { id:'touchups', name:'Touch ups' },
+    { id:'cleanup',  name:'Clean up and pack up' },
+  ]},
+  'Multi-unit commercial': { phases: [
+    { id:'prep', name:'Prep', isPrep:true, items:[
+      { id:'site_setup', label:'Site set up',                     def:'Low' },
+      { id:'masking',    label:'Covering and masking',            def:'Medium' },
+      { id:'filling',    label:'Filling, sanding and dusting off',def:'Medium' },
+      { id:'gapping',    label:'Gapping',                         def:'Low' },
+      { id:'spot_prime', label:'Spot priming and stain blocking', def:'Low' },
+    ]},
+    { id:'ceilings', name:'Ceilings' },
+    { id:'trims',    name:'Trims and doors (semi-gloss)' },
+    { id:'walls',    name:'Walls' },
+    { id:'touchups', name:'Touch ups' },
+    { id:'cleanup',  name:'Clean up and pack up' },
+  ]},
+}
+
+/** V16 loadWorkflowSteps() — prep items at their chosen level, then each phase. */
+export function workflowStepNames(jobType: string, levels: Record<string, string>): string[] {
+  const wf = JOB_WORKFLOWS[jobType]
+  if (!wf) return []
+  const out: string[] = []
+  wf.phases.forEach(ph => {
+    if (ph.isPrep) {
+      ph.items?.forEach(item => {
+        const level = levels[`${ph.id}-${item.id}`] ?? item.def
+        if (level === 'None') return
+        out.push(`Prep — ${item.label} [${level}]`)
+      })
+    } else {
+      out.push(ph.name)
+    }
+  })
+  return out
+}
+
+/** The default prep level for every item of a job type's prep phase. */
+export function defaultPrepLevels(jobType: string): Record<string, string> {
+  const wf = JOB_WORKFLOWS[jobType]
+  const out: Record<string, string> = {}
+  wf?.phases.forEach(ph => {
+    if (!ph.isPrep) return
+    ph.items?.forEach(item => { out[`${ph.id}-${item.id}`] = item.def })
+  })
+  return out
 }
 
 export const BENCHMARKS: [string, string][] = [
