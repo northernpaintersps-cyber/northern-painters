@@ -174,12 +174,33 @@ export default function Invoices() {
     setModalOpen(false)
   }
 
+  /** Ask for the date the money actually arrived.
+   *  This used to default silently to today(), which stamped the current date on
+   *  invoices paid months earlier and pushed their revenue into the wrong year. */
+  function askPaymentDate(inv: Invoice): string | null {
+    const entered = prompt(
+      'Payment date (YYYY-MM-DD) — the date the money arrived, not today:',
+      inv.date_paid || today())
+    if (entered === null) return null                      // cancelled
+    const d = entered.trim()
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(d) || isNaN(Date.parse(d))) {
+      alert('Enter the date as YYYY-MM-DD, for example 2026-03-09.')
+      return null
+    }
+    if (d > today()) { alert('That date is in the future.'); return null }
+    if (inv.date && d < inv.date &&
+        !confirm(`That is before the invoice date (${inv.date}). Use it anyway?`)) return null
+    return d
+  }
+
   // V16 markInvPaid()
   async function markInvPaid(inv: Invoice) {
+    const paidOn = askPaymentDate(inv)
+    if (!paidOn) return
     await upsert.mutateAsync({
       ...inv, manual_paid: true,
       received: inv.received || inv.total_inc_gst || 0,
-      date_paid: inv.date_paid || today(),
+      date_paid: paidOn,
     })
   }
 
@@ -191,12 +212,19 @@ export default function Invoices() {
     const total = inv.total_inc_gst || 0
     const received = Math.min(total, (inv.received || 0) + v)
     const fullyPaid = received >= total || inv.manual_paid
+    // Only ask for a date when this payment actually settles the invoice.
+    let datePaid = inv.date_paid
+    if (fullyPaid && !inv.date_paid) {
+      const paidOn = askPaymentDate(inv)
+      if (!paidOn) return
+      datePaid = paidOn
+    }
     await upsert.mutateAsync({
       ...inv,
       extra: { ...(inv.extra ?? {}), cash_received: cashOf(inv) + v },
       received,
       manual_paid: fullyPaid ? true : inv.manual_paid,
-      date_paid: fullyPaid ? (inv.date_paid || today()) : inv.date_paid,
+      date_paid: datePaid,
     })
   }
 
