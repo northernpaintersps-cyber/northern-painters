@@ -542,30 +542,28 @@ export default function QuotingTool() {
     const w = window.open('', '_blank')
     if (!w) return
     const locked = typeof lockedPrice === 'number' && lockedPrice > 0 ? lockedPrice : 0
-    // V16 builds the coating system table from the substrates actually quoted.
+    const price = locked > 0 ? locked : subtotal
+    // V16 getCoatRows(): the system is the finish, the coats the top-coat count,
+    // and exterior substrates are suffixed "(ext)". This app has no per-substrate
+    // undercoat field, so no "N + M" coats string arises.
     const coatRows = SUBSTRATES.filter(s => (totals[s.key] ?? 0) > 0).map(s => ({
-      sub: s.label,
-      sys: `Acrylic undercoat + ${s.defFinish.toLowerCase()}`,
-      coats: `1+${coats}`,
+      sub: s.group === 'Exterior' ? `${s.label} (ext)` : s.label,
+      sys: s.defFinish,
+      coats: coats,
       app: s.defMethod,
       mat: s.paint,
     }))
-    // V16 pre-populates the price lines from the cost drivers when none are typed.
-    const lines = [
-      labourCost && { desc: 'Labour — painting services (all areas)', total: labourCost },
-      materials.total && { desc: 'Materials — paint, primers and specified products', total: materials.total },
-      consTotal && { desc: 'Consumables — masking, preparation and ancillary items', total: consTotal },
-      extraMatTotal && { desc: 'Extra materials — as specified', total: extraMatTotal },
-      equipTotal && { desc: 'Access and equipment hire', total: equipTotal },
-    ].filter(Boolean) as { desc: string; total: number }[]
 
     w.document.write(buildQuoteHTML({
       docType: terms === 'Estimate' ? 'Estimate' : 'Quotation',
       to: client, proj: jobType, site: address,
-      qno: quoteNo || '', dur: days ? `${days.toFixed(1)} days` : '',
-      scope: estimate, incl: substrateLines, excl: '',
-      terms: biz?.invoice_terms ?? '', coatRows, lines,
-      lockedPrice: locked, origin: window.location.origin,
+      qno: quoteNo || defaultQuoteNo(),
+      dur: days ? `${days.toFixed(1)} days` : '',
+      // The client-facing document carries the standard wording, not the internal
+      // AI estimate or the measured takeoff -- exactly as V16's export defaults do.
+      coatRows,
+      lines: [{ desc: `${jobType} (labour & materials)`, total: price }],
+      origin: window.location.origin,
     }))
     w.document.close()
     setTimeout(() => w.print(), 500)
@@ -1124,12 +1122,38 @@ export default function QuotingTool() {
  *  The body stays contenteditable as in V16 so the doc can be tweaked before
  *  printing. Letterhead images come from /public, the convention Invoices.tsx
  *  already uses, rather than V16's inline base64. */
+/** V16 nextQuoteNo() — DDMMYY. */
+function defaultQuoteNo(): string {
+  const d = new Date()
+  return String(d.getDate()).padStart(2, '0') + String(d.getMonth() + 1).padStart(2, '0')
+    + String(d.getFullYear()).slice(-2)
+}
+
+// The standard wording V16 pre-fills its export dialog with. These are what the
+// client actually reads, so they stay fixed rather than carrying internal detail.
+const QUOTE_INCLUSIONS = [
+  'All surface preparation as described',
+  'Supply and application of all specified paint systems',
+  'Masking and protection of adjacent areas',
+  'Full site clean-up and removal of waste',
+]
+const QUOTE_EXCLUSIONS = [
+  'Supply or installation of scaffolding',
+  'Repairs to defective substrates beyond standard preparation',
+  'Repainting required due to damage by other trades after completion',
+  'Changes to colours or finishes beyond the approved schedule',
+]
+const QUOTE_TERMS_TEXT =
+  'Progress claims will be required for the duration of works. The schedule and '
+  + 'milestone breakdown are to be agreed with the client prior to commencement. '
+  + 'A deposit may be required to secure the booking and purchase materials.'
+
 function buildQuoteHTML(o: {
   docType: string; to: string; proj: string; site: string
-  qno: string; dur: string; scope: string; incl: string; excl: string; terms: string
+  qno: string; dur: string
   coatRows: { sub: string; sys: string; coats: string; app: string; mat: string }[]
   lines: { desc: string; total: number }[]
-  lockedPrice: number; origin: string
+  origin: string
 }): string {
   const esc = (v: any) => String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
   const money = (n: number) => '$' + n.toLocaleString('en-AU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -1137,8 +1161,12 @@ function buildQuoteHTML(o: {
   const fileTitle = [o.docType, o.qno, `${o.site} ${o.proj}`.trim()].filter(Boolean)
     .join('_').replace(/[\\/:*?"<>|]/g, '').replace(/\s+/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '')
 
-  const exGST = o.lockedPrice > 0 ? o.lockedPrice : o.lines.reduce((s, l) => s + l.total, 0)
-  const bullets = (s: string) => s.split('\n').filter(x => x.trim()).map(x => `<li>${esc(x.trim())}</li>`).join('')
+  const exGST = o.lines.reduce((s, l) => s + l.total, 0)
+  const bullets = (items: string[]) => items.map(x => `<li>${esc(x)}</li>`).join('')
+  const scope = `This quotation covers the supply and application of all specified coating `
+    + `systems to ${o.site}. Works include surface preparation, priming where required, and `
+    + `application of finish coats to all nominated substrates, in accordance with the `
+    + `finishes schedule and AS/NZS 2311:2017.`
 
   // V16 falls back to a worked example when no substrates are quoted yet.
   const coatBody = o.coatRows.length
@@ -1183,8 +1211,8 @@ table{width:100%;border-collapse:collapse;margin-bottom:10px;font-size:11px}
   <span class="lbl">Quote No:</span><span>${esc(o.qno || '—')}</span>
 </div>
 <h2>Scope of Works</h2>
-<p>${esc(o.scope).replace(/\n/g, '<br>')}</p>
-${o.incl ? `<p><strong>Inclusions:</strong></p><ul>${bullets(o.incl)}</ul>` : ''}
+<p>${esc(scope)}</p>
+<p><strong>Inclusions:</strong></p><ul>${bullets(QUOTE_INCLUSIONS)}</ul>
 <h2>Coating System</h2>
 <table class="ct"><thead><tr><th>Substrate</th><th>System</th><th style="width:70px;text-align:center">Coats</th><th>Application Method</th><th>Materials</th></tr></thead>
 <tbody>${coatBody}</tbody></table>
@@ -1196,7 +1224,7 @@ ${o.incl ? `<p><strong>Inclusions:</strong></p><ul>${bullets(o.incl)}</ul>` : ''
   <li>Light sanding and dust-off between coats</li>
   <li>Final tack-off and inspection prior to each coat</li>
 </ul>
-${o.excl ? `<h2>Exclusions</h2><ul>${bullets(o.excl)}</ul>` : ''}
+<h2>Exclusions</h2><ul>${bullets(QUOTE_EXCLUSIONS)}</ul>
 <h2>Work Plan and Duration</h2>
 <ul><li>Estimated duration: <strong>${esc(o.dur || 'To be confirmed')}</strong></li><li>Works subject to access availability and weather conditions</li><li>Scheduling to be confirmed prior to commencement</li></ul>
 <h2>Standards and Compliances</h2>
@@ -1223,10 +1251,11 @@ ${o.lines.map(l => `<tr><td>1</td><td>${esc(l.desc)}</td><td style="text-align:r
 <h2>Variations Clause</h2>
 <p>Any changes, additional works or variations requested by the client or builder will require a written variation order or revised quotation and may incur additional charges. Work will not proceed on variations until written approval is received.</p>
 <h2>Progress Claims and Payment Terms</h2>
-<p>${esc(o.terms).replace(/\n/g, '<br>')}</p>
+<p>${esc(QUOTE_TERMS_TEXT)}</p>
 <div class="footer">
   <div style="display:flex;gap:16px;align-items:center">
-    <img src="${o.origin}/ft-logo.png" alt="NSW Fair Trading Licensed Contractor" style="height:80px;width:auto">
+    <img src="${o.origin}/ft-logo.png" alt="NSW Fair Trading Licensed Contractor" style="height:70px;width:auto">
+    <img src="${o.origin}/dulux-badge.png" alt="Dulux Accredited Painter — 5 year workmanship warranty" style="height:60px;width:auto">
   </div>
   <div style="text-align:right">
     <div style="font-size:13px;font-weight:700">NORTHERN PAINTERS</div>
