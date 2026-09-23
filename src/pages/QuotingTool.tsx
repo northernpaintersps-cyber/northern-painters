@@ -23,7 +23,7 @@ import SubstratePicker from '@/components/SubstratePicker'
 import {
   Plus, Trash2, Loader2, Sparkles, Save, ClipboardList, Settings2,
   FileText, Image as ImageIcon, Ruler, Hammer, RefreshCw,
-  FileDown, Lock, ArrowUp, ArrowDown, Check, CopyPlus, ListChecks, Download, Users,
+  FileDown, Lock, ArrowUp, ArrowDown, Check, CopyPlus, ListChecks, Download, Users, Info,
 } from 'lucide-react'
 
 type Row = Record<string, any>
@@ -127,6 +127,24 @@ export default function QuotingTool() {
     queryFn: async () => {
       const { data } = await supabase.from('np_jobs').select('*').eq('user_id', user!.id)
       return (data ?? []) as Row[]
+    },
+    enabled: !!user,
+  })
+
+  // Logged costs, so comparable jobs can show real cost and margin
+  const { data: pastMaterials = [] } = useQuery({
+    queryKey: ['np_materials', user?.id],
+    queryFn: async () => {
+      const { data } = await supabase.from('np_materials').select('job_id, cost_ex_gst').eq('user_id', user!.id)
+      return (data ?? []) as any[]
+    },
+    enabled: !!user,
+  })
+  const { data: pastLabour = [] } = useQuery({
+    queryKey: ['np_labour', user?.id],
+    queryFn: async () => {
+      const { data } = await supabase.from('np_labour').select('job_id, cost, hours, rate').eq('user_id', user!.id)
+      return (data ?? []) as any[]
     },
     enabled: !!user,
   })
@@ -442,6 +460,54 @@ export default function QuotingTool() {
     } catch (e: any) { setGenErr(e?.message ?? 'Consumables estimate failed') } finally { setConsBusy(false) }
   }
 
+  /** V16 findComparableJobs() — finished jobs of a related type, ranked by
+   *  type match (60%) and substrate overlap (40%), with real cost and margin
+   *  from what was actually logged against them. Top 5. */
+  const compJobs = useMemo(() => {
+    const norm = (t: string) => (t || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+    const typeNorm = norm(jobType)
+    const groups = [
+      ['interiorrepaint', 'interiorrepaint', 'fullrepaintinterior'],
+      ['exteriorrepaint', 'exteriorrepaint', 'fullrepaintexterior'],
+      ['newbuild', 'newbuildexterior', 'newbuildfull', 'newbuildinterior'],
+      ['deck', 'timber', 'deckrefinish'],
+      ['roof', 'roofpaint', 'roofcoating'],
+      ['specialty', 'limewash', 'specialtyfinish'],
+      ['fullrepaint', 'fullhouse'],
+    ]
+    const subKeys = Object.keys(totals)
+    return jobs
+      .filter(j => j.status === 'Finished' && (j.agreed_ex_gst || 0) > 0)
+      .map(j => {
+        const jt = norm(j.type || '')
+        let typeScore = 0
+        if (jt === typeNorm) typeScore = 1
+        else for (const g of groups) {
+          if (g.some(k => typeNorm.includes(k) || k === typeNorm) && g.some(k => jt.includes(k) || k === jt)) { typeScore = 0.75; break }
+        }
+        if (typeScore === 0) return null
+        const jKeys: string[] = Array.isArray(j.extra?.substrate_keys) ? j.extra.substrate_keys
+          : j.extra?.substrates ? Object.keys(j.extra.substrates) : []
+        let subScore = 0, matchPct = 0
+        if (subKeys.length && jKeys.length) {
+          const overlap = subKeys.filter(k => jKeys.includes(k)).length
+          const union = new Set([...subKeys, ...jKeys]).size
+          subScore = overlap / union
+          matchPct = Math.round(subScore * 100)
+        }
+        const matCost = pastMaterials.filter(m => m.job_id === j.id)
+          .reduce((s, m) => s + (m.cost_ex_gst || 0), 0)
+        const labCost = pastLabour.filter(l => l.job_id === j.id)
+          .reduce((s, l) => s + (l.cost || (l.hours || 0) * (l.rate || 0)), 0)
+        const realCost = matCost + labCost
+        const margin = j.agreed_ex_gst > 0 ? ((j.agreed_ex_gst - realCost) / j.agreed_ex_gst) * 100 : null
+        return { job: j, score: typeScore * 0.6 + subScore * 0.4, matchPct, realCost, margin }
+      })
+      .filter(Boolean)
+      .sort((a, b) => b!.score - a!.score)
+      .slice(0, 5) as { job: Row; score: number; matchPct: number; realCost: number; margin: number | null }[]
+  }, [jobs, jobType, totals, pastMaterials, pastLabour])
+
   // Benchmarks drawn from the user's own finished jobs
   const benchmarkText = useMemo(() => {
     const finished = jobs.filter(j => j.status === 'Finished' && (j.agreed_ex_gst || 0) > 0)
@@ -527,7 +593,8 @@ export default function QuotingTool() {
         est_days: Math.max(1, Math.round(days)),
         notes: siteNotes,
         quote_no: quoteNo || null,
-        extra: { quote_estimate: estimate, substrates, processes, painters, quote_id: quoteId },
+        // substrate_keys lets a future quote score substrate overlap against this job
+        extra: { quote_estimate: estimate, substrates, substrate_keys: Object.keys(totals), processes, painters, quote_id: quoteId },
         created_at: new Date().toISOString(),
       })
       if (error) throw error
@@ -1327,6 +1394,57 @@ export default function QuotingTool() {
                   </div>
                 </div>
               </Card>
+
+              {compJobs.length > 0 && (
+                <Card>
+                  <div className={CT}>Comparable Past Jobs</div>
+                  <div className="text-xs text-[#666] mb-2.5">
+                    Found {compJobs.length} comparable finished job{compJobs.length !== 1 ? 's' : ''} — sorted by
+                    relevance. Margins calculated from logged materials &amp; labour.
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs border-collapse">
+                      <thead>
+                        <tr className="bg-[#f5f4f0]">
+                          <th className="px-2 py-1.5 text-left font-semibold">Job</th>
+                          <th className="px-2 py-1.5 text-right font-semibold">Agreed</th>
+                          <th className="px-2 py-1.5 text-right font-semibold">Real Cost</th>
+                          <th className="px-2 py-1.5 text-right font-semibold">Margin</th>
+                          <th className="px-2 py-1.5 text-center font-semibold">Sub Match</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {compJobs.map(c => (
+                          <tr key={c.job.id} className="border-b border-black/[0.06]">
+                            <td className="px-2 py-1.5">
+                              <div className="font-medium">{c.job.client || '—'}</div>
+                              <div className="text-[10px] text-[#666]">
+                                {c.job.type || ''} · {(c.job.address || '').split(',')[0]}
+                              </div>
+                            </td>
+                            <td className="px-2 py-1.5 text-right font-semibold">{fmtCurrency(c.job.agreed_ex_gst)}</td>
+                            <td className="px-2 py-1.5 text-right text-[#666]">{c.realCost > 0 ? fmtCurrency(c.realCost) : '—'}</td>
+                            <td className="px-2 py-1.5 text-right font-semibold"
+                              style={{ color: c.margin === null ? '#666' : c.margin >= 30 ? '#27ae60' : c.margin >= 15 ? '#e67e22' : '#c0392b' }}>
+                              {c.margin !== null ? `${c.margin.toFixed(1)}%` : '—'}
+                            </td>
+                            <td className="px-2 py-1.5 text-center">
+                              <span className="text-[10px] bg-[#2563eb]/[0.13] text-[#2563eb] rounded-full px-1.5 py-0.5 font-semibold">
+                                {c.matchPct > 0 ? `${c.matchPct}%` : 'type only'}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  {compJobs.some(c => c.realCost === 0) && (
+                    <div className="text-[11px] text-[#666] mt-2 pt-1.5 border-t border-black/[0.06] flex items-center gap-1">
+                      <Info size={11} /> Log materials &amp; labour against a job to see real cost and margin.
+                    </div>
+                  )}
+                </Card>
+              )}
             </>
           )}
 
