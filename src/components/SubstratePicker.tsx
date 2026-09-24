@@ -1,8 +1,11 @@
+import { useState } from 'react'
 import {
   SUBSTRATES, GROUPS, GROUP_HDR, GROUP_BG, unitLabel, subTotal, newSubLine,
+  UC_OPTS, COLOUR_OPTS, defaultCoat, type CoatSettings,
   type SubEntry, type SubGroup,
 } from '@/lib/substrates'
-import { Trash2 } from 'lucide-react'
+import { APP_OPTS, FINISH_OPTS } from '@/lib/quoteData'
+import { Trash2, SlidersHorizontal } from 'lucide-react'
 
 /**
  * The substrate checklist, shared by the site visit and the quote builder so
@@ -10,13 +13,23 @@ import { Trash2 } from 'lucide-react'
  * one line per type — the type field is a combo box: pick a preset or type
  * your own.
  */
-export default function SubstratePicker({ value, onChange, groups = GROUPS }: {
+export default function SubstratePicker({ value, onChange, groups = GROUPS, showCoating = false }: {
   value: Record<string, SubEntry>
   onChange: (next: Record<string, SubEntry>) => void
   groups?: SubGroup[]
+  /** V16's per-substrate coating settings panel. On in the quote builder. */
+  showCoating?: boolean
 }) {
+  const [openCoat, setOpenCoat] = useState<Set<string>>(new Set())
+  const toggleCoat = (key: string) => setOpenCoat(o => {
+    const n = new Set(o); n.has(key) ? n.delete(key) : n.add(key); return n
+  })
+
   const setEntry = (key: string, patch: Partial<SubEntry>) =>
     onChange({ ...value, [key]: { ...value[key], ...patch } })
+
+  const setCoat = (key: string, patch: Partial<CoatSettings>) =>
+    setEntry(key, { coat: { ...(value[key]?.coat ?? defaultCoat(SUBSTRATES.find(x => x.key === key))), ...patch } })
 
   const setLine = (key: string, lineId: string, patch: Partial<SubEntry['lines'][0]>) =>
     setEntry(key, { lines: value[key].lines.map(l => l.id === lineId ? { ...l, ...patch } : l) })
@@ -57,6 +70,12 @@ export default function SubstratePicker({ value, onChange, groups = GROUPS }: {
                       {total} {unitLabel(s.unit)}
                     </span>
                   )}
+                  {entry.inc && showCoating && (
+                    <button onClick={() => toggleCoat(s.key)} title="Coating settings"
+                      className={`px-2 py-1 rounded-[7px] border text-[11px] ${openCoat.has(s.key) ? 'border-[#2563eb] text-[#2563eb] bg-blue-50' : 'border-black/20 text-[#666]'}`}>
+                      <SlidersHorizontal size={12} />
+                    </button>
+                  )}
                   {entry.inc && (
                     <button onClick={() => addLine(s.key)}
                       className="px-2.5 py-1 border-[1.5px] border-dashed border-[#2563eb] rounded-[7px] text-[11px] text-[#2563eb] font-semibold whitespace-nowrap">
@@ -93,6 +112,40 @@ export default function SubstratePicker({ value, onChange, groups = GROUPS }: {
                     ))}
                   </div>
                 )}
+
+                {entry.inc && showCoating && openCoat.has(s.key) && (() => {
+                  const c = entry.coat ?? defaultCoat(s)
+                  return (
+                    <div className="mt-2 flex flex-wrap gap-2 bg-[#f9f8f5] border-t border-black/[0.06] px-2 py-2 rounded-lg">
+                      {([
+                        ['Application', c.app, APP_OPTS, (v: string) => setCoat(s.key, { app: v })],
+                        ['Undercoat', c.uc, UC_OPTS, (v: string) => setCoat(s.key, { uc: v })],
+                        ['UC Application', c.ucApp, APP_OPTS, (v: string) => setCoat(s.key, { ucApp: v })],
+                        ['Finish', c.fin, FINISH_OPTS, (v: string) => setCoat(s.key, { fin: v })],
+                        ['Colour change', c.colour, COLOUR_OPTS, (v: string) => setCoat(s.key, { colour: v })],
+                      ] as [string, string, string[], (v: string) => void][]).map(([label, val, opts, set]) => (
+                        <div key={label}>
+                          <div className="text-[10px] text-[#666] mb-0.5">{label}</div>
+                          <select value={val} onChange={e => set(e.target.value)}
+                            className="text-[11px] px-1.5 py-1 border border-black/20 rounded bg-white focus:outline-none">
+                            {opts.map(o => <option key={o}>{o}</option>)}
+                          </select>
+                        </div>
+                      ))}
+                      {([
+                        ['UC coats', c.ucCoats, 0, 3, (n: number) => setCoat(s.key, { ucCoats: n })],
+                        ['Top coats', c.topCoats, 1, 4, (n: number) => setCoat(s.key, { topCoats: n })],
+                      ] as [string, number, number, number, (n: number) => void][]).map(([label, val, min, max, set]) => (
+                        <div key={label}>
+                          <div className="text-[10px] text-[#666] mb-0.5">{label}</div>
+                          <input type="number" min={min} max={max} value={val}
+                            onChange={e => set(Math.max(min, Math.min(max, parseInt(e.target.value) || min)))}
+                            className="w-14 text-[11px] px-1.5 py-1 border border-black/20 rounded bg-white focus:outline-none" />
+                        </div>
+                      ))}
+                    </div>
+                  )
+                })()}
               </div>
             )
           })}

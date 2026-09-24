@@ -17,7 +17,7 @@ import {
 } from '@/lib/quoteData'
 import {
   SUBSTRATES, emptySubstrates, normaliseSubstrates, substrateLines as buildSubLines,
-  substrateTotals, newSubLine, type SubEntry,
+  substrateTotals, newSubLine, coatOf, type SubEntry,
 } from '@/lib/substrates'
 import SubstratePicker from '@/components/SubstratePicker'
 import {
@@ -203,6 +203,7 @@ export default function QuotingTool() {
   // Prep level per workflow item, keyed "<phaseId>-<itemId>" as V16 keys its selects.
   const [prepLevels, setPrepLevels] = useState<Record<string, string>>(() => defaultPrepLevels(JOB_TYPES[0]))
   const [wfOpen, setWfOpen] = useState(false)
+  const [newBuildNote, setNewBuildNote] = useState(false)
 
   // 5. Consumables & extra materials
   const [consPrep, setConsPrep] = useState('medium')
@@ -325,7 +326,9 @@ export default function QuotingTool() {
       const coverage = hit?.coverage ?? 12
       // linear metres and counts convert to an approximate painted area
       const m2 = sub.unit === 'sqm' ? q : sub.unit === 'lm' ? q * 0.3 : q * 2
-      const litres = (m2 * parseInt(coats)) / coverage
+      // Coats now come from the substrate's own settings, undercoats included
+      const c = coatOf(substrates, sub.key)
+      const litres = (m2 * (c.topCoats + (c.uc !== 'None' ? c.ucCoats : 0))) / coverage
       const key = hit?.product ?? sub.paint
       if (!products[key]) products[key] = { product: key, size: hit?.size ?? '4L', litres: 0, coverage, price: hit?.yours ?? 0 }
       products[key].litres += litres
@@ -336,7 +339,7 @@ export default function QuotingTool() {
       return { ...p, tins, cost: tins * p.price }
     })
     return { rows, total: rows.reduce((s, r) => s + r.cost, 0) + extraMatTotal }
-  }, [totals, coats, biz, extraMatTotal])
+  }, [totals, substrates, biz, extraMatTotal])
 
   const subtotal = labourCost + materials.total + consTotal + equipTotal
   const gst = subtotal * 0.1
@@ -427,7 +430,44 @@ export default function QuotingTool() {
   function changeJobType(next: string) {
     setJobType(next)
     setPrepLevels(defaultPrepLevels(next))
-    if (/new build/i.test(next)) setMethod('spray')
+    if (/new build/i.test(next)) { setMethod('spray'); applyNewBuildCoats(next) }
+  }
+
+  /** V16 autoApplyNewBuildSettings(): a new build gets 1 coat of Acrylic
+   *  undercoat sprayed onto every substrate, and interior work is sprayed
+   *  rather than rolled. Oil-finish substrates (decking) are left alone. */
+  function applyNewBuildCoats(type: string) {
+    const isInt = /interior/i.test(type) || /full/i.test(type)
+    const isExt = /exterior/i.test(type) || /full/i.test(type)
+    setSubstrates(prev => {
+      const next = { ...prev }
+      SUBSTRATES.forEach(sub => {
+        if (sub.group === 'Interior' ? !isInt : sub.group === 'Exterior' ? !isExt : true) return
+        const c = { ...coatOf(prev, sub.key) }
+        if (c.fin !== 'Decking Oil') { c.uc = 'Acrylic'; c.ucCoats = 1; c.ucApp = 'Spray' }
+        if (isInt && sub.group === 'Interior') c.app = 'Spray'
+        next[sub.key] = { ...(prev[sub.key] ?? { inc: false, lines: [newSubLine()] }), coat: c }
+      })
+      return next
+    })
+    setNewBuildNote(true)
+    setTimeout(() => setNewBuildNote(false), 3000)
+  }
+
+  /** The global Coats selector sets top coats across every substrate, so the
+   *  per-substrate settings stay the single source of truth. */
+  function changeCoats(n: string) {
+    setCoats(n)
+    setSubstrates(prev => {
+      const next = { ...prev }
+      SUBSTRATES.forEach(sub => {
+        next[sub.key] = {
+          ...(prev[sub.key] ?? { inc: false, lines: [newSubLine()] }),
+          coat: { ...coatOf(prev, sub.key), topCoats: parseInt(n) || 2 },
+        }
+      })
+      return next
+    })
   }
 
   async function aiSuggestHours() {
@@ -712,13 +752,19 @@ export default function QuotingTool() {
     // V16 getCoatRows(): the system is the finish, the coats the top-coat count,
     // and exterior substrates are suffixed "(ext)". This app has no per-substrate
     // undercoat field, so no "N + M" coats string arises.
-    const coatRows = SUBSTRATES.filter(s => (totals[s.key] ?? 0) > 0).map(s => ({
-      sub: s.group === 'Exterior' ? `${s.label} (ext)` : s.label,
-      sys: s.defFinish,
-      coats: coats,
-      app: s.defMethod,
-      mat: s.paint,
-    }))
+    const coatRows = SUBSTRATES.filter(s => (totals[s.key] ?? 0) > 0).map(s => {
+      const c = coatOf(substrates, s.key)
+      const hasUC = c.uc !== 'None'
+      return s.group === 'Specialty'
+        ? { sub: s.label, sys: `${c.fin} system`, coats: String(c.topCoats), app: c.app, mat: s.paint }
+        : {
+            sub: s.group === 'Exterior' ? `${s.label} (ext)` : s.label,
+            sys: hasUC ? `${c.uc} undercoat (${c.ucApp}) + ${c.fin}` : c.fin,
+            coats: hasUC ? `${c.ucCoats} + ${c.topCoats}` : String(c.topCoats),
+            app: c.app,
+            mat: s.paint,
+          }
+    })
 
     w.document.write(buildQuoteHTML({
       docType: terms === 'Estimate' ? 'Estimate' : 'Quotation',
@@ -909,7 +955,7 @@ export default function QuotingTool() {
               so French, solid and panel doors can be priced separately. This is the same list the
               site visit uses, so a visit's takeoff lands here unchanged.
             </div>
-            <SubstratePicker value={substrates} onChange={setSubstrates} />
+            <SubstratePicker value={substrates} onChange={setSubstrates} showCoating />
             {Object.keys(totals).length > 0 && (
               <div className="mt-3 pt-2.5 border-t border-black/[0.12] text-[11px] text-[#666]">
                 {Object.keys(totals).length} substrate{Object.keys(totals).length !== 1 ? 's' : ''} in scope ·
@@ -957,11 +1003,17 @@ export default function QuotingTool() {
               </div>
               <div className="flex-1 min-w-[120px]">
                 <label className="block text-[10px] uppercase font-bold text-[#666] mb-1">Coats</label>
-                <select value={coats} onChange={e => setCoats(e.target.value)} className={INP}>
+                <select value={coats} onChange={e => changeCoats(e.target.value)} className={INP}>
                   {['1', '2', '3'].map(c => <option key={c} value={c}>{c} coat{c !== '1' ? 's' : ''}</option>)}
                 </select>
               </div>
             </div>
+
+            {newBuildNote && (
+              <div className="flex items-center gap-2 bg-[#1d4ed8] text-white rounded-lg px-3.5 py-2 mb-2.5 text-xs font-semibold">
+                <Check size={13} /> New build defaults applied — 1 coat Acrylic undercoat (Spray) set on every substrate.
+              </div>
+            )}
 
             {/* V16 wf-panel — the template for this job type, prep levels first */}
             {JOB_WORKFLOWS[jobType] && (
