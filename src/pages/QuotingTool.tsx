@@ -768,7 +768,7 @@ export default function QuotingTool() {
 
     w.document.write(buildQuoteHTML({
       docType: terms === 'Estimate' ? 'Estimate' : 'Quotation',
-      to: client, proj: jobType, site: address,
+      to: client, proj: jobType, jobType, site: address,
       qno: quoteNo || defaultQuoteNo(),
       dur: days ? `${days.toFixed(1)} days` : '',
       // The client-facing document carries the standard wording, not the internal
@@ -1606,6 +1606,27 @@ const QUOTE_INCLUSIONS = [
   'Masking and protection of adjacent areas',
   'Full site clean-up and removal of waste',
 ]
+/** Surface preparation reads differently per trade. Cabinets are degreased and
+ *  scuffed rather than filled and gapped, so the job type picks the list. */
+const SURFACE_PREP_STANDARD = [
+  'Fill and sand all nail, screw and imperfection penetrations to a smooth finish',
+  'Seal paintable gaps at joints, trims and corners with flexible paintable sealant',
+  'Spot-prime all bare, cut or exposed substrates as required',
+  'Light sanding and dust-off between coats',
+  'Final tack-off and inspection prior to each coat',
+]
+const SURFACE_PREP_BY_TYPE: Record<string, string[]> = {
+  'Kitchen cabinets': [
+    'Cleaning and degreasing',
+    'Sanding/scuffing',
+    'Priming',
+    'Light sanding and dust-off between coats',
+    'Final tack-off and inspection prior to each coat',
+  ],
+}
+export const surfacePrepFor = (jobType: string): string[] =>
+  SURFACE_PREP_BY_TYPE[jobType] ?? SURFACE_PREP_STANDARD
+
 const QUOTE_EXCLUSIONS = [
   'Supply or installation of scaffolding',
   'Repairs to defective substrates beyond standard preparation',
@@ -1619,6 +1640,8 @@ const QUOTE_TERMS_TEXT =
 
 function buildQuoteHTML(o: {
   docType: string; to: string; proj: string; site: string
+  /** Kept separate from proj, which the user may retitle freely. */
+  jobType: string
   qno: string; dur: string
   coatRows: { sub: string; sys: string; coats: string; app: string; mat: string }[]
   lines: { desc: string; total: number }[]
@@ -1686,13 +1709,7 @@ ${coatBody ? `<h2>Coating System</h2>
 <table class="ct"><thead><tr><th>Substrate</th><th>System</th><th style="width:70px;text-align:center">Coats</th><th>Application Method</th><th>Materials</th></tr></thead>
 <tbody>${coatBody}</tbody></table>` : ''}
 <h2>Surface Preparation</h2>
-<ul>
-  <li>Fill and sand all nail, screw and imperfection penetrations to a smooth finish</li>
-  <li>Seal paintable gaps at joints, trims and corners with flexible paintable sealant</li>
-  <li>Spot-prime all bare, cut or exposed substrates as required</li>
-  <li>Light sanding and dust-off between coats</li>
-  <li>Final tack-off and inspection prior to each coat</li>
-</ul>
+<ul>${bullets(surfacePrepFor(o.jobType))}</ul>
 <h2>Exclusions</h2><ul>${bullets(QUOTE_EXCLUSIONS)}</ul>
 <h2>Work Plan and Duration</h2>
 <ul><li>Estimated duration: <strong>${esc(o.dur || 'To be confirmed')}</strong></li><li>Works subject to access availability and weather conditions</li><li>Scheduling to be confirmed prior to commencement</li></ul>
