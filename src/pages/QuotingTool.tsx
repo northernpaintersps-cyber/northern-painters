@@ -23,7 +23,7 @@ import SubstratePicker from '@/components/SubstratePicker'
 import {
   Plus, Trash2, Loader2, Sparkles, Save, ClipboardList, Settings2,
   FileText, Image as ImageIcon, Ruler, Hammer, RefreshCw,
-  FileDown, Lock, ArrowUp, ArrowDown, Check, CopyPlus, ListChecks, Download, Users, Info,
+  FileDown, Lock, ArrowUp, ArrowDown, Check, CopyPlus, ListChecks, Download, Users, Info, AlertTriangle,
 } from 'lucide-react'
 
 type Row = Record<string, any>
@@ -1520,6 +1520,15 @@ export default function QuotingTool() {
 
           <Card>
             <div className={CT}>Actions</div>
+            {Object.keys(totals).length === 0 && (
+              <div className="flex items-start gap-2 bg-[#fffbeb] border border-[#fbbf24] rounded-lg px-3 py-2 mb-3 text-[11px] text-[#92400e]">
+                <AlertTriangle size={13} className="shrink-0 mt-px" />
+                <span>
+                  No substrates have a quantity yet, so the exported quote will have no
+                  Coating System table. Tick the substrates and enter quantities first.
+                </span>
+              </div>
+            )}
             <div className="bg-[#f5f4f0] rounded-[10px] px-3.5 py-3 mb-3">
               <div className="text-[11px] font-bold uppercase text-[#666] mb-2 tracking-wide">Locked Price (ex GST)</div>
               <div className="flex gap-2 items-center">
@@ -1628,12 +1637,12 @@ function buildQuoteHTML(o: {
     + `application of finish coats to all nominated substrates, in accordance with the `
     + `finishes schedule and AS/NZS 2311:2017.`
 
-  // V16 falls back to a worked example when no substrates are quoted yet.
-  const coatBody = o.coatRows.length
-    ? o.coatRows.map(r => `<tr><td>${esc(r.sub)}</td><td>${esc(r.sys)}</td><td style="text-align:center">${esc(r.coats)}</td><td>${esc(r.app)}</td><td>${esc(r.mat)}</td></tr>`).join('')
-    : `<tr><td>Ceilings</td><td>Acrylic undercoat + flat ceiling white</td><td style="text-align:center">1+2</td><td>Spray + Backroll</td><td>Dulux Ceiling White</td></tr>`
-      + `<tr><td>Walls</td><td>Acrylic undercoat + low sheen acrylic</td><td style="text-align:center">1+2</td><td>Cut &amp; Roll</td><td>Dulux Wash&amp;Wear</td></tr>`
-      + `<tr><td>Doors &amp; Trims</td><td>Undercoat + semi-gloss enamel</td><td style="text-align:center">1+2</td><td>Spray + Backroll</td><td>Dulux Aquaenamel</td></tr>`
+  // V16 falls back to a hardcoded ceilings/walls/trims example when nothing is
+  // quoted. That puts work the client is not buying into a document they sign,
+  // so the section is left out instead.
+  const coatBody = o.coatRows
+    .map(r => `<tr><td>${esc(r.sub)}</td><td>${esc(r.sys)}</td><td style="text-align:center">${esc(r.coats)}</td><td>${esc(r.app)}</td><td>${esc(r.mat)}</td></tr>`)
+    .join('')
 
   return `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${esc(fileTitle)}</title><style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -1673,9 +1682,9 @@ table{width:100%;border-collapse:collapse;margin-bottom:10px;font-size:11px}
 <h2>Scope of Works</h2>
 <p>${esc(scope)}</p>
 <p><strong>Inclusions:</strong></p><ul>${bullets(QUOTE_INCLUSIONS)}</ul>
-<h2>Coating System</h2>
+${coatBody ? `<h2>Coating System</h2>
 <table class="ct"><thead><tr><th>Substrate</th><th>System</th><th style="width:70px;text-align:center">Coats</th><th>Application Method</th><th>Materials</th></tr></thead>
-<tbody>${coatBody}</tbody></table>
+<tbody>${coatBody}</tbody></table>` : ''}
 <h2>Surface Preparation</h2>
 <ul>
   <li>Fill and sand all nail, screw and imperfection penetrations to a smooth finish</li>
