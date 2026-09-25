@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/lib/auth'
-import { fmtCurrency } from '@/lib/utils'
+import { fmtCurrency, invExGST } from '@/lib/utils'
 import { Loader2, X } from 'lucide-react'
 
 const JS_OPTS = ['Not Started','Scheduled','In Progress','Hourly Rate Accepted','Finished','Closed']
@@ -51,7 +51,9 @@ export default function Profitability() {
       const agreed = j.agreed_ex_gst || 0
       const vars = variations.filter(v => v.job_id === j.id && v.var_status === 'Approved')
         .reduce((s, v) => s + (v.amount_ex_gst || 0), 0)
-      const invoicedExGST = invoices.filter(i => i.job_id === j.id).reduce((s, i) => s + (i.agreed_ex_gst || 0), 0)
+      // invExGST falls back to deriving from total_inc_gst — summing agreed_ex_gst
+      // alone counted imported invoices that never had it set as zero revenue.
+      const invoicedExGST = invoices.filter(i => i.job_id === j.id).reduce((s, i) => s + invExGST(i), 0)
       const totalRevenue = (invoicedExGST || agreed) + vars
       const labourCost = labour.filter(l => l.job_id === j.id).reduce((s, l) => s + (l.cost || (l.hours || 0) * (l.rate || 0)), 0)
       const matCost = materials.filter(m => m.job_id === j.id).reduce((s, m) => s + (m.cost_ex_gst || 0), 0)
