@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/lib/auth'
 import { Modal } from '@/components/ui/Modal'
+import JobPicker from '@/components/JobPicker'
 import { Input, Select } from '@/components/ui/Field'
 import { fmtCurrency, genId, today } from '@/lib/utils'
 import { Plus, Loader2, Trash2, Edit2 } from 'lucide-react'
@@ -231,14 +232,9 @@ export default function Expenses() {
           <Input label="Supplier" value={form.supplier || ''} onChange={ef('supplier')} />
           <Input label="Description" value={form.exp_desc || ''} onChange={ef('exp_desc')} wrapperClassName="col-span-2" />
           <Select label="Category" value={form.category || 'Other'} onChange={ef('category')} options={EXP_CATS} />
-          <div>
-            <label className="block text-xs font-medium text-gray-500 mb-1">Link to job (optional)</label>
-            <select value={form.job_id || ''} onChange={ef('job_id')}
-              className="w-full bg-white border border-black/20 rounded-lg px-3 py-2 text-[13px] focus:outline-none focus:ring-1 focus:ring-blue-500">
-              <option value="">— None (overhead) —</option>
-              {jobs.map(j => <option key={j.id} value={j.id}>{j.id} — {j.client}</option>)}
-            </select>
-          </div>
+          <JobPicker jobs={jobs} value={form.job_id} label="Link to job (optional)"
+            noneLabel="— None (overhead) —"
+            onChange={id => setForm(p => ({ ...p, job_id: id }))} />
           <Input label="Amount ex GST ($)" type="number" step="0.01" value={form.amount_ex_gst ?? ''} onChange={ef('amount_ex_gst')} />
           <Input label="GST ($)" type="number" step="0.01" value={form.gst ?? ''} onChange={ef('gst')}
             className={form.gst_applies ? '' : 'opacity-60'} readOnly={!form.gst_applies} />

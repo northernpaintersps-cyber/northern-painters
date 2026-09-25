@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/lib/auth'
 import { Modal } from '@/components/ui/Modal'
+import JobPicker from '@/components/JobPicker'
 import { Input, Select } from '@/components/ui/Field'
 import { fmtCurrency, genId, today, labBillable, labCost, isBillableLabour } from '@/lib/utils'
 import { Plus, Loader2, Trash2, ArrowUpDown, X, Clock } from 'lucide-react'
@@ -347,14 +348,9 @@ export default function Labour() {
 
         <div className="grid grid-cols-2 gap-3">
           <Input label="Date" type="date" value={form.date || ''} onChange={e => setForm(p => ({ ...p, date: e.target.value }))} />
-          <div>
-            <label className="block text-xs font-medium text-gray-500 mb-1">Job</label>
-            <select value={form.job_id || ''} onChange={e => setForm(p => ({ ...p, job_id: e.target.value }))}
-              className="w-full bg-white border border-black/20 rounded-lg px-3 py-2 text-[13px] focus:outline-none focus:ring-1 focus:ring-blue-500">
-              <option value="">— Select job —</option>
-              {jobs.map(j => <option key={j.id} value={j.id}>{j.id} — {j.client}</option>)}
-            </select>
-          </div>
+          <JobPicker jobs={jobs} value={form.job_id}
+            noneLabel="— Select job —"
+            onChange={(id, j) => setForm(p => ({ ...p, job_id: id, client: j?.client ?? p.client }))} />
 
           <div>
             <label className="block text-xs font-medium text-gray-500 mb-1">Sub / Worker</label>

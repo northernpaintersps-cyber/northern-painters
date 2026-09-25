@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/lib/auth'
 import { Modal } from '@/components/ui/Modal'
+import JobPicker from '@/components/JobPicker'
 import { Input, Select, TextArea } from '@/components/ui/Field'
 import { fmtCurrency, fmtDate, genId, today, toNum, lineItemsOf, type InvoiceLineItem } from '@/lib/utils'
 import { extractInvoice } from '@/lib/ai'
@@ -506,14 +507,9 @@ export default function Materials() {
         <div className="space-y-3">
           <div className="grid grid-cols-2 gap-3">
             <Input label="Date" type="date" value={form.date} onChange={ef('date')} />
-            <div className="flex flex-col gap-1">
-              <label className="text-xs font-medium text-gray-500">Job</label>
-              <select value={form.job_id} onChange={ef('job_id')}
-                className="bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-1 focus:ring-blue-500">
-                <option value="">No job / overhead</option>
-                {jobs.map(j => <option key={j.id} value={j.id}>{j.id} – {j.client} – {j.address}</option>)}
-              </select>
-            </div>
+            <JobPicker jobs={jobs} value={form.job_id} className="flex-1"
+              noneLabel="No job / overhead"
+              onChange={(id, j) => setForm(p => ({ ...p, job_id: id, client: j?.client ?? p.client }))} />
           </div>
           <Input label="Description" value={form.mat_desc} onChange={ef('mat_desc')} placeholder="Dulux Weathershield 15L — Inv #12345" />
           <div className="grid grid-cols-2 gap-3">

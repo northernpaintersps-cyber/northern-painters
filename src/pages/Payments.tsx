@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/lib/auth'
 import { Modal } from '@/components/ui/Modal'
+import JobPicker from '@/components/JobPicker'
 import { Input } from '@/components/ui/Field'
 import { fmtCurrency, genId, parseMilestones, incOf, today } from '@/lib/utils'
 import { billingBasis } from '@/lib/jobBilling'
@@ -399,15 +400,11 @@ export default function Payments() {
         <div className="grid grid-cols-2 gap-3">
           <div className="col-span-2">
             <label className="block text-xs font-medium text-gray-500 mb-1">Job</label>
-            <select value={jobId} onChange={e => {
-              setJobId(e.target.value)
-              const j = jobs.find(x => x.id === e.target.value)
-              if (j?.agreed_ex_gst) setValue(j.agreed_ex_gst)
-            }}
-              className="w-full bg-white border border-black/20 rounded-lg px-3 py-2 text-[13px] focus:outline-none focus:ring-1 focus:ring-blue-500">
-              <option value="">— Select job —</option>
-              {jobs.map(j => <option key={j.id} value={j.id}>{j.id} — {j.client}</option>)}
-            </select>
+            <JobPicker jobs={jobs} value={jobId} label={null} noneLabel="— Select job —"
+              onChange={(id, j) => {
+                setJobId(id)
+                if ((j as any)?.agreed_ex_gst) setValue((j as any).agreed_ex_gst)
+              }} />
           </div>
           <Input label="Agreed value (ex GST)" type="number" value={value}
             onChange={e => setValue(e.target.value === '' ? '' : parseFloat(e.target.value) || 0)} />

@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/lib/auth'
 import { Modal } from '@/components/ui/Modal'
+import JobPicker from '@/components/JobPicker'
 import { Input, TextArea } from '@/components/ui/Field'
 import { fmtCurrency, fmtDate, calcOwed, invStatus, genId, today, normaliseDate, parseMilestones, exOf } from '@/lib/utils'
 import {
@@ -454,14 +455,8 @@ export default function Invoices() {
       <Modal open={modalOpen} onClose={() => setModalOpen(false)} size="lg"
         title={selectedId ? `Edit invoice ${selectedId}` : 'New Invoice'}>
         <div className="grid grid-cols-2 gap-3">
-          <div className="col-span-2">
-            <label className="block text-xs font-medium text-gray-500 mb-1">Linked job</label>
-            <select value={form.job_id || ''} onChange={fld('job_id')}
-              className="w-full bg-white border border-black/20 rounded-lg px-3 py-2 text-[13px] text-gray-900 focus:outline-none focus:ring-1 focus:ring-blue-500">
-              <option value="">— No job —</option>
-              {jobs.map(j => <option key={j.id} value={j.id}>{j.id} — {j.client}</option>)}
-            </select>
-          </div>
+          <JobPicker jobs={jobs} value={form.job_id} label="Linked job" className="col-span-2"
+            onChange={id => fld('job_id')({ target: { value: id } } as any)} />
           {formMilestones.length > 0 && (
             <div className="col-span-2">
               <label className="block text-xs font-medium text-gray-500 mb-1">

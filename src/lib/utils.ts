@@ -245,3 +245,34 @@ export function inYear(dateStr: string | null | undefined, year: number): boolea
   if (isNaN(d.getTime())) return false
   return d.getFullYear() === year
 }
+
+// ── Job search ───────────────────────────────────────────────
+export type PickableJob = {
+  id: string
+  client?: string | null
+  address?: string | null
+  job_desc?: string | null
+  status?: string | null
+}
+
+/** Digits only, so "12" matches "NP-0012" and "np 12" matches it too. */
+const digits = (s: string) => s.replace(/\D+/g, '')
+
+export function jobLabel(j: PickableJob | undefined): string {
+  if (!j) return ''
+  return [j.id, j.client, j.address?.split(',')[0]].filter(Boolean).join(' — ')
+}
+
+export function matchesJob(j: PickableJob, query: string): boolean {
+  const q = query.trim().toLowerCase()
+  if (!q) return true
+  // status is shown in the list, so it should be searchable too
+  const hay = `${j.id ?? ''} ${j.client ?? ''} ${j.address ?? ''} ${j.job_desc ?? ''} ${j.status ?? ''}`.toLowerCase()
+  if (hay.includes(q)) return true
+  // Bare numbers: "12" should find NP-0012 without typing the prefix or zeros.
+  const qd = digits(q)
+  if (qd && digits(j.id ?? '').includes(qd)) return true
+  // Every word present somewhere, so "jordy esmonde" still finds it.
+  const words = q.split(/\s+/).filter(Boolean)
+  return words.length > 1 && words.every(w => hay.includes(w))
+}
