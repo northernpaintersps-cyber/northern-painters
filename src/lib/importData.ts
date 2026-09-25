@@ -17,6 +17,17 @@ function toDate(v: any): string | null {
   }
   return s
 }
+/** First argument that is a non-empty string or number — booleans are skipped,
+ *  since a flag is never an identifier. */
+function firstText(...vals: any[]): string | null {
+  for (const v of vals) {
+    if (typeof v === 'boolean' || v == null) continue
+    const s = String(v).trim()
+    if (s) return s
+  }
+  return null
+}
+
 function toBool(v: any): boolean {
   if (v == null || v === '') return false
   return Boolean(v)
@@ -110,7 +121,11 @@ function mapCost(c: any, userId: string, _src: string) {
       total_inc_gst: toNum(c.totalIncGST ?? c.total_inc_gst),
       category: c.category ?? null,
       billing_type: c.billingType ?? c.billing_type ?? null,
-      receipt_no: c.receipt ?? c.invoiceNo?.toString() ?? c.receiptNo ?? c.receipt_no ?? null,
+      // invoiceNo is the invoice number. V16 also has `receipt`, a boolean
+      // meaning "a receipt is attached" — reading that first stored the string
+      // "true" in place of every scanned invoice's number, which silently
+      // disabled the duplicate check. Only accept `receipt` when it is text.
+      receipt_no: firstText(c.invoiceNo, c.receiptNo, c.receipt_no, c.receipt),
       // V16 scanned invoices carry their itemisation — keep it
       line_items: normaliseLineItems(c.lineItems ?? c.line_items),
     }
