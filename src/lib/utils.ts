@@ -278,3 +278,35 @@ export function matchesJob(j: PickableJob, query: string): boolean {
   const words = q.split(/\s+/).filter(Boolean)
   return words.length > 1 && words.every(w => hay.includes(w))
 }
+
+// ── Duplicate supplier invoices ──────────────────────────────
+// Invoice numbers are written inconsistently — INV-88213, INV 88213, inv88213
+// and 88213 are the same docket. Compare on letters and digits only.
+export const normaliseInvNo = (v: any) =>
+  String(v ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '')
+
+export type DuplicateHit<T> = { row: T; sameSupplier: boolean }
+
+/**
+ * An earlier row carrying the same invoice number. A match from the same
+ * supplier is the real duplicate; the same number from a different supplier is
+ * a coincidence worth mentioning but not the same thing, so it is only used
+ * when nothing better is found.
+ */
+export function findDuplicateInvoice<T extends Record<string, any>>(
+  rows: T[], receiptNo: any, supplier?: any, excludeId?: string,
+): DuplicateHit<T> | null {
+  const want = normaliseInvNo(receiptNo)
+  if (!want) return null
+  const sup = String(supplier ?? '').trim().toLowerCase()
+  let fallback: T | undefined
+  for (const r of rows) {
+    if (excludeId && r.id === excludeId) continue
+    if (normaliseInvNo(r.receipt_no) !== want) continue
+    const rowSup = String(r.supplier ?? '').trim().toLowerCase()
+    // No supplier on either side is not evidence of a different supplier.
+    if (!sup || !rowSup || rowSup === sup) return { row: r, sameSupplier: true }
+    if (!fallback) fallback = r
+  }
+  return fallback ? { row: fallback, sameSupplier: false } : null
+}

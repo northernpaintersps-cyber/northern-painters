@@ -1,11 +1,14 @@
 import { useState, useMemo, useRef, Fragment } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { supabase } from '@/lib/supabase'
+import { supabase, fetchAllRows } from '@/lib/supabase'
 import { useAuth } from '@/lib/auth'
 import { Modal } from '@/components/ui/Modal'
 import JobPicker from '@/components/JobPicker'
 import { Input, Select, TextArea } from '@/components/ui/Field'
-import { fmtCurrency, fmtDate, genId, today, toNum, lineItemsOf, type InvoiceLineItem } from '@/lib/utils'
+import {
+  fmtCurrency, fmtDate, genId, today, toNum, lineItemsOf,
+  findDuplicateInvoice, type DuplicateHit, type InvoiceLineItem,
+} from '@/lib/utils'
 import { extractInvoice } from '@/lib/ai'
 import { useBusinessSettings } from '@/pages/SettingsPage'
 import {
@@ -51,9 +54,9 @@ function useMaterials() {
   return useQuery<any[]>({
     queryKey: ['np_materials', user?.id],
     queryFn: async () => {
-      const { data, error } = await (supabase.from('np_materials') as any).select('*').eq('user_id', user!.id).order('date', { ascending: false })
-      if (error) throw error
-      return data ?? []
+      // Every row: the duplicate check has to see invoices older than the
+      // most recent 1000, which is where an unbounded select stops.
+      return fetchAllRows('np_materials', user!.id, { orderBy: 'date' })
     },
     enabled: !!user,
   })
@@ -132,7 +135,7 @@ export default function Materials() {
   const [saving, setSaving] = useState(false)
   const [scanning, setScanning] = useState(false)
   const [scanError, setScanError] = useState<string | null>(null)
-  const [dupOf, setDupOf] = useState<any | null>(null)          // V16 duplicate invoice check
+  const [dupOf, setDupOf] = useState<DuplicateHit<any> | null>(null)  // V16 duplicate invoice check
   const [matchedJobId, setMatchedJobId] = useState<string | null>(null) // job matched from the invoice address
   const [showItems, setShowItems] = useState(false)
   const [openRows, setOpenRows] = useState<Set<string>>(new Set())
@@ -157,6 +160,12 @@ export default function Materials() {
 
   const ef = (k: string) => (e: React.ChangeEvent<any>) => {
     const v = e.target.value
+    // Typing an invoice number by hand gets the same check a scan does —
+    // previously only scanned invoices were ever tested for duplicates.
+    if (k === 'receipt_no' || k === 'supplier') {
+      const next = { receipt_no: form.receipt_no, supplier: form.supplier, [k]: v }
+      setDupOf(findDuplicateInvoice(materials, next.receipt_no, next.supplier, form.id))
+    }
     setForm(p => {
       const next = { ...p, [k]: v }
       // Auto-calc GST and total from ex-GST
@@ -203,6 +212,8 @@ export default function Materials() {
     // lineItemsOf keeps items from older rows that still nest them under extra.
     setForm({ ...emptyForm(), ...m, line_items: lineItemsOf(m) })
     resetScanState()
+    // Excluding this row's own id, so a row never flags itself.
+    setDupOf(findDuplicateInvoice(materials, m.receipt_no, m.supplier, m.id))
     setModalOpen(true)
   }
 
@@ -221,10 +232,7 @@ export default function Materials() {
       const result = await extractInvoice(apiKey, file)
 
       // V16: warn if this invoice number is already on file
-      const invNo = (result.receipt_no || '').trim()
-      setDupOf(invNo
-        ? materials.find(m => (m.receipt_no || '').trim().toLowerCase() === invNo.toLowerCase()) ?? null
-        : null)
+      setDupOf(findDuplicateInvoice(materials, result.receipt_no, result.supplier, form.id))
 
       // V16: auto-match a job from the delivery address on the invoice
       const addr = (result.job_address || '').toLowerCase().trim()
@@ -464,18 +472,23 @@ export default function Materials() {
           </label>
         </div>
         {dupOf && (
-          <div className="flex gap-2 items-start bg-[#fef2f2] border border-[#fca5a5] rounded-lg px-3.5 py-2.5 mb-3.5">
-            <AlertTriangle size={18} className="text-[#dc2626] shrink-0 mt-px" />
+          <div className={`flex gap-2 items-start rounded-lg px-3.5 py-2.5 mb-3.5 border ${
+            dupOf.sameSupplier ? 'bg-[#fef2f2] border-[#fca5a5]' : 'bg-[#fffbeb] border-[#fbbf24]'}`}>
+            <AlertTriangle size={18} className={`shrink-0 mt-px ${dupOf.sameSupplier ? 'text-[#dc2626]' : 'text-[#b45309]'}`} />
             <div>
-              <strong className="text-[#dc2626] text-[13px]">Invoice already uploaded</strong>
-              <div className="text-xs text-[#7f1d1d] mt-0.5">
-                Invoice <strong>{dupOf.receipt_no}</strong> was previously saved
-                ({[dupOf.supplier, dupOf.date].filter(Boolean).join(' · ')}
-                {dupOf.total_inc_gst ? ` · ${fmtCurrency(dupOf.total_inc_gst)}` : ''}).
-                Check before saving again.
+              <strong className={`text-[13px] ${dupOf.sameSupplier ? 'text-[#dc2626]' : 'text-[#b45309]'}`}>
+                {dupOf.sameSupplier ? 'Invoice already entered' : 'Same invoice number, different supplier'}
+              </strong>
+              <div className={`text-xs mt-0.5 ${dupOf.sameSupplier ? 'text-[#7f1d1d]' : 'text-[#78350f]'}`}>
+                Invoice <strong>{dupOf.row.receipt_no}</strong> was previously saved
+                ({[dupOf.row.supplier, fmtDate(dupOf.row.date)].filter(Boolean).join(' · ')}
+                {dupOf.row.total_inc_gst ? ` · ${fmtCurrency(dupOf.row.total_inc_gst)}` : ''}).
+                {dupOf.sameSupplier ? ' Check before saving again.' : ' Probably a coincidence, but worth a look.'}
               </div>
-              <button onClick={() => { setDupOf(null); openEdit(dupOf) }}
-                className="text-xs text-[#dc2626] underline mt-1">Open the existing entry instead</button>
+              <button onClick={() => { const r = dupOf.row; setDupOf(null); openEdit(r) }}
+                className={`text-xs underline mt-1 ${dupOf.sameSupplier ? 'text-[#dc2626]' : 'text-[#b45309]'}`}>
+                Open the existing entry instead
+              </button>
             </div>
           </div>
         )}
