@@ -293,7 +293,7 @@ export default function Materials() {
             className="flex items-center gap-1.5 px-3 py-1.5 text-[13px] bg-white border border-black/20 rounded-lg hover:bg-[#f5f4f0]">
             <ScanLine size={14} /> Gallery
           </button>
-          <input ref={galRef} type="file" accept="image/*" className="hidden" onChange={handleHeaderScan} />
+          <input ref={galRef} type="file" accept="image/*,application/pdf" className="hidden" onChange={handleHeaderScan} />
           <button onClick={openNew}
             className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white font-medium text-[13px] px-3 py-1.5 rounded-lg transition-colors">
             <Plus size={14} /> Add Material
@@ -457,7 +457,7 @@ export default function Materials() {
           <h2 className="text-base font-semibold text-gray-900">{form.id ? 'Edit material' : 'Add material'}</h2>
           <label className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border transition-colors cursor-pointer
             ${scanning ? 'border-blue-500/50 bg-blue-600/10 text-blue-600' : 'border-gray-200 bg-gray-50 text-gray-500 hover:text-gray-900 hover:border-gray-600'}`}>
-            <input ref={scanInputRef} type="file" accept="image/*" className="hidden" onChange={handleScan} disabled={scanning} />
+            <input ref={scanInputRef} type="file" accept="image/*,application/pdf" className="hidden" onChange={handleScan} disabled={scanning} />
             {scanning ? <Loader2 size={12} className="animate-spin" /> : <Scan size={12} />}
             {scanning ? 'Scanning…' : 'Scan invoice'}
           </label>

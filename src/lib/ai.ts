@@ -22,7 +22,11 @@ export interface InvoiceExtraction {
 
 async function callClaude(
   apiKey: string, messages: any[], system?: string,
-  opts?: { model?: string; maxTokens?: number },
+  opts?: {
+    model?: string; maxTokens?: number; temperature?: number
+    /** Forces the reply through a schema, so the result is always valid JSON. */
+    tool?: { name: string; description: string; input_schema: any }
+  },
 ): Promise<string> {
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
@@ -37,6 +41,8 @@ async function callClaude(
       max_tokens: opts?.maxTokens ?? 1024,
       system: system ?? 'You are a helpful assistant for a painting business in Australia.',
       messages,
+      ...(opts?.temperature != null ? { temperature: opts.temperature } : {}),
+      ...(opts?.tool ? { tools: [opts.tool], tool_choice: { type: 'tool', name: opts.tool.name } } : {}),
     }),
   })
 
@@ -46,7 +52,32 @@ async function callClaude(
   }
 
   const data = await res.json()
-  return data.content?.[0]?.text ?? ''
+  if (opts?.tool) {
+    const block = data.content?.find((c: any) => c.type === 'tool_use')
+    if (!block) throw new Error('AI did not return structured data. Try again.')
+    return JSON.stringify(block.input ?? {})
+  }
+  return data.content?.find((c: any) => c.type === 'text')?.text ?? data.content?.[0]?.text ?? ''
+}
+
+/** Shrink a large photo before sending. A phone shot can be 10MB+, which makes
+ *  the request slow and can push it past the API's size limit; the service
+ *  downscales past ~1568px anyway, so nothing legible is lost. */
+async function shrinkImage(file: File, maxEdge = 1568): Promise<Blob> {
+  if (!file.type.startsWith('image/')) return file
+  const bitmap = await createImageBitmap(file).catch(() => null)
+  if (!bitmap) return file
+  const scale = Math.min(1, maxEdge / Math.max(bitmap.width, bitmap.height))
+  if (scale === 1 && file.size < 4_000_000) { bitmap.close?.(); return file }
+  const canvas = document.createElement('canvas')
+  canvas.width = Math.round(bitmap.width * scale)
+  canvas.height = Math.round(bitmap.height * scale)
+  const ctx = canvas.getContext('2d')
+  if (!ctx) { bitmap.close?.(); return file }
+  ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height)
+  bitmap.close?.()
+  const blob = await new Promise<Blob | null>(r => canvas.toBlob(r, 'image/jpeg', 0.92))
+  return blob && blob.size < file.size ? blob : file
 }
 
 // Convert a File (image or PDF first-page) to base64 data URL parts
@@ -475,92 +506,116 @@ export async function extractQuantities(
 }
 
 // ── Invoice / receipt OCR ─────────────────────────────────────
-export async function extractInvoice(apiKey: string, file: File): Promise<InvoiceExtraction> {
-  const { base64, mediaType } = await fileToBase64(file)
-
-  // Claude supports image types; for PDF we'd need to use a JPEG/PNG conversion
-  // Accept: image/jpeg, image/png, image/gif, image/webp
-  const supportedImageTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp']
-  const isImage = supportedImageTypes.includes(mediaType)
-
-  let messages: any[]
-
-  if (isImage) {
-    messages = [{
-      role: 'user',
-      content: [
-        {
-          type: 'image',
-          source: { type: 'base64', media_type: mediaType, data: base64 },
+const INVOICE_TOOL = {
+  name: 'record_invoice',
+  description: 'Record the fields read off a supplier invoice or receipt.',
+  input_schema: {
+    type: 'object',
+    required: ['supplier', 'description', 'date', 'receipt_no', 'job_address', 'items',
+               'cost_ex_gst', 'gst', 'total_inc_gst', 'category', 'notes'],
+    properties: {
+      supplier: { type: 'string', description: 'Trading name of the supplier. Empty string if not printed.' },
+      description: { type: 'string', description: 'Short summary of the purchase, e.g. "Dulux Weathershield 15L x2, masking tape, rollers".' },
+      date: { type: 'string', description: 'Invoice date as YYYY-MM-DD. Australian invoices print dd/mm/yyyy, so 03/09/2026 is 3 September. Empty string if absent.' },
+      receipt_no: { type: 'string', description: 'Invoice, receipt, docket or order number exactly as printed. Empty string if absent.' },
+      job_address: { type: 'string', description: 'Delivery or site address. Not the address of the supplier, and not the billing address. Empty string if absent.' },
+      items: {
+        type: 'array',
+        description: 'One entry per line item actually printed. Empty array if the invoice shows no itemised lines.',
+        items: {
+          type: 'object',
+          required: ['description', 'qty', 'total_ex_gst'],
+          properties: {
+            description: { type: 'string' },
+            qty: { type: 'number' },
+            total_ex_gst: { type: 'number', description: 'Line total excluding GST, not the unit price.' },
+          },
         },
-        {
-          type: 'text',
-          text: `This is a receipt or invoice from a painting supplies or trade supplier in Australia.
-Extract the following fields and return ONLY valid JSON (no markdown, no explanation):
-{
-  "supplier": "supplier/store name",
-  "description": "brief description of what was purchased (e.g. Dulux Weathershield 15L x2, masking tape, rollers)",
-  "date": "YYYY-MM-DD or empty string if not found",
-  "receipt_no": "invoice or receipt number or empty string",
-  "job_address": "delivery or site address printed on the invoice, or empty string",
-  "items": [{"description": "line item", "qty": number, "total_ex_gst": number}],
-  "cost_ex_gst": number or null,
-  "gst": number or null,
-  "total_inc_gst": number or null,
-  "category": "one of: Paint, Primer/Undercoat, Filler/Putty, Tape/Masking, Brushes/Rollers, Sandpaper/Prep, Caulk/Sealant, Solvent/Cleaner, Hardware, Other",
-  "notes": "any additional useful info"
+      },
+      cost_ex_gst: { type: ['number', 'null'], description: 'Invoice subtotal excluding GST.' },
+      gst: { type: ['number', 'null'], description: 'GST amount.' },
+      total_inc_gst: { type: ['number', 'null'], description: 'Grand total including GST — the amount payable.' },
+      category: {
+        type: 'string',
+        enum: ['Paint', 'Primer/Undercoat', 'Filler/Putty', 'Tape/Masking', 'Brushes/Rollers',
+               'Sandpaper/Prep', 'Caulk/Sealant', 'Solvent/Cleaner', 'Hardware', 'Other'],
+        description: 'Best fit for the bulk of the spend.',
+      },
+      notes: { type: 'string', description: 'Anything useful that has no other field — account number, PO reference, whether it is a credit note. Empty string if nothing.' },
+    },
+  },
 }
-If GST is shown, use it. If only total is shown and no GST line, calculate GST as total/11 and ex-GST as total - GST.
-If only ex-GST shown, calculate GST as ex-GST * 0.1 and total as ex-GST * 1.1.`,
-        },
-      ],
-    }]
-  } else {
-    // PDF or unsupported — try text extraction prompt only
-    messages = [{
-      role: 'user',
-      content: `I have a receipt/invoice file but cannot display it. Please return a default empty extraction as JSON:
-{
-  "supplier": "",
-  "description": "",
-  "date": "",
-  "receipt_no": "",
-  "job_address": "",
-  "items": [],
-  "cost_ex_gst": null,
-  "gst": null,
-  "total_inc_gst": null,
-  "category": "Other",
-  "notes": "PDF files need to be converted to image first for AI reading"
-}`,
-    }]
-  }
 
-  const raw = await callClaude(
-    apiKey,
-    messages,
-    'You extract invoice data from images. Return ONLY valid JSON, no markdown fences, no explanation.',
+const INVOICE_SYSTEM = `You read supplier invoices and receipts for an Australian painting business and record exactly what is printed.
+
+Rules:
+- Transcribe. Never guess, never round, never invent a value. If something is not printed, leave it empty or null.
+- Dates are Australian: dd/mm/yyyy. 03/09/2026 is 3 September 2026, not 9 March. Return YYYY-MM-DD.
+- Money: ignore thousands separators. "1.234,56" and "1,234.56" are both 1234.56.
+- Prefer totals printed on the invoice over anything you calculate. Only derive a missing figure:
+  * total but no GST line -> gst = total / 11, cost_ex_gst = total - gst
+  * ex-GST only -> gst = ex * 0.1, total = ex * 1.1
+- Some suppliers print prices inc GST per line. Line totals must be EXCLUDING GST; divide by 1.1 if the invoice says prices include GST.
+- Line items should add up to cost_ex_gst. If they do not, trust the printed subtotal and still record the lines as printed.
+- A credit note or refund has negative amounts. Keep the sign and say so in notes.
+- The job address is the delivery or site address. A supplier's own address, or the account holder's billing address, is not it — leave job_address empty rather than using those.
+- Ignore anything already-paid, account balances, or previous-statement figures. Only this invoice.`
+
+export async function extractInvoice(apiKey: string, file: File): Promise<InvoiceExtraction> {
+  const prepared = await shrinkImage(file)
+  const { base64, mediaType } = await fileToBase64(
+    prepared instanceof File ? prepared : new File([prepared], file.name, { type: 'image/jpeg' }),
   )
 
+  const imageTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp']
+  const isImage = imageTypes.includes(mediaType)
+  const isPdf = mediaType === 'application/pdf'
+
+  if (!isImage && !isPdf) {
+    throw new Error(`Cannot read ${mediaType || 'that file type'}. Use a photo (JPG or PNG) or a PDF.`)
+  }
+
+  const messages = [{
+    role: 'user',
+    content: [
+      isPdf
+        // PDFs are sent as documents, so multi-page supplier invoices read
+        // properly instead of being refused.
+        ? { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64 } }
+        : { type: 'image', source: { type: 'base64', media_type: mediaType, data: base64 } },
+      { type: 'text', text: 'Read this invoice and record its fields with the record_invoice tool.' },
+    ],
+  }]
+
+  const raw = await callClaude(apiKey, messages, INVOICE_SYSTEM, {
+    // Every other call in this file uses Sonnet; this one was falling through
+    // to the Haiku default, which is why the scans were unreliable.
+    model: 'claude-sonnet-4-6',
+    maxTokens: 4096,
+    temperature: 0,
+    tool: INVOICE_TOOL,
+  })
+
+  let parsed: any
   try {
-    // Strip any accidental markdown fences
-    const cleaned = raw.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim()
-    const parsed = JSON.parse(cleaned)
-    return {
-      supplier:       String(parsed.supplier ?? ''),
-      description:    String(parsed.description ?? ''),
-      date:           String(parsed.date ?? ''),
-      receipt_no:     String(parsed.receipt_no ?? ''),
-      cost_ex_gst:    parsed.cost_ex_gst != null ? Number(parsed.cost_ex_gst) : null,
-      gst:            parsed.gst != null ? Number(parsed.gst) : null,
-      total_inc_gst:  parsed.total_inc_gst != null ? Number(parsed.total_inc_gst) : null,
-      category:       String(parsed.category ?? 'Other'),
-      notes:          String(parsed.notes ?? ''),
-      job_address:    String(parsed.job_address ?? ''),
-      items: normaliseLineItems(parsed.items),
-    }
+    parsed = JSON.parse(raw)
   } catch {
-    throw new Error('AI returned unexpected format. Check your API key and try again.')
+    throw new Error('AI returned unexpected format. Try again, or use a clearer photo.')
+  }
+
+  const num = (v: any) => (v == null || v === '' ? null : (Number(v) || 0))
+  return {
+    supplier:       String(parsed.supplier ?? ''),
+    description:    String(parsed.description ?? ''),
+    date:           String(parsed.date ?? ''),
+    receipt_no:     String(parsed.receipt_no ?? ''),
+    cost_ex_gst:    num(parsed.cost_ex_gst),
+    gst:            num(parsed.gst),
+    total_inc_gst:  num(parsed.total_inc_gst),
+    category:       String(parsed.category ?? 'Other'),
+    notes:          String(parsed.notes ?? ''),
+    job_address:    String(parsed.job_address ?? ''),
+    items: normaliseLineItems(parsed.items),
   }
 }
 
