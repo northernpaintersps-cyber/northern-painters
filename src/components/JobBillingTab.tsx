@@ -9,7 +9,7 @@ import { useQuery } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/lib/auth'
 import { fmtCurrency, fmtDate, invStatus } from '@/lib/utils'
-import { computeJobBilling, billingBreakdown } from '@/lib/jobBilling'
+import { computeJobBilling, billingBreakdown, unbilledSummary } from '@/lib/jobBilling'
 import { useBusinessSettings } from '@/pages/SettingsPage'
 
 function Tile({ label, value, color, sub }: {
@@ -123,6 +123,20 @@ export default function JobBillingTab({ job, jobId }: { job: any; jobId: string 
       {b.basis === 'actuals' && b.billableToDateExGST > 0 && (
         <div className="text-[11px] text-[#666]">{billingBreakdown(b)}</div>
       )}
+
+      <div className="rounded-lg border border-black/[0.12] px-3 py-2 text-[11px]">
+        {b.invoicedUpTo
+          ? <div>Invoiced up to <b>{fmtDate(b.invoicedUpTo)}</b></div>
+          : <div className="text-[#666]">
+              No invoice records the period it covers yet. Set “Covers work to” on an
+              invoice and this will show how far the billing has been carried.
+            </div>}
+        {unbilledSummary(b)
+          ? <div className="text-[#b45309] mt-0.5">{unbilledSummary(b)}</div>
+          : b.invoicedUpTo
+            ? <div className="text-[#16a34a] mt-0.5">All logged work is covered.</div>
+            : null}
+      </div>
 
       {b.hasValue && (
         <div>

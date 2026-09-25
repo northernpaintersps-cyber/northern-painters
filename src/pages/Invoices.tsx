@@ -11,7 +11,7 @@ import {
   ArrowUpDown, List, BarChart3, Info, MapPin,
 } from 'lucide-react'
 import { useBusinessSettings } from '@/pages/SettingsPage'
-import { computeJobBilling, billingBreakdown, type JobBilling } from '@/lib/jobBilling'
+import { computeJobBilling, billingBreakdown, unbilledSummary, type JobBilling } from '@/lib/jobBilling'
 
 type Invoice = Record<string, any>
 
@@ -159,6 +159,13 @@ export default function Invoices() {
     [paySchedules, form.job_id])
 
   function set(k: string, v: any) { setForm(prev => ({ ...prev, [k]: v })) }
+  function setExtra(k: string, v: any) {
+    setForm(prev => {
+      const extra = { ...(prev.extra ?? {}) }
+      if (v === '' || v == null) delete extra[k]; else extra[k] = v
+      return { ...prev, extra }
+    })
+  }
   const fld = (k: string) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
     const val: any = e.target.value
     if (k === 'agreed_ex_gst') {
@@ -336,13 +343,21 @@ export default function Invoices() {
             const ex = ms
               ? Math.round(exOf(ms.amount) * 100) / 100
               : Math.round(Math.max(0, b.billableToDateExGST - b.invoicedExGST) * 100) / 100
+            // Pick up where the last claim stopped, through to today.
+            const from = b.invoicedUpTo
+              ? new Date(new Date(b.invoicedUpTo).getTime() + 86400000).toISOString().slice(0, 10)
+              : (b.unbilled.fromDate || '')
             openNew({
               job_id: j.id, client: j.client,
               notes: ms ? `${j.job_desc || j.client} — ${ms.label}` : (j.job_desc || ''),
               agreed_ex_gst: ex || undefined,
               gst: +(ex * 0.1).toFixed(2),
               total_inc_gst: +(ex * 1.1).toFixed(2),
-              ...(ms ? { extra: { milestone_index: milestoneIndex, milestone_job_id: j.id } } : {}),
+              extra: {
+                ...(ms ? { milestone_index: milestoneIndex, milestone_job_id: j.id } : {}),
+                ...(from ? { covers_from: from } : {}),
+                covers_to: today(),
+              },
             })
           }}
         />
@@ -474,6 +489,13 @@ export default function Invoices() {
           <Input label="Client" value={form.client || ''} onChange={fld('client')} />
           <Input label="Invoice date" type="date" value={form.date || ''} onChange={fld('date')} />
           <Input label="Due date" type="date" value={form.due_date || ''} onChange={fld('due_date')} />
+          {/* A progress claim covers a period, which is not the same as the date
+              it was raised. Recording it is what lets the job say how far the
+              billing has been carried. */}
+          <Input label="Covers work from" type="date" value={form.extra?.covers_from || ''}
+            onChange={e => setExtra('covers_from', e.target.value)} />
+          <Input label="Covers work to" type="date" value={form.extra?.covers_to || ''}
+            onChange={e => setExtra('covers_to', e.target.value)} />
           <Input label="Amount ex GST ($)" type="number" value={form.agreed_ex_gst || ''} onChange={fld('agreed_ex_gst')} min={0} />
           <Input label="GST ($)" type="number" value={form.gst || ''} readOnly className="opacity-60 cursor-not-allowed" />
           <Input label="Total inc GST ($)" type="number" value={form.total_inc_gst || ''} readOnly className="opacity-60 cursor-not-allowed" />
@@ -617,6 +639,15 @@ function JobFinancialSummary({
             {isEstimate && b.billableToDateExGST > 0 && (
               <div className="text-[10px] text-[#666] mb-2">{billingBreakdown(b)}</div>
             )}
+
+            <div className="text-[10px] mb-2">
+              {b.invoicedUpTo
+                ? <span className="text-[#666]">Invoiced up to <b>{fmtDate(b.invoicedUpTo)}</b></span>
+                : <span className="text-[#999]">No invoice records the period it covers yet</span>}
+              {unbilledSummary(b) && (
+                <span className="text-[#b45309]"> · {unbilledSummary(b)}</span>
+              )}
+            </div>
 
             {b.milestones.length > 0 && (
               <div className="flex flex-wrap gap-1.5 mb-2">

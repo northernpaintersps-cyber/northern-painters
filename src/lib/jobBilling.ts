@@ -36,6 +36,19 @@ export interface MilestoneView extends Milestone {
   mismatch: boolean
 }
 
+/** Work logged on the job that no invoice period covers yet. */
+export interface UnbilledWork {
+  labourCount: number
+  materialCount: number
+  valueExGST: number
+  valueIncGST: number
+  /** Earliest and latest date among those entries, '' when none. */
+  fromDate: string
+  toDate: string
+  /** True when an entry carries no date at all, so it cannot be placed. */
+  hasUndated: boolean
+}
+
 export interface JobBilling {
   basis: BillingBasis
 
@@ -59,6 +72,11 @@ export interface JobBilling {
   overBilledIncGST: number
   invoicePct: number
   paidPct: number
+
+  /** Latest extra.covers_to across this job's invoices — how far the billing
+   *  has been carried. Null when no invoice records a period. */
+  invoicedUpTo: string | null
+  unbilled: UnbilledWork
 
   invoices: Row[]
   milestones: MilestoneView[]
@@ -135,6 +153,36 @@ export function computeJobBilling(input: {
   const invoicePct = hasValue ? Math.min(100, (invoicedIncGST / billableToDateIncGST) * 100) : 0
   const paidPct = invoicedIncGST > 0 ? Math.min(100, (receivedIncGST / invoicedIncGST) * 100) : 0
 
+  // How far billing has been carried. Progress claims cover a period, and
+  // extra.covers_to is where the last one stopped — the invoice's own date is
+  // not the same thing, since a claim raised on the 12th may only cover work to
+  // the 5th. Without a recorded period nothing can be said about the cutoff.
+  const periods = invoices
+    .map(i => i.extra?.covers_to)
+    .filter((d): d is string => typeof d === 'string' && !!d)
+  const invoicedUpTo = periods.length ? periods.reduce((a, b) => (a > b ? a : b)) : null
+
+  // Anything dated after that cutoff is not yet covered. Undated entries are
+  // counted as uncovered too — better surfaced than silently assumed billed.
+  const uncovered = (row: Row) => !invoicedUpTo || !row.date || row.date > invoicedUpTo
+  const unbilledLabour = labour.filter(l => isBillableLabour(l) && uncovered(l))
+  const unbilledMaterials = materials.filter(m => isBillableMaterial(m) && uncovered(m))
+  const unbilledDates = [...unbilledLabour, ...unbilledMaterials]
+    .map(r => r.date).filter((d): d is string => typeof d === 'string' && !!d).sort()
+  const unbilledMatCost = unbilledMaterials.reduce((s, m) => s + matCost(m), 0)
+  const unbilledExGST =
+    unbilledLabour.reduce((s, l) => s + labBillable(l), 0)
+    + unbilledMatCost * (1 + markupPct / 100)
+  const unbilled: UnbilledWork = {
+    labourCount: unbilledLabour.length,
+    materialCount: unbilledMaterials.length,
+    valueExGST: unbilledExGST,
+    valueIncGST: incOf(unbilledExGST),
+    fromDate: unbilledDates[0] ?? '',
+    toDate: unbilledDates[unbilledDates.length - 1] ?? '',
+    hasUndated: [...unbilledLabour, ...unbilledMaterials].some(r => !r.date),
+  }
+
   // A milestone's own `received` flag is ticked by hand on the Payments page,
   // so the linked invoice is the source of truth and a disagreement is flagged
   // rather than silently corrected.
@@ -152,6 +200,7 @@ export function computeJobBilling(input: {
     billableToDateExGST, billableToDateIncGST,
     invoicedIncGST, invoicedExGST, receivedIncGST, cashReceivedIncGST, owedIncGST,
     leftToInvoiceIncGST, overBilledIncGST, invoicePct, paidPct,
+    invoicedUpTo, unbilled,
     invoices, milestones, hasValue,
   }
 }
@@ -170,3 +219,22 @@ export function billingBreakdown(b: JobBilling): string {
 }
 
 const money = (n: number) => '$' + Math.round(n).toLocaleString('en-AU')
+
+/** "3 labour entries and 2 material purchases since 18 Sep — $640 ex GST". */
+export function unbilledSummary(b: JobBilling): string {
+  const u = b.unbilled
+  const bits: string[] = []
+  if (u.labourCount) bits.push(`${u.labourCount} labour ${u.labourCount === 1 ? 'entry' : 'entries'}`)
+  if (u.materialCount) bits.push(`${u.materialCount} material ${u.materialCount === 1 ? 'purchase' : 'purchases'}`)
+  if (!bits.length) return ''
+  const range = u.fromDate && u.toDate
+    ? (u.fromDate === u.toDate ? ` on ${shortDate(u.fromDate)}` : ` from ${shortDate(u.fromDate)} to ${shortDate(u.toDate)}`)
+    : ''
+  return `${bits.join(' and ')}${range} — ${money(u.valueExGST)} ex GST not yet covered`
+    + (u.hasUndated ? ' (some entries undated)' : '')
+}
+
+const shortDate = (d: string) => {
+  const dt = new Date(d)
+  return isNaN(dt.getTime()) ? d : dt.toLocaleDateString('en-AU', { day: 'numeric', month: 'short' })
+}
