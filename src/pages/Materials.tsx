@@ -7,7 +7,7 @@ import JobPicker from '@/components/JobPicker'
 import { Input, Select, TextArea } from '@/components/ui/Field'
 import {
   fmtCurrency, fmtDate, genId, today, toNum, lineItemsOf,
-  findDuplicateInvoice, type DuplicateHit, type InvoiceLineItem,
+  findDuplicateMaterial, type DuplicateHit, type InvoiceLineItem,
 } from '@/lib/utils'
 import { extractInvoice } from '@/lib/ai'
 import { useBusinessSettings } from '@/pages/SettingsPage'
@@ -162,9 +162,11 @@ export default function Materials() {
     const v = e.target.value
     // Typing an invoice number by hand gets the same check a scan does —
     // previously only scanned invoices were ever tested for duplicates.
-    if (k === 'receipt_no' || k === 'supplier') {
-      const next = { receipt_no: form.receipt_no, supplier: form.supplier, [k]: v }
-      setDupOf(findDuplicateInvoice(materials, next.receipt_no, next.supplier, form.id))
+    if (k === 'receipt_no' || k === 'supplier' || k === 'date' || k === 'cost_ex_gst') {
+      setDupOf(findDuplicateMaterial(materials, {
+        receipt_no: form.receipt_no, supplier: form.supplier,
+        date: form.date, cost_ex_gst: form.cost_ex_gst, [k]: v,
+      }, form.id))
     }
     setForm(p => {
       const next = { ...p, [k]: v }
@@ -213,7 +215,7 @@ export default function Materials() {
     setForm({ ...emptyForm(), ...m, line_items: lineItemsOf(m) })
     resetScanState()
     // Excluding this row's own id, so a row never flags itself.
-    setDupOf(findDuplicateInvoice(materials, m.receipt_no, m.supplier, m.id))
+    setDupOf(findDuplicateMaterial(materials, m, m.id))
     setModalOpen(true)
   }
 
@@ -232,7 +234,10 @@ export default function Materials() {
       const result = await extractInvoice(apiKey, file)
 
       // V16: warn if this invoice number is already on file
-      setDupOf(findDuplicateInvoice(materials, result.receipt_no, result.supplier, form.id))
+      setDupOf(findDuplicateMaterial(materials, {
+        receipt_no: result.receipt_no, supplier: result.supplier,
+        date: result.date || form.date, cost_ex_gst: result.cost_ex_gst,
+      }, form.id))
 
       // V16: auto-match a job from the delivery address on the invoice
       const addr = (result.job_address || '').toLowerCase().trim()
@@ -473,20 +478,26 @@ export default function Materials() {
         </div>
         {dupOf && (
           <div className={`flex gap-2 items-start rounded-lg px-3.5 py-2.5 mb-3.5 border ${
-            dupOf.sameSupplier ? 'bg-[#fef2f2] border-[#fca5a5]' : 'bg-[#fffbeb] border-[#fbbf24]'}`}>
-            <AlertTriangle size={18} className={`shrink-0 mt-px ${dupOf.sameSupplier ? 'text-[#dc2626]' : 'text-[#b45309]'}`} />
+            dupOf.basis === 'invoice' && dupOf.sameSupplier ? 'bg-[#fef2f2] border-[#fca5a5]' : 'bg-[#fffbeb] border-[#fbbf24]'}`}>
+            <AlertTriangle size={18} className={`shrink-0 mt-px ${dupOf.basis === 'invoice' && dupOf.sameSupplier ? 'text-[#dc2626]' : 'text-[#b45309]'}`} />
             <div>
-              <strong className={`text-[13px] ${dupOf.sameSupplier ? 'text-[#dc2626]' : 'text-[#b45309]'}`}>
-                {dupOf.sameSupplier ? 'Invoice already entered' : 'Same invoice number, different supplier'}
+              <strong className={`text-[13px] ${dupOf.basis === 'invoice' && dupOf.sameSupplier ? 'text-[#dc2626]' : 'text-[#b45309]'}`}>
+                {dupOf.basis === 'amount' ? 'Possible re-entry — same amount and date'
+                  : dupOf.sameSupplier ? 'Invoice already entered'
+                  : 'Same invoice number, different supplier'}
               </strong>
-              <div className={`text-xs mt-0.5 ${dupOf.sameSupplier ? 'text-[#7f1d1d]' : 'text-[#78350f]'}`}>
-                Invoice <strong>{dupOf.row.receipt_no}</strong> was previously saved
-                ({[dupOf.row.supplier, fmtDate(dupOf.row.date)].filter(Boolean).join(' · ')}
-                {dupOf.row.total_inc_gst ? ` · ${fmtCurrency(dupOf.row.total_inc_gst)}` : ''}).
-                {dupOf.sameSupplier ? ' Check before saving again.' : ' Probably a coincidence, but worth a look.'}
+              <div className={`text-xs mt-0.5 ${dupOf.basis === 'invoice' && dupOf.sameSupplier ? 'text-[#7f1d1d]' : 'text-[#78350f]'}`}>
+                {dupOf.basis === 'amount'
+                  ? <>No invoice number to compare, but {fmtCurrency(dupOf.row.cost_ex_gst)} ex GST
+                      from {dupOf.row.supplier || 'this supplier'} is already logged on {fmtDate(dupOf.row.date)}
+                      {dupOf.row.job_id ? ` against ${dupOf.row.job_id}` : ''}.</>
+                  : <>Invoice <strong>{dupOf.row.receipt_no}</strong> was previously saved
+                      ({[dupOf.row.supplier, fmtDate(dupOf.row.date)].filter(Boolean).join(' · ')}
+                      {dupOf.row.total_inc_gst ? ` · ${fmtCurrency(dupOf.row.total_inc_gst)}` : ''}).
+                      {dupOf.sameSupplier ? ' Check before saving again.' : ' Probably a coincidence, but worth a look.'}</>}
               </div>
               <button onClick={() => { const r = dupOf.row; setDupOf(null); openEdit(r) }}
-                className={`text-xs underline mt-1 ${dupOf.sameSupplier ? 'text-[#dc2626]' : 'text-[#b45309]'}`}>
+                className={`text-xs underline mt-1 ${dupOf.basis === 'invoice' && dupOf.sameSupplier ? 'text-[#dc2626]' : 'text-[#b45309]'}`}>
                 Open the existing entry instead
               </button>
             </div>

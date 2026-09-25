@@ -285,7 +285,8 @@ export function matchesJob(j: PickableJob, query: string): boolean {
 export const normaliseInvNo = (v: any) =>
   String(v ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '')
 
-export type DuplicateHit<T> = { row: T; sameSupplier: boolean }
+export type DuplicateBasis = 'invoice' | 'amount'
+export type DuplicateHit<T> = { row: T; sameSupplier: boolean; basis: DuplicateBasis }
 
 /**
  * An earlier row carrying the same invoice number. A match from the same
@@ -305,8 +306,56 @@ export function findDuplicateInvoice<T extends Record<string, any>>(
     if (normaliseInvNo(r.receipt_no) !== want) continue
     const rowSup = String(r.supplier ?? '').trim().toLowerCase()
     // No supplier on either side is not evidence of a different supplier.
-    if (!sup || !rowSup || rowSup === sup) return { row: r, sameSupplier: true }
+    if (!sup || !rowSup || rowSup === sup) return { row: r, sameSupplier: true, basis: 'invoice' }
     if (!fallback) fallback = r
   }
-  return fallback ? { row: fallback, sameSupplier: false } : null
+  return fallback ? { row: fallback, sameSupplier: false, basis: 'invoice' } : null
+}
+
+/** Merchant names are typed inconsistently for the same shop — "Dulux Australia"
+ *  and "Dulux Australia - Inspirations Paint Ballina" are one supplier. Exact
+ *  equality would miss most real duplicates, so compare loosely: a blank on
+ *  either side cannot contradict, one containing the other counts, and
+ *  otherwise the first word has to agree. */
+export function suppliersLookAlike(a: any, b: any): boolean {
+  const norm = (v: any) => String(v ?? '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+  const x = norm(a), y = norm(b)
+  if (!x || !y) return true
+  if (x === y || x.includes(y) || y.includes(x)) return true
+  return x.split(' ')[0] === y.split(' ')[0]
+}
+
+const cents = (v: any) => (v == null || v === '' ? null : Math.round(Number(v) * 100))
+
+/**
+ * A material already logged for the same purchase.
+ *
+ * Preferred signal is the invoice number. Two thirds of rows have none, so
+ * when it is missing this falls back to the same amount on the same date from
+ * a supplier that looks like the same one — which is what an accidental
+ * re-entry looks like.
+ */
+export function findDuplicateMaterial<T extends Record<string, any>>(
+  rows: T[],
+  candidate: { receipt_no?: any; supplier?: any; date?: any; cost_ex_gst?: any },
+  excludeId?: string,
+): DuplicateHit<T> | null {
+  const byNumber = findDuplicateInvoice(rows, candidate.receipt_no, candidate.supplier, excludeId)
+  if (byNumber) return byNumber
+  if (normaliseInvNo(candidate.receipt_no)) return null   // it has a number and it did not match
+
+  const amt = cents(candidate.cost_ex_gst)
+  const date = String(candidate.date ?? '').trim()
+  if (amt == null || amt === 0 || !date) return null
+
+  for (const r of rows) {
+    if (excludeId && r.id === excludeId) continue
+    if (cents(r.cost_ex_gst) !== amt) continue
+    if (String(r.date ?? '').trim() !== date) continue
+    if (!suppliersLookAlike(candidate.supplier, r.supplier)) continue
+    const exact = String(candidate.supplier ?? '').trim().toLowerCase()
+      === String(r.supplier ?? '').trim().toLowerCase()
+    return { row: r, sameSupplier: exact, basis: 'amount' }
+  }
+  return null
 }
