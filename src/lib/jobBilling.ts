@@ -16,7 +16,7 @@
 // running the app.
 
 import {
-  incOf, invIncGST, invExGST, calcOwed,
+  jobGstRate, isCashJob, invIncGST, invExGST, calcOwed,
   labBillable, isBillableLabour,
   matCost, isBillableMaterial,
   parseMilestones, type Milestone,
@@ -51,6 +51,8 @@ export interface UnbilledWork {
 
 export interface JobBilling {
   basis: BillingBasis
+  /** True when the job is off the books, so its figures carry no GST. */
+  cash: boolean
 
   contractExGST: number          // fixed basis only, else 0
   variationsExGST: number
@@ -137,7 +139,9 @@ export function computeJobBilling(input: {
   const billableToDateExGST = basis === 'fixed'
     ? contractExGST + variationsExGST
     : labourBillableExGST + materialsBillableExGST + variationsExGST
-  const billableToDateIncGST = incOf(billableToDateExGST)
+  // A cash job is not invoiced, so no GST is added on top of what was agreed.
+  const gstRate = jobGstRate(job)
+  const billableToDateIncGST = Math.round(billableToDateExGST * (1 + gstRate) * 100) / 100
 
   const invoicedIncGST = invoices.reduce((s, i) => s + invIncGST(i), 0)
   const invoicedExGST = invoices.reduce((s, i) => s + invExGST(i), 0)
@@ -177,7 +181,7 @@ export function computeJobBilling(input: {
     labourCount: unbilledLabour.length,
     materialCount: unbilledMaterials.length,
     valueExGST: unbilledExGST,
-    valueIncGST: incOf(unbilledExGST),
+    valueIncGST: Math.round(unbilledExGST * (1 + gstRate) * 100) / 100,
     fromDate: unbilledDates[0] ?? '',
     toDate: unbilledDates[unbilledDates.length - 1] ?? '',
     hasUndated: [...unbilledLabour, ...unbilledMaterials].some(r => !r.date),
@@ -195,6 +199,7 @@ export function computeJobBilling(input: {
 
   return {
     basis,
+    cash: isCashJob(job),
     contractExGST, variationsExGST,
     labourBillableExGST, materialsBillableExGST, materialsMarkupExGST,
     billableToDateExGST, billableToDateIncGST,

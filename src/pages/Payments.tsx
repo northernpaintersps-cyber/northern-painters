@@ -5,7 +5,10 @@ import { useAuth } from '@/lib/auth'
 import { Modal } from '@/components/ui/Modal'
 import JobPicker from '@/components/JobPicker'
 import { Input } from '@/components/ui/Field'
-import { fmtCurrency, genId, parseMilestones, incOf, today } from '@/lib/utils'
+import {
+  fmtCurrency, genId, parseMilestones, today,
+  isCashJob, jobTotal, gstLabel,
+} from '@/lib/utils'
 import { billingBasis } from '@/lib/jobBilling'
 import { Plus, Loader2, Trash2, Copy, Check, Banknote } from 'lucide-react'
 import { useBusinessSettings } from '@/pages/SettingsPage'
@@ -21,8 +24,9 @@ const STRUCTURES = [
 ]
 
 // V16 buildMS()
-function buildMS(agreed: number, struct: string, dep: number, start: string): Milestone[] {
-  const inc = agreed * 1.1
+function buildMS(agreed: number, struct: string, dep: number, start: string, job?: any): Milestone[] {
+  // A cash job is not invoiced, so the agreed figure is the whole amount.
+  const inc = jobTotal(job, agreed)
   const rem = 100 - dep
   const addD = (d: string, n: number) => {
     if (!d) return ''
@@ -124,9 +128,10 @@ export default function Payments() {
     const ms = msOf(s)
     const rec = ms.reduce((b, m) => b + (m.received ? m.amount : 0), 0)
     const sched = ms.reduce((b, m) => b + (m.amount || 0), 0)
-    const isFixed = billingBasis(jobs.find(j => j.id === s.id)) === 'fixed'
-    const target = isFixed ? incOf(s.amount || 0) : sched
-    acc.value += incOf(s.amount || 0)
+    const job = jobs.find(j => j.id === s.id)
+    const isFixed = billingBasis(job) === 'fixed'
+    const target = isFixed ? jobTotal(job, s.amount || 0) : sched
+    acc.value += jobTotal(job, s.amount || 0)
     acc.received += rec
     acc.left += Math.max(0, target - rec)
     return acc
@@ -134,8 +139,8 @@ export default function Payments() {
   const overdue = filtered.reduce((a, s) => a + msOf(s).filter(m => !m.received && m.dueDate && m.dueDate < todayStr).length, 0)
 
   const preview = useMemo(
-    () => (typeof value === 'number' && value > 0 ? buildMS(value, struct, depPct, start) : []),
-    [value, struct, depPct, start],
+    () => (typeof value === 'number' && value > 0 ? buildMS(value, struct, depPct, start, jobs.find(x => x.id === jobId)) : []),
+    [value, struct, depPct, start, jobId, jobs],
   )
 
   function openNew() {
@@ -145,7 +150,7 @@ export default function Payments() {
   async function create() {
     if (!value || value <= 0) { alert('Enter agreed value'); return }
     const j = jobs.find(x => x.id === jobId)
-    const ms = buildMS(value, struct, depPct, start)
+    const ms = buildMS(value, struct, depPct, start, j)
     await upsert.mutateAsync({
       id: jobId || genId('ps'),
       worker: j?.client || 'Unknown',
@@ -232,7 +237,7 @@ export default function Payments() {
 
       <div className="grid gap-2.5 mb-3.5" style={{ gridTemplateColumns: 'repeat(auto-fit,minmax(140px,1fr))' }}>
         {[
-          { l: 'Job value (inc GST)', v: fmtCurrency(totals.value), c: '#2563eb' },
+          { l: 'Job value (payable)', v: fmtCurrency(totals.value), c: '#2563eb' },
           { l: 'Received', v: fmtCurrency(totals.received), c: '#16a34a' },
           { l: 'Left to pay', v: fmtCurrency(totals.left), c: '#d97706' },
           { l: 'Overdue', v: String(overdue), c: overdue ? '#dc2626' : undefined },
@@ -262,7 +267,8 @@ export default function Payments() {
         // A fixed quote has to add up to the contract; an estimate is open-ended,
         // so the final total does not have to match what was estimated.
         const isFixed = billingBasis(job) === 'fixed'
-        const contractIncGST = incOf(s.amount || 0)
+        const cash = isCashJob(job)
+        const contractIncGST = jobTotal(job, s.amount || 0)
         // Progress is measured against the contract on a fixed job, and against
         // what has actually been scheduled on an estimate.
         const target = isFixed ? contractIncGST : scheduled
@@ -280,8 +286,12 @@ export default function Payments() {
                     isFixed ? 'bg-[#e0f2fe] text-[#0369a1]' : 'bg-[#fef3c7] text-[#92400e]'}`}>
                     {isFixed ? 'Fixed price' : 'Estimate / hourly'}
                   </span>
+                  <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-semibold ${
+                    cash ? 'bg-[#dcfce7] text-[#166534]' : 'bg-[#f1f0e8] text-[#5f5e5a]'}`}>
+                    {cash ? 'Cash — no GST' : 'On the books'}
+                  </span>
                 </div>
-                <div className="text-xs text-[#666]">{job?.job_desc || ''} · {fmtCurrency(s.amount)} ex GST</div>
+                <div className="text-xs text-[#666]">{job?.job_desc || ''} · {fmtCurrency(s.amount)} {cash ? 'cash' : 'ex GST'}</div>
               </div>
               <div className="flex gap-2">
                 <button onClick={() => copyMsg(s)}
@@ -297,7 +307,7 @@ export default function Payments() {
 
             <div className="grid gap-2 mb-2.5" style={{ gridTemplateColumns: 'repeat(auto-fit,minmax(120px,1fr))' }}>
               {([
-                [isFixed ? 'Quoted inc GST' : 'Estimated inc GST', fmtCurrency(contractIncGST), '#2563eb'],
+                [`${isFixed ? 'Quoted' : 'Estimated'} ${cash ? '(no GST)' : 'inc GST'}`, fmtCurrency(contractIncGST), '#2563eb'],
                 ['Scheduled', fmtCurrency(scheduled), undefined],
                 ['Received', fmtCurrency(received), '#16a34a'],
                 ['Left to pay', leftToPay > 0 ? fmtCurrency(leftToPay) : 'Paid in full', leftToPay > 0 ? '#d97706' : '#16a34a'],
@@ -313,13 +323,13 @@ export default function Payments() {
               Math.abs(unallocated) >= 1 && (
                 <div className="text-[11px] mb-2 px-2.5 py-1.5 rounded-lg bg-[#fffbeb] border border-[#fbbf24] text-[#92400e]">
                   {unallocated > 0
-                    ? <>Schedule totals {fmtCurrency(scheduled)} of {fmtCurrency(contractIncGST)} quoted — <b>{fmtCurrency(unallocated)} not yet scheduled</b>.</>
+                    ? <>Schedule totals {fmtCurrency(scheduled)} of {fmtCurrency(contractIncGST)} quoted{cash ? ' (cash, no GST)' : ''} — <b>{fmtCurrency(unallocated)} not yet scheduled</b>.</>
                     : <>Schedule totals {fmtCurrency(scheduled)}, which is <b>{fmtCurrency(-unallocated)} over</b> the {fmtCurrency(contractIncGST)} quoted.</>}
                 </div>
               )
             ) : (
               <div className="text-[11px] mb-2 text-[#666]">
-                Estimated {fmtCurrency(contractIncGST)} inc GST — payments do not have to add up to it.
+                Estimated {fmtCurrency(contractIncGST)} {gstLabel(job)} — payments do not have to add up to it.
               </div>
             )}
 
@@ -331,7 +341,7 @@ export default function Payments() {
             <table className="w-full border-collapse text-[12.5px] mt-2.5">
               <thead>
                 <tr>
-                  {['Milestone','Amount inc GST','Due','Status',''].map((h, i) => (
+                  {['Milestone', cash ? 'Amount (no GST)' : 'Amount inc GST', 'Due', 'Status', ''].map((h, i) => (
                     <th key={i} className="px-2 py-1.5 text-left border-b border-black/[0.12] text-[#666] font-medium">{h}</th>
                   ))}
                 </tr>

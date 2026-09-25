@@ -454,3 +454,24 @@ export function findOverlappingLabour<T extends Record<string, any>>(
   }
   return null
 }
+
+// ── Cash vs on the books ─────────────────────────────────────
+// np_jobs.on_books is 'Invoiced' or 'Cash'. A cash job is not invoiced and
+// carries no GST, so every figure derived from its agreed price is the price
+// itself. Anything deriving a total from a job must go through these, or the
+// two kinds of job drift apart page to page.
+
+export const isCashJob = (job: { on_books?: string | null } | undefined | null) =>
+  String(job?.on_books ?? '').trim().toLowerCase() === 'cash'
+
+/** 0.1 for an invoiced job, 0 for cash. */
+export const jobGstRate = (job: { on_books?: string | null } | undefined | null) =>
+  isCashJob(job) ? 0 : GST
+
+/** The client-facing total for an amount on this job. Unchanged when cash. */
+export const jobTotal = (job: { on_books?: string | null } | undefined | null, ex: number) =>
+  Math.round(ex * (1 + jobGstRate(job)) * 100) / 100
+
+/** "inc GST" / "" — for labelling a figure that may or may not carry GST. */
+export const gstLabel = (job: { on_books?: string | null } | undefined | null) =>
+  isCashJob(job) ? 'cash — no GST' : 'inc GST'
