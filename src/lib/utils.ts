@@ -475,3 +475,33 @@ export const jobTotal = (job: { on_books?: string | null } | undefined | null, e
 /** "inc GST" / "" — for labelling a figure that may or may not carry GST. */
 export const gstLabel = (job: { on_books?: string | null } | undefined | null) =>
   isCashJob(job) ? 'cash — no GST' : 'inc GST'
+
+// ── Job billing type ─────────────────────────────────────────
+// Labour and materials rows each carry their own billing_type, which used to
+// be set by hand on every entry. It belongs to the job, so it is derived here
+// once and used as the default when a job is picked — still editable per row,
+// because one-off lines on a job genuinely do differ.
+
+export const BILLING_TYPES = ['Fixed Quote', 'Hourly', 'Hourly/Estimate'] as const
+export type BillingType = typeof BILLING_TYPES[number]
+
+/**
+ * The billing type of a job.
+ *
+ * Prefers an explicit billing_type column if one is ever added, otherwise
+ * reads the job's terms — the same test billingBasis uses, so a job cannot be
+ * hourly for one purpose and fixed for another.
+ */
+export function jobBillingType(job: { billing_type?: string | null; terms?: string | null } | undefined | null): BillingType {
+  const explicit = String(job?.billing_type ?? '').trim()
+  if ((BILLING_TYPES as readonly string[]).includes(explicit)) return explicit as BillingType
+  const terms = String(job?.terms ?? '').toLowerCase()
+  if (terms.includes('estimate')) return 'Hourly/Estimate'
+  if (terms.includes('hourly')) return 'Hourly'
+  return 'Fixed Quote'
+}
+
+/** Both classifications of a job, for defaulting a new labour or material row. */
+export function jobDefaults(job: { billing_type?: string | null; terms?: string | null; on_books?: string | null } | undefined | null) {
+  return { billing_type: jobBillingType(job), on_books: isCashJob(job) ? 'Cash' : 'Invoiced' }
+}

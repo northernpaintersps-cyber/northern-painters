@@ -2,7 +2,7 @@ import { useState, useMemo, useRef } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { supabase, selectAll } from '@/lib/supabase'
 import { useAuth } from '@/lib/auth'
-import { fmtCurrency, invStatus, today } from '@/lib/utils'
+import { fmtCurrency, invStatus, isCashJob, today } from '@/lib/utils'
 import { reconcileBankStatement } from '@/lib/ai'
 import {
   Printer, Loader2, FileSpreadsheet, Download, ReceiptText, LineChart,
@@ -119,6 +119,15 @@ export default function Tax() {
   const { data: materials = [] } = useTable('np_materials')
   const { data: expenses = [] } = useTable('np_expenses')
   const { data: labour = [] } = useTable('np_labour')
+  const { data: jobs = [] } = useTable('np_jobs')
+
+  // Cash jobs are off the books: their income, materials, labour and expenses
+  // are excluded from BAS and from the tax summary entirely. Rows with no job
+  // are overheads and stay in.
+  const cashJobIds = useMemo(
+    () => new Set(jobs.filter(isCashJob).map(j => j.id)),
+    [jobs])
+  const onBooks = (r: any) => !r.job_id || !cashJobIds.has(r.job_id)
   const { data: biz } = useBusinessSettings()
 
   const curYear = new Date().getFullYear()
@@ -163,11 +172,11 @@ export default function Tax() {
 
   // V16 aggBAS()
   const bas = useMemo(() => {
-    const invs = invoices.filter(i => basis === 'cash'
+    const invs = invoices.filter(i => onBooks(i) && (basis === 'cash'
       ? (i.date_paid && inRange(i.date_paid, year, quarter)) || (invStatus(i) === 'Paid' && !i.date_paid && inRange(i.date || '', year, quarter))
-      : inRange(i.date || '', year, quarter))
-    const mats = materials.filter(m => inRange(m.date || '', year, quarter))
-    const exps = expenses.filter(e => inRange(e.date || '', year, quarter) && hasGST(e))
+      : inRange(i.date || '', year, quarter)))
+    const mats = materials.filter(m => onBooks(m) && inRange(m.date || '', year, quarter))
+    const exps = expenses.filter(e => onBooks(e) && inRange(e.date || '', year, quarter) && hasGST(e))
     const gstCollected = invs.reduce((s, i) => s + (i.gst || 0), 0)
     const gstOnMats = mats.reduce((s, m) => s + (m.gst || 0), 0)
     const gstOnExps = exps.reduce((s, e) => s + (e.gst || 0), 0)
@@ -179,17 +188,17 @@ export default function Tax() {
       totalPurchases: mats.reduce((s, m) => s + (m.cost_ex_gst || 0), 0) + exps.reduce((s, e) => s + (e.amount_ex_gst || 0), 0),
       invCount: invs.length,
       txnCount: mats.length + exps.length,
-      matsIncGST: materials.filter(m => inRange(m.date || '', year, quarter)).reduce((s, m) => s + (m.total_inc_gst || 0), 0),
-      expsIncGST: expenses.filter(e => inRange(e.date || '', year, quarter)).reduce((s, e) => s + expIncGST(e), 0),
+      matsIncGST: materials.filter(m => onBooks(m) && inRange(m.date || '', year, quarter)).reduce((s, m) => s + (m.total_inc_gst || 0), 0),
+      expsIncGST: expenses.filter(e => onBooks(e) && inRange(e.date || '', year, quarter)).reduce((s, e) => s + expIncGST(e), 0),
     }
   }, [invoices, materials, expenses, basis, year, quarter])
 
   // V16 aggPL()
   const pl = useMemo(() => {
-    const invs = invoices.filter(i => inYear(i.date || '', year))
-    const mats = materials.filter(m => inYear(m.date || '', year))
-    const labs = labour.filter(l => inYear(l.date || '', year))
-    const exps = expenses.filter(e => inYear(e.date || '', year))
+    const invs = invoices.filter(i => onBooks(i) && inYear(i.date || '', year))
+    const mats = materials.filter(m => onBooks(m) && inYear(m.date || '', year))
+    const labs = labour.filter(l => onBooks(l) && inYear(l.date || '', year))
+    const exps = expenses.filter(e => onBooks(e) && inYear(e.date || '', year))
     const income = invs.reduce((s, i) => s + (i.agreed_ex_gst || 0), 0)
     const matCost = mats.reduce((s, m) => s + (m.cost_ex_gst || 0), 0)
     const labCost = labs.reduce((s, l) => s + (l.cost || (l.hours || 0) * (l.rate || 0)), 0)

@@ -7,7 +7,7 @@ import JobPicker from '@/components/JobPicker'
 import { Input, Select } from '@/components/ui/Field'
 import {
   fmtCurrency, genId, today, labBillable, labCost, isBillableLabour,
-  findOverlappingLabour, labourSpan, type LabourOverlap,
+  findOverlappingLabour, labourSpan, jobBillingType, type LabourOverlap,
 } from '@/lib/utils'
 import { Plus, Loader2, Trash2, ArrowUpDown, X, Clock, AlertTriangle } from 'lucide-react'
 
@@ -397,7 +397,12 @@ export default function Labour() {
             onChange={e => setField({ date: e.target.value })} />
           <JobPicker jobs={jobs} value={form.job_id}
             noneLabel="— Select job —"
-            onChange={(id, j) => setField({ job_id: id, client: j?.client ?? form.client })} />
+            onChange={(id, j) => setField({
+              job_id: id,
+              client: j?.client ?? form.client,
+              // The job decides how it is billed; still editable below.
+              ...(j ? { billing_type: jobBillingType(j as any) } : {}),
+            })} />
           {/* Hours are often batched — a week entered on the Friday — so the
               date above says nothing about when the work happened. */}
           <Input label="Hours cover from" type="date" value={form.period_start || ''}

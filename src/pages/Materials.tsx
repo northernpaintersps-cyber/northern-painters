@@ -7,7 +7,7 @@ import JobPicker from '@/components/JobPicker'
 import { Input, Select, TextArea } from '@/components/ui/Field'
 import {
   fmtCurrency, fmtDate, genId, today, toNum, lineItemsOf,
-  findDuplicateMaterial, type DuplicateHit, type InvoiceLineItem,
+  findDuplicateMaterial, jobBillingType, type DuplicateHit, type InvoiceLineItem,
 } from '@/lib/utils'
 import { extractInvoice } from '@/lib/ai'
 import { useBusinessSettings } from '@/pages/SettingsPage'
@@ -375,7 +375,11 @@ export default function Materials() {
                       <select value={m.job_id ?? ''} className={IS}
                         onChange={e => {
                           const j = jobs.find(x => x.id === e.target.value)
-                          quickEdit(m, { job_id: e.target.value || null, client: j?.client ?? m.client })
+                          quickEdit(m, {
+                            job_id: e.target.value || null,
+                            client: j?.client ?? m.client,
+                            ...(j ? { billing_type: jobBillingType(j) } : {}),
+                          })
                         }}>
                         <option value="">Job…</option>
                         {jobs.map(j => <option key={j.id} value={j.id}>{j.id} — {j.client}</option>)}
@@ -534,7 +538,11 @@ export default function Materials() {
             <Input label="Date" type="date" value={form.date} onChange={ef('date')} />
             <JobPicker jobs={jobs} value={form.job_id} className="flex-1"
               noneLabel="No job / overhead"
-              onChange={(id, j) => setForm(p => ({ ...p, job_id: id, client: j?.client ?? p.client }))} />
+              onChange={(id, j) => setForm(p => ({
+                ...p, job_id: id, client: j?.client ?? p.client,
+                // The job decides how it is billed; still editable below.
+                ...(j ? { billing_type: jobBillingType(j as any) } : {}),
+              }))} />
           </div>
           <Input label="Description" value={form.mat_desc} onChange={ef('mat_desc')} placeholder="Dulux Weathershield 15L — Inv #12345" />
           <div className="grid grid-cols-2 gap-3">
