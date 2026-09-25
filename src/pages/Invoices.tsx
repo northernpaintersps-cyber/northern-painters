@@ -11,6 +11,7 @@ import {
   ArrowUpDown, List, BarChart3, Info, MapPin,
 } from 'lucide-react'
 import { useBusinessSettings } from '@/pages/SettingsPage'
+import { computeJobBilling, billingBreakdown, type JobBilling } from '@/lib/jobBilling'
 
 type Invoice = Record<string, any>
 
@@ -63,6 +64,20 @@ function usePaySchedules() {
   })
 }
 
+/** Labour, materials and variations back the actuals basis — an hourly job has
+ *  no contract sum, so what has been logged is the only measure of billable work. */
+function useUserTable(table: string) {
+  const { user } = useAuth()
+  return useQuery({
+    queryKey: [table, user?.id],
+    queryFn: async () => {
+      const { data } = await supabase.from(table as any).select('*').eq('user_id', user!.id)
+      return (data ?? []) as any[]
+    },
+    enabled: !!user,
+  })
+}
+
 function useUpsertInvoice() {
   const qc = useQueryClient()
   const { user } = useAuth()
@@ -102,6 +117,10 @@ export default function Invoices() {
   const { data: jobs = [] } = useJobs()
   const { data: paySchedules = [] } = usePaySchedules()
   const { data: bizSettings } = useBusinessSettings()
+  const { data: labour = [] } = useUserTable('np_labour')
+  const { data: materials = [] } = useUserTable('np_materials')
+  const { data: variations = [] } = useUserTable('np_variations')
+  const markupPct = bizSettings?.default_markup_pct ?? 0
   const upsert = useUpsertInvoice()
   const del = useDeleteInvoice()
   const nav = useNavigate()
@@ -296,13 +315,20 @@ export default function Invoices() {
       {view === 'byjob' ? (
         <JobFinancialSummary
           jobs={jobs} invoices={invoices} paySchedules={paySchedules}
+          labour={labour} materials={materials} variations={variations} markupPct={markupPct}
           onMarkPaid={markInvPaid} onCash={recordCash} onPreview={printInvoice}
-          onNewInvoice={j => openNew({
-            job_id: j.id, client: j.client, notes: j.job_desc || '',
-            agreed_ex_gst: j.agreed_ex_gst ?? undefined,
-            gst: j.agreed_ex_gst ? +(j.agreed_ex_gst * 0.1).toFixed(2) : 0,
-            total_inc_gst: j.agreed_ex_gst ? +(j.agreed_ex_gst * 1.1).toFixed(2) : 0,
-          })}
+          onNewInvoice={(j, b) => {
+            // Prefill what is still unbilled, not the whole contract — on a
+            // progress invoice the remainder is the number actually wanted,
+            // and on an hourly job agreed_ex_gst is zero or stale.
+            const ex = Math.round(Math.max(0, b.billableToDateExGST - b.invoicedExGST) * 100) / 100
+            openNew({
+              job_id: j.id, client: j.client, notes: j.job_desc || '',
+              agreed_ex_gst: ex || undefined,
+              gst: +(ex * 0.1).toFixed(2),
+              total_inc_gst: +(ex * 1.1).toFixed(2),
+            })
+          }}
         />
       ) : (
         <>
@@ -445,10 +471,14 @@ export default function Invoices() {
 }
 
 // ── V16 _renderJobFinancialSummary() ─────────────────────────
-function JobFinancialSummary({ jobs, invoices, paySchedules, onMarkPaid, onCash, onPreview, onNewInvoice }: {
+function JobFinancialSummary({
+  jobs, invoices, paySchedules, labour, materials, variations, markupPct,
+  onMarkPaid, onCash, onPreview, onNewInvoice,
+}: {
   jobs: any[]; invoices: Invoice[]; paySchedules: any[]
+  labour: any[]; materials: any[]; variations: any[]; markupPct: number
   onMarkPaid: (inv: Invoice) => void; onCash: (inv: Invoice) => void
-  onPreview: (inv: Invoice) => void; onNewInvoice: (j: any) => void
+  onPreview: (inv: Invoice) => void; onNewInvoice: (j: any, b: JobBilling) => void
 }) {
   const jobsToShow = jobs.filter(j =>
     invoices.some(i => i.job_id === j.id) ||
@@ -474,33 +504,28 @@ function JobFinancialSummary({ jobs, invoices, paySchedules, onMarkPaid, onCash,
   return (
     <>
       <div className="text-[11px] text-[#666] mb-2.5 flex items-center gap-1">
-        <Info size={12} /> Shows all active, accepted, and invoiced jobs. Job value is the agreed price inc GST.
-        Left to invoice = job value minus total invoiced.
+        <Info size={12} /> Shows all active, accepted, and invoiced jobs. Fixed-price jobs are measured
+        against the agreed price plus approved variations; hourly and estimate jobs against the labour
+        and materials logged so far. Left to invoice = that figure minus what you have already invoiced.
       </div>
       {jobsToShow.map(j => {
-        const invs = invoices.filter(i => i.job_id === j.id)
-        const terms = (j.terms || '').toLowerCase()
-        const isEstimate = terms.includes('estimate') || terms.includes('hourly')
-        const jobValueExGST = j.agreed_ex_gst || j.quote_ex_gst || 0
-        const jobValueIncGST = jobValueExGST * 1.1
-        const totalInvoiced = invs.reduce((s, i) => s + (i.total_inc_gst || 0), 0)
-        const totalReceived = invs.reduce((s, i) => s + (i.received || 0), 0)
-        const cashReceived = invs.reduce((s, i) => s + cashOf(i), 0)
-        const totalOwed = invs.reduce((s, i) => s + calcOwed(i), 0)
-
-        // Deposit from pay schedule milestones (stored as JSON in notes)
-        let depositAmt = 0, depositPaid = false
-        const ps = paySchedules.find(s => s.id === j.id)
-        if (ps?.notes) {
-          try {
-            const ms = JSON.parse(ps.notes)
-            if (Array.isArray(ms) && ms[0]) { depositAmt = ms[0].amount || 0; depositPaid = !!ms[0].received }
-          } catch {}
-        }
-
-        const leftToInvoice = Math.max(0, jobValueIncGST - totalInvoiced)
-        const invoicePct = jobValueIncGST > 0 ? Math.min(100, (totalInvoiced / jobValueIncGST) * 100) : 0
-        const paidPct = totalInvoiced > 0 ? Math.min(100, (totalReceived / totalInvoiced) * 100) : 0
+        const b = computeJobBilling({
+          job: j, invoices, labour, materials, variations, markupPct,
+          paySchedule: paySchedules.find(s => s.id === j.id),
+        })
+        const invs = b.invoices
+        const isEstimate = b.basis === 'actuals'
+        const jobValueIncGST = b.billableToDateIncGST
+        const totalInvoiced = b.invoicedIncGST
+        const totalReceived = b.receivedIncGST
+        const cashReceived = b.cashReceivedIncGST
+        const totalOwed = b.owedIncGST
+        const leftToInvoice = b.leftToInvoiceIncGST
+        const invoicePct = b.invoicePct
+        const paidPct = b.paidPct
+        const deposit = b.milestones[0]
+        const depositAmt = deposit?.amount ?? 0
+        const depositPaid = deposit ? deposit.status === 'paid' || deposit.received : false
 
         return (
           <Card key={j.id} className="px-4 py-3.5 mb-2.5">
@@ -522,24 +547,31 @@ function JobFinancialSummary({ jobs, invoices, paySchedules, onMarkPaid, onCash,
                     : <span className="text-[#0369a1] font-semibold">Fixed price</span>}
                 </div>
               </div>
-              <button onClick={() => onNewInvoice(j)}
+              <button onClick={() => onNewInvoice(j, b)}
                 className="flex items-center gap-1 px-2.5 py-1 text-[11px] bg-blue-600 text-white rounded-lg hover:bg-blue-700">
                 <Plus size={11} /> New Invoice
               </button>
             </div>
 
             <div className="grid gap-2 mb-3" style={{ gridTemplateColumns: 'repeat(auto-fill,minmax(130px,1fr))' }}>
-              <Tile label={isEstimate ? 'Budget / Est.' : 'Job Value'} value={jobValueIncGST ? fmtCurrency(jobValueIncGST) : '—'} valueColor="#2563eb" sub="inc GST" />
+              <Tile label={isEstimate ? 'Billable to Date' : 'Job Value'}
+                value={jobValueIncGST ? fmtCurrency(jobValueIncGST) : '—'} valueColor="#2563eb" sub="inc GST" />
               <Tile label="Invoiced" value={fmtCurrency(totalInvoiced)} valueColor="#1d4ed8" sub={`${invs.length} invoice${invs.length !== 1 ? 's' : ''}`} />
               <Tile label="Received" value={fmtCurrency(totalReceived)} valueColor="#16a34a"
                 sub={cashReceived ? `💵 ${fmtCurrency(cashReceived)} cash` : undefined} subColor="#92400e" />
               <Tile label="Outstanding" value={totalOwed > 0 ? fmtCurrency(totalOwed) : 'Paid ✓'}
                 valueColor={totalOwed > 0 ? '#dc2626' : '#16a34a'} sub="left to pay"
                 borderColor={totalOwed > 0 ? '#fca5a5' : undefined} />
-              {!isEstimate && jobValueIncGST > 0 && (
-                <Tile label="Left to Invoice" value={leftToInvoice > 0 ? fmtCurrency(leftToInvoice) : 'Done ✓'}
-                  valueColor={leftToInvoice > 0 ? '#d97706' : '#16a34a'} sub={`of ${fmtCurrency(jobValueIncGST)}`}
+              {b.hasValue && (
+                <Tile label="Left to Invoice"
+                  value={leftToInvoice > 0 ? fmtCurrency(leftToInvoice) : 'Done ✓'}
+                  valueColor={leftToInvoice > 0 ? '#d97706' : '#16a34a'}
+                  sub={`of ${fmtCurrency(jobValueIncGST)}`}
                   borderColor={leftToInvoice > 0 ? '#fde68a' : undefined} />
+              )}
+              {b.overBilledIncGST > 0 && (
+                <Tile label="Over-billed" value={fmtCurrency(b.overBilledIncGST)} valueColor="#dc2626"
+                  sub="invoiced beyond billable" subColor="#dc2626" borderColor="#fca5a5" />
               )}
               {depositAmt > 0 && (
                 <Tile label="Deposit" value={fmtCurrency(depositAmt)}
@@ -549,11 +581,15 @@ function JobFinancialSummary({ jobs, invoices, paySchedules, onMarkPaid, onCash,
               )}
             </div>
 
+            {isEstimate && b.billableToDateExGST > 0 && (
+              <div className="text-[10px] text-[#666] mb-2">{billingBreakdown(b)}</div>
+            )}
+
             {jobValueIncGST > 0 && (
               <>
                 <div className="mb-2">
                   <div className="flex justify-between text-[10px] text-[#666] mb-1">
-                    <span>{isEstimate ? 'Budget used' : 'Invoiced'} ({invoicePct.toFixed(0)}%)</span>
+                    <span>Invoiced ({invoicePct.toFixed(0)}%)</span>
                     <span>{fmtCurrency(totalInvoiced)} of {fmtCurrency(jobValueIncGST)}</span>
                   </div>
                   <div className="h-1.5 bg-black/[0.12] rounded-[3px] overflow-hidden">
