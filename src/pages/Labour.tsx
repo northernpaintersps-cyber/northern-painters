@@ -5,8 +5,11 @@ import { useAuth } from '@/lib/auth'
 import { Modal } from '@/components/ui/Modal'
 import JobPicker from '@/components/JobPicker'
 import { Input, Select } from '@/components/ui/Field'
-import { fmtCurrency, genId, today, labBillable, labCost, isBillableLabour } from '@/lib/utils'
-import { Plus, Loader2, Trash2, ArrowUpDown, X, Clock } from 'lucide-react'
+import {
+  fmtCurrency, genId, today, labBillable, labCost, isBillableLabour,
+  findOverlappingLabour, labourSpan, type LabourOverlap,
+} from '@/lib/utils'
+import { Plus, Loader2, Trash2, ArrowUpDown, X, Clock, AlertTriangle } from 'lucide-react'
 
 type Row = Record<string, any>
 
@@ -45,9 +48,19 @@ function useUpsert() {
   const { user } = useAuth()
   return useMutation({
     mutationFn: async (row: Row) => {
-      const { error } = await (supabase.from('np_labour') as any)
-        .upsert({ ...row, user_id: user!.id, updated_at: new Date().toISOString() })
-      if (error) throw error
+      const payload: Row = { ...row, user_id: user!.id, updated_at: new Date().toISOString() }
+      const { error } = await (supabase.from('np_labour') as any).upsert(payload)
+      if (!error) return
+      // period_start / period_end are new. Until they are added in Supabase the
+      // rest of the entry must still save, so drop them and retry once.
+      const missing = error.message?.match(/Could not find the '(\w+)' column/)?.[1]
+      if (missing && (missing === 'period_start' || missing === 'period_end')) {
+        delete payload.period_start; delete payload.period_end
+        const retry = await (supabase.from('np_labour') as any).upsert(payload)
+        if (retry.error) throw retry.error
+        return
+      }
+      throw error
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['np_labour'] }),
   })
@@ -91,6 +104,7 @@ export default function Labour() {
   const [modal, setModal] = useState(false)
   const [mode, setMode] = useState<'hours' | 'clock'>('hours')
   const [form, setForm] = useState<Row>({})
+  const [overlap, setOverlap] = useState<LabourOverlap<Row> | null>(null)
 
   const anyFilter = !!(q || jobId || billing)
 
@@ -129,8 +143,21 @@ export default function Labour() {
       date: today(), rate: rate0, charge_rate: charge0,
       billing_type: 'Hourly', worker_payment_type: 'ABN',
       clock_in: '08:00', clock_out: '17:00', break_mins: 30, hours: '',
+      period_start: '', period_end: '',
     })
+    setOverlap(null)
     setModal(true)
+  }
+
+  /** Re-check for an overlapping entry whenever a field that defines the span
+   *  changes. Batching means a shared date proves nothing, so only the period
+   *  and the worker/job pairing are considered. */
+  function setField(patch: Row) {
+    setForm(p => {
+      const next = { ...p, ...patch }
+      setOverlap(findOverlappingLabour(rows, next, next.id))
+      return next
+    })
   }
 
   const formHours = mode === 'clock'
@@ -154,6 +181,8 @@ export default function Labour() {
       client: job?.client ?? form.client ?? null,
       clock_in: mode === 'clock' ? form.clock_in : null,
       clock_out: mode === 'clock' ? form.clock_out : null,
+      period_start: form.period_start || null,
+      period_end: form.period_end || form.period_start || null,
       created_at: form.created_at || new Date().toISOString(),
     })
     setModal(false)
@@ -346,11 +375,35 @@ export default function Labour() {
           ))}
         </div>
 
+        {overlap && (
+          <div className="flex gap-2 items-start bg-[#fffbeb] border border-[#fbbf24] rounded-lg px-3.5 py-2.5 mb-3.5">
+            <AlertTriangle size={18} className="text-[#b45309] shrink-0 mt-px" />
+            <div className="text-xs text-[#78350f]">
+              <strong className="text-[13px] text-[#b45309] block">
+                {overlap.identical ? 'Same hours already logged' : 'Overlapping period already logged'}
+              </strong>
+              {overlap.row.sub} already has {overlap.row.hours}h
+              {overlap.row.job_id ? ` on ${overlap.row.job_id}` : ''} covering{' '}
+              {(() => { const sp = labourSpan(overlap.row); return sp ? (sp.from === sp.to ? sp.from : `${sp.from} to ${sp.to}`) : '' })()}
+              {overlap.identical
+                ? ' — the same span and hours, so this looks like the same entry twice.'
+                : ' — those dates overlap, so some hours may be counted twice.'}
+            </div>
+          </div>
+        )}
+
         <div className="grid grid-cols-2 gap-3">
-          <Input label="Date" type="date" value={form.date || ''} onChange={e => setForm(p => ({ ...p, date: e.target.value }))} />
+          <Input label="Date entered" type="date" value={form.date || ''}
+            onChange={e => setField({ date: e.target.value })} />
           <JobPicker jobs={jobs} value={form.job_id}
             noneLabel="— Select job —"
-            onChange={(id, j) => setForm(p => ({ ...p, job_id: id, client: j?.client ?? p.client }))} />
+            onChange={(id, j) => setField({ job_id: id, client: j?.client ?? form.client })} />
+          {/* Hours are often batched — a week entered on the Friday — so the
+              date above says nothing about when the work happened. */}
+          <Input label="Hours cover from" type="date" value={form.period_start || ''}
+            onChange={e => setField({ period_start: e.target.value })} />
+          <Input label="Hours cover to" type="date" value={form.period_end || ''}
+            onChange={e => setField({ period_end: e.target.value })} />
 
           <div>
             <label className="block text-xs font-medium text-gray-500 mb-1">Sub / Worker</label>

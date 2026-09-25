@@ -404,3 +404,53 @@ export function reconcileGst(
   }
   return { cost_ex_gst: e, gst: g, total_inc_gst: t }
 }
+
+// ── Labour periods ───────────────────────────────────────────
+// Hours are often batched — a whole week entered on the Friday — so the entry
+// date says nothing about when the work happened, and two 8-hour rows on one
+// date are perfectly normal. period_start / period_end record what the hours
+// actually cover, which is the only thing that can tell a second week apart
+// from the same week entered twice.
+
+export type LabourPeriod = { period_start?: string | null; period_end?: string | null }
+
+/** The span an entry covers, falling back to its date when no period is set. */
+export function labourSpan(l: Record<string, any>): { from: string; to: string } | null {
+  const from = (l.period_start || l.date || '').trim()
+  const to = (l.period_end || l.period_start || l.date || '').trim()
+  if (!from || !to) return null
+  return from <= to ? { from, to } : { from: to, to: from }
+}
+
+export type LabourOverlap<T> = { row: T; identical: boolean }
+
+/**
+ * An existing entry for the same worker and job whose period overlaps this one.
+ *
+ * Overlapping periods mean the same hours are being counted twice. Entries
+ * that merely share a date are ignored — that is what batching looks like.
+ */
+export function findOverlappingLabour<T extends Record<string, any>>(
+  rows: T[],
+  candidate: Record<string, any>,
+  excludeId?: string,
+): LabourOverlap<T> | null {
+  const span = labourSpan(candidate)
+  if (!span) return null
+  const worker = String(candidate.sub ?? '').trim().toLowerCase()
+  if (!worker) return null
+  const job = String(candidate.job_id ?? '').trim()
+
+  for (const r of rows) {
+    if (excludeId && r.id === excludeId) continue
+    if (String(r.sub ?? '').trim().toLowerCase() !== worker) continue
+    if (String(r.job_id ?? '').trim() !== job) continue
+    const other = labourSpan(r)
+    if (!other) continue
+    if (span.from > other.to || span.to < other.from) continue   // disjoint
+    const identical = other.from === span.from && other.to === span.to
+      && Number(r.hours ?? 0) === Number(candidate.hours ?? 0)
+    return { row: r, identical }
+  }
+  return null
+}
