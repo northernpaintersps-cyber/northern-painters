@@ -5,7 +5,7 @@ import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/lib/auth'
 import { Modal } from '@/components/ui/Modal'
 import { Input, TextArea } from '@/components/ui/Field'
-import { fmtCurrency, fmtDate, calcOwed, invStatus, genId, today, normaliseDate } from '@/lib/utils'
+import { fmtCurrency, fmtDate, calcOwed, invStatus, genId, today, normaliseDate, parseMilestones, exOf } from '@/lib/utils'
 import {
   Plus, Loader2, Trash2, Check, Banknote, Edit2, FileText, Receipt,
   ArrowUpDown, List, BarChart3, Info, MapPin,
@@ -153,6 +153,11 @@ export default function Invoices() {
   const totO = invoices.reduce((a, b) => a + calcOwed(b), 0)
   const totCash = invoices.reduce((a, b) => a + cashOf(b), 0)
 
+  // Milestones of the job this invoice is linked to, for the milestone select
+  const formMilestones = useMemo(
+    () => parseMilestones(paySchedules.find(s => s.id === form.job_id)),
+    [paySchedules, form.job_id])
+
   function set(k: string, v: any) { setForm(prev => ({ ...prev, [k]: v })) }
   const fld = (k: string) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
     const val: any = e.target.value
@@ -163,7 +168,12 @@ export default function Invoices() {
     }
     if (k === 'job_id') {
       const job = jobs.find(j => j.id === val)
-      setForm(prev => ({ ...prev, job_id: val, client: job?.client || prev.client }))
+      setForm(prev => {
+        // A milestone index only means something against its own job.
+        const extra = { ...(prev.extra ?? {}) }
+        delete extra.milestone_index; delete extra.milestone_job_id
+        return { ...prev, job_id: val, client: job?.client || prev.client, extra }
+      })
       return
     }
     set(k, val)
@@ -317,16 +327,22 @@ export default function Invoices() {
           jobs={jobs} invoices={invoices} paySchedules={paySchedules}
           labour={labour} materials={materials} variations={variations} markupPct={markupPct}
           onMarkPaid={markInvPaid} onCash={recordCash} onPreview={printInvoice}
-          onNewInvoice={(j, b) => {
-            // Prefill what is still unbilled, not the whole contract — on a
+          onNewInvoice={(j, b, milestoneIndex) => {
+            // Invoicing a milestone bills that milestone's amount; otherwise
+            // prefill what is still unbilled, not the whole contract — on a
             // progress invoice the remainder is the number actually wanted,
             // and on an hourly job agreed_ex_gst is zero or stale.
-            const ex = Math.round(Math.max(0, b.billableToDateExGST - b.invoicedExGST) * 100) / 100
+            const ms = milestoneIndex != null ? b.milestones[milestoneIndex] : undefined
+            const ex = ms
+              ? Math.round(exOf(ms.amount) * 100) / 100
+              : Math.round(Math.max(0, b.billableToDateExGST - b.invoicedExGST) * 100) / 100
             openNew({
-              job_id: j.id, client: j.client, notes: j.job_desc || '',
+              job_id: j.id, client: j.client,
+              notes: ms ? `${j.job_desc || j.client} — ${ms.label}` : (j.job_desc || ''),
               agreed_ex_gst: ex || undefined,
               gst: +(ex * 0.1).toFixed(2),
               total_inc_gst: +(ex * 1.1).toFixed(2),
+              ...(ms ? { extra: { milestone_index: milestoneIndex, milestone_job_id: j.id } } : {}),
             })
           }}
         />
@@ -431,6 +447,30 @@ export default function Invoices() {
               {jobs.map(j => <option key={j.id} value={j.id}>{j.id} — {j.client}</option>)}
             </select>
           </div>
+          {formMilestones.length > 0 && (
+            <div className="col-span-2">
+              <label className="block text-xs font-medium text-gray-500 mb-1">
+                Payment milestone <span className="font-normal text-[#999]">(optional — links this invoice to the schedule)</span>
+              </label>
+              <select
+                value={form.extra?.milestone_index ?? ''}
+                onChange={e => {
+                  const v = e.target.value
+                  setForm(prev => {
+                    const extra = { ...(prev.extra ?? {}) }
+                    if (v === '') { delete extra.milestone_index; delete extra.milestone_job_id }
+                    else { extra.milestone_index = Number(v); extra.milestone_job_id = prev.job_id }
+                    return { ...prev, extra }
+                  })
+                }}
+                className="w-full bg-white border border-black/20 rounded-lg px-3 py-2 text-[13px] text-gray-900 focus:outline-none focus:ring-1 focus:ring-blue-500">
+                <option value="">— Not linked —</option>
+                {formMilestones.map((m, i) => (
+                  <option key={i} value={i}>{m.label} — {fmtCurrency(m.amount)}</option>
+                ))}
+              </select>
+            </div>
+          )}
           <Input label="Client" value={form.client || ''} onChange={fld('client')} />
           <Input label="Invoice date" type="date" value={form.date || ''} onChange={fld('date')} />
           <Input label="Due date" type="date" value={form.due_date || ''} onChange={fld('due_date')} />
@@ -478,7 +518,8 @@ function JobFinancialSummary({
   jobs: any[]; invoices: Invoice[]; paySchedules: any[]
   labour: any[]; materials: any[]; variations: any[]; markupPct: number
   onMarkPaid: (inv: Invoice) => void; onCash: (inv: Invoice) => void
-  onPreview: (inv: Invoice) => void; onNewInvoice: (j: any, b: JobBilling) => void
+  onPreview: (inv: Invoice) => void
+  onNewInvoice: (j: any, b: JobBilling, milestoneIndex?: number) => void
 }) {
   const jobsToShow = jobs.filter(j =>
     invoices.some(i => i.job_id === j.id) ||
@@ -523,9 +564,7 @@ function JobFinancialSummary({
         const leftToInvoice = b.leftToInvoiceIncGST
         const invoicePct = b.invoicePct
         const paidPct = b.paidPct
-        const deposit = b.milestones[0]
-        const depositAmt = deposit?.amount ?? 0
-        const depositPaid = deposit ? deposit.status === 'paid' || deposit.received : false
+        // The deposit used to have its own tile; it is the first milestone chip now.
 
         return (
           <Card key={j.id} className="px-4 py-3.5 mb-2.5">
@@ -573,16 +612,36 @@ function JobFinancialSummary({
                 <Tile label="Over-billed" value={fmtCurrency(b.overBilledIncGST)} valueColor="#dc2626"
                   sub="invoiced beyond billable" subColor="#dc2626" borderColor="#fca5a5" />
               )}
-              {depositAmt > 0 && (
-                <Tile label="Deposit" value={fmtCurrency(depositAmt)}
-                  valueColor={depositPaid ? '#16a34a' : '#d97706'}
-                  sub={depositPaid ? 'Received ✓' : 'Pending'} subColor={depositPaid ? '#16a34a' : '#d97706'}
-                  borderColor={depositPaid ? '#86efac' : '#fde68a'} />
-              )}
             </div>
 
             {isEstimate && b.billableToDateExGST > 0 && (
               <div className="text-[10px] text-[#666] mb-2">{billingBreakdown(b)}</div>
+            )}
+
+            {b.milestones.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 mb-2">
+                {b.milestones.map(m => (
+                  <div key={m.index}
+                    className={`flex items-center gap-1.5 text-[10px] rounded-full pl-2 pr-1 py-0.5 border ${
+                      m.status === 'paid' ? 'bg-[#dcfce7] border-[#86efac] text-[#166534]'
+                      : m.status === 'invoiced' ? 'bg-[#dbeafe] border-[#93c5fd] text-[#1e40af]'
+                      : 'bg-[#f5f4f0] border-black/[0.12] text-[#5f5e5a]'}`}>
+                    <span className="font-semibold">{m.label}</span>
+                    <span className="font-mono">{fmtCurrency(m.amount)}</span>
+                    {m.mismatch && (
+                      <span className="text-[#b45309]"
+                        title="Ticked received on the Payments page, but no settled invoice is linked">check</span>
+                    )}
+                    {m.status === 'unbilled' && (
+                      <button
+                        onClick={() => onNewInvoice(j, b, m.index)}
+                        className="px-1.5 py-0.5 rounded-full bg-blue-600 text-white hover:bg-blue-700">
+                        Invoice
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
             )}
 
             {jobValueIncGST > 0 && (
