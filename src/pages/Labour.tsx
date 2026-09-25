@@ -4,7 +4,7 @@ import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/lib/auth'
 import { Modal } from '@/components/ui/Modal'
 import { Input, Select } from '@/components/ui/Field'
-import { fmtCurrency, genId, today } from '@/lib/utils'
+import { fmtCurrency, genId, today, labBillable, labCost, isBillableLabour } from '@/lib/utils'
 import { Plus, Loader2, Trash2, ArrowUpDown, X, Clock } from 'lucide-react'
 
 type Row = Record<string, any>
@@ -13,9 +13,9 @@ const BILLING = ['Hourly', 'Hourly/Estimate', 'Fixed Quote']
 const II = 'border-none bg-transparent text-[12.5px] w-full focus:outline-none focus:bg-blue-50/60 rounded px-0.5'
 const IS = 'border-none bg-transparent text-xs cursor-pointer focus:outline-none'
 
-const labBillable = (l: Row) => (l.billable !== undefined && l.billable !== null ? l.billable : (l.cost || 0))
-const labCost = (l: Row) => (l.cost != null ? l.cost : (l.hours || 0) * (l.rate || 0))
-const isBill = (l: Row) => l.billing_type === 'Hourly' || l.billing_type === 'Hourly/Estimate'
+// labBillable / labCost / isBillableLabour now live in lib/utils so the billing
+// calculation and this page cannot drift apart.
+const isBill = isBillableLabour
 
 // Hours between two HH:MM times, minus an optional break in minutes
 function hoursBetween(from: string, to: string, breakMins = 0) {

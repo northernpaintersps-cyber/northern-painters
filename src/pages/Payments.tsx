@@ -4,7 +4,7 @@ import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/lib/auth'
 import { Modal } from '@/components/ui/Modal'
 import { Input } from '@/components/ui/Field'
-import { fmtCurrency, genId } from '@/lib/utils'
+import { fmtCurrency, genId, parseMilestones } from '@/lib/utils'
 import { Plus, Loader2, Trash2, Copy, Check, Banknote } from 'lucide-react'
 import { useBusinessSettings } from '@/pages/SettingsPage'
 
@@ -51,9 +51,7 @@ function buildMS(agreed: number, struct: string, dep: number, start: string): Mi
 }
 
 // Milestones are persisted as JSON in np_pay_schedules.notes
-const msOf = (s: Row): Milestone[] => {
-  try { const v = JSON.parse(s.notes || '[]'); return Array.isArray(v) ? v : [] } catch { return [] }
-}
+const msOf = parseMilestones
 
 function useTable(table: string) {
   const { user } = useAuth()
