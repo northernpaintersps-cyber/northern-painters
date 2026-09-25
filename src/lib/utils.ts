@@ -359,3 +359,48 @@ export function findDuplicateMaterial<T extends Record<string, any>>(
   }
   return null
 }
+
+// ── GST reconciliation ───────────────────────────────────────
+const money2 = (n: number) => Math.round(n * 100) / 100
+
+/**
+ * Make an invoice's three money fields agree.
+ *
+ * A scan can come back with figures that cannot all be true at once — an
+ * ex-GST value that is really the till total, or a mistyped GST line. The
+ * inc-GST total is the amount that actually left the bank, so when the three
+ * do not reconcile that is the one to trust and the other two are derived
+ * from it. Untouched when they already add up, so a supplier's own rounding
+ * is preserved.
+ */
+export function reconcileGst(
+  ex: number | null | undefined,
+  gst: number | null | undefined,
+  total: number | null | undefined,
+): { cost_ex_gst: number | null; gst: number | null; total_inc_gst: number | null } {
+  const ok = (v: any): v is number => typeof v === 'number' && isFinite(v)
+  const e = ok(ex) ? ex : null
+  const g = ok(gst) ? gst : null
+  const t = ok(total) ? total : null
+
+  if (t !== null && t !== 0) {
+    // Already consistent to the cent — leave the supplier's own figures alone.
+    // Compared in whole cents: 100 + 10.01 - 110 is 0.0100000000000051 in
+    // floating point, which would fail a naive <= 0.01 test.
+    const cents = (v: number) => Math.round(v * 100)
+    if (e !== null && g !== null && Math.abs(cents(e) + cents(g) - cents(t)) <= 1) {
+      return { cost_ex_gst: e, gst: g, total_inc_gst: t }
+    }
+    const nex = money2(t / 1.1)
+    return { cost_ex_gst: nex, gst: money2(t - nex), total_inc_gst: t }
+  }
+  if (e !== null && e !== 0) {
+    const ngst = g !== null ? g : money2(e * 0.1)
+    return { cost_ex_gst: e, gst: ngst, total_inc_gst: money2(e + ngst) }
+  }
+  if (g !== null && g !== 0) {
+    const nex = money2(g * 10)
+    return { cost_ex_gst: nex, gst: g, total_inc_gst: money2(nex + g) }
+  }
+  return { cost_ex_gst: e, gst: g, total_inc_gst: t }
+}

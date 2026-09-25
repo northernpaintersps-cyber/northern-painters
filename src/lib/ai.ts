@@ -1,7 +1,7 @@
 // AI utilities — calls Anthropic Claude API directly from the browser
 // using the key stored in business settings (np_settings key='business')
 
-import { normaliseLineItems, type InvoiceLineItem } from './utils'
+import { normaliseLineItems, reconcileGst, type InvoiceLineItem } from './utils'
 
 export type { InvoiceLineItem }
 
@@ -604,14 +604,17 @@ export async function extractInvoice(apiKey: string, file: File): Promise<Invoic
   }
 
   const num = (v: any) => (v == null || v === '' ? null : (Number(v) || 0))
+  // A scan can return three figures that cannot all be true — most often an
+  // ex-GST value that is really the till total. Trust the amount paid.
+  const money = reconcileGst(num(parsed.cost_ex_gst), num(parsed.gst), num(parsed.total_inc_gst))
   return {
     supplier:       String(parsed.supplier ?? ''),
     description:    String(parsed.description ?? ''),
     date:           String(parsed.date ?? ''),
     receipt_no:     String(parsed.receipt_no ?? ''),
-    cost_ex_gst:    num(parsed.cost_ex_gst),
-    gst:            num(parsed.gst),
-    total_inc_gst:  num(parsed.total_inc_gst),
+    cost_ex_gst:    money.cost_ex_gst,
+    gst:            money.gst,
+    total_inc_gst:  money.total_inc_gst,
     category:       String(parsed.category ?? 'Other'),
     notes:          String(parsed.notes ?? ''),
     job_address:    String(parsed.job_address ?? ''),
