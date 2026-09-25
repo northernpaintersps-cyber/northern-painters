@@ -17,13 +17,13 @@ import {
 } from '@/lib/quoteData'
 import {
   SUBSTRATES, emptySubstrates, normaliseSubstrates, substrateLines as buildSubLines,
-  substrateTotals, newSubLine, type SubEntry,
+  substrateTotals, newSubLine, coatOf, type SubEntry,
 } from '@/lib/substrates'
 import SubstratePicker from '@/components/SubstratePicker'
 import {
   Plus, Trash2, Loader2, Sparkles, Save, ClipboardList, Settings2,
   FileText, Image as ImageIcon, Ruler, Hammer, RefreshCw,
-  FileDown, Lock, ArrowUp, ArrowDown, Check, CopyPlus, ListChecks, Download, Users, Info,
+  FileDown, Lock, ArrowUp, ArrowDown, Check, CopyPlus, ListChecks, Download, Users, Info, AlertTriangle,
 } from 'lucide-react'
 
 type Row = Record<string, any>
@@ -203,6 +203,7 @@ export default function QuotingTool() {
   // Prep level per workflow item, keyed "<phaseId>-<itemId>" as V16 keys its selects.
   const [prepLevels, setPrepLevels] = useState<Record<string, string>>(() => defaultPrepLevels(JOB_TYPES[0]))
   const [wfOpen, setWfOpen] = useState(false)
+  const [newBuildNote, setNewBuildNote] = useState(false)
 
   // 5. Consumables & extra materials
   const [consPrep, setConsPrep] = useState('medium')
@@ -325,7 +326,9 @@ export default function QuotingTool() {
       const coverage = hit?.coverage ?? 12
       // linear metres and counts convert to an approximate painted area
       const m2 = sub.unit === 'sqm' ? q : sub.unit === 'lm' ? q * 0.3 : q * 2
-      const litres = (m2 * parseInt(coats)) / coverage
+      // Coats now come from the substrate's own settings, undercoats included
+      const c = coatOf(substrates, sub.key)
+      const litres = (m2 * (c.topCoats + (c.uc !== 'None' ? c.ucCoats : 0))) / coverage
       const key = hit?.product ?? sub.paint
       if (!products[key]) products[key] = { product: key, size: hit?.size ?? '4L', litres: 0, coverage, price: hit?.yours ?? 0 }
       products[key].litres += litres
@@ -336,7 +339,7 @@ export default function QuotingTool() {
       return { ...p, tins, cost: tins * p.price }
     })
     return { rows, total: rows.reduce((s, r) => s + r.cost, 0) + extraMatTotal }
-  }, [totals, coats, biz, extraMatTotal])
+  }, [totals, substrates, biz, extraMatTotal])
 
   const subtotal = labourCost + materials.total + consTotal + equipTotal
   const gst = subtotal * 0.1
@@ -427,7 +430,44 @@ export default function QuotingTool() {
   function changeJobType(next: string) {
     setJobType(next)
     setPrepLevels(defaultPrepLevels(next))
-    if (/new build/i.test(next)) setMethod('spray')
+    if (/new build/i.test(next)) { setMethod('spray'); applyNewBuildCoats(next) }
+  }
+
+  /** V16 autoApplyNewBuildSettings(): a new build gets 1 coat of Acrylic
+   *  undercoat sprayed onto every substrate, and interior work is sprayed
+   *  rather than rolled. Oil-finish substrates (decking) are left alone. */
+  function applyNewBuildCoats(type: string) {
+    const isInt = /interior/i.test(type) || /full/i.test(type)
+    const isExt = /exterior/i.test(type) || /full/i.test(type)
+    setSubstrates(prev => {
+      const next = { ...prev }
+      SUBSTRATES.forEach(sub => {
+        if (sub.group === 'Interior' ? !isInt : sub.group === 'Exterior' ? !isExt : true) return
+        const c = { ...coatOf(prev, sub.key) }
+        if (c.fin !== 'Decking Oil') { c.uc = 'Acrylic'; c.ucCoats = 1; c.ucApp = 'Spray' }
+        if (isInt && sub.group === 'Interior') c.app = 'Spray'
+        next[sub.key] = { ...(prev[sub.key] ?? { inc: false, lines: [newSubLine()] }), coat: c }
+      })
+      return next
+    })
+    setNewBuildNote(true)
+    setTimeout(() => setNewBuildNote(false), 3000)
+  }
+
+  /** The global Coats selector sets top coats across every substrate, so the
+   *  per-substrate settings stay the single source of truth. */
+  function changeCoats(n: string) {
+    setCoats(n)
+    setSubstrates(prev => {
+      const next = { ...prev }
+      SUBSTRATES.forEach(sub => {
+        next[sub.key] = {
+          ...(prev[sub.key] ?? { inc: false, lines: [newSubLine()] }),
+          coat: { ...coatOf(prev, sub.key), topCoats: parseInt(n) || 2 },
+        }
+      })
+      return next
+    })
   }
 
   async function aiSuggestHours() {
@@ -712,17 +752,23 @@ export default function QuotingTool() {
     // V16 getCoatRows(): the system is the finish, the coats the top-coat count,
     // and exterior substrates are suffixed "(ext)". This app has no per-substrate
     // undercoat field, so no "N + M" coats string arises.
-    const coatRows = SUBSTRATES.filter(s => (totals[s.key] ?? 0) > 0).map(s => ({
-      sub: s.group === 'Exterior' ? `${s.label} (ext)` : s.label,
-      sys: s.defFinish,
-      coats: coats,
-      app: s.defMethod,
-      mat: s.paint,
-    }))
+    const coatRows = SUBSTRATES.filter(s => (totals[s.key] ?? 0) > 0).map(s => {
+      const c = coatOf(substrates, s.key)
+      const hasUC = c.uc !== 'None'
+      return s.group === 'Specialty'
+        ? { sub: s.label, sys: `${c.fin} system`, coats: String(c.topCoats), app: c.app, mat: s.paint }
+        : {
+            sub: s.group === 'Exterior' ? `${s.label} (ext)` : s.label,
+            sys: hasUC ? `${c.uc} undercoat (${c.ucApp}) + ${c.fin}` : c.fin,
+            coats: hasUC ? `${c.ucCoats} + ${c.topCoats}` : String(c.topCoats),
+            app: c.app,
+            mat: s.paint,
+          }
+    })
 
     w.document.write(buildQuoteHTML({
       docType: terms === 'Estimate' ? 'Estimate' : 'Quotation',
-      to: client, proj: jobType, site: address,
+      to: client, proj: jobType, jobType, site: address,
       qno: quoteNo || defaultQuoteNo(),
       dur: days ? `${days.toFixed(1)} days` : '',
       // The client-facing document carries the standard wording, not the internal
@@ -909,7 +955,7 @@ export default function QuotingTool() {
               so French, solid and panel doors can be priced separately. This is the same list the
               site visit uses, so a visit's takeoff lands here unchanged.
             </div>
-            <SubstratePicker value={substrates} onChange={setSubstrates} />
+            <SubstratePicker value={substrates} onChange={setSubstrates} showCoating />
             {Object.keys(totals).length > 0 && (
               <div className="mt-3 pt-2.5 border-t border-black/[0.12] text-[11px] text-[#666]">
                 {Object.keys(totals).length} substrate{Object.keys(totals).length !== 1 ? 's' : ''} in scope ·
@@ -957,11 +1003,17 @@ export default function QuotingTool() {
               </div>
               <div className="flex-1 min-w-[120px]">
                 <label className="block text-[10px] uppercase font-bold text-[#666] mb-1">Coats</label>
-                <select value={coats} onChange={e => setCoats(e.target.value)} className={INP}>
+                <select value={coats} onChange={e => changeCoats(e.target.value)} className={INP}>
                   {['1', '2', '3'].map(c => <option key={c} value={c}>{c} coat{c !== '1' ? 's' : ''}</option>)}
                 </select>
               </div>
             </div>
+
+            {newBuildNote && (
+              <div className="flex items-center gap-2 bg-[#1d4ed8] text-white rounded-lg px-3.5 py-2 mb-2.5 text-xs font-semibold">
+                <Check size={13} /> New build defaults applied — 1 coat Acrylic undercoat (Spray) set on every substrate.
+              </div>
+            )}
 
             {/* V16 wf-panel — the template for this job type, prep levels first */}
             {JOB_WORKFLOWS[jobType] && (
@@ -1468,6 +1520,15 @@ export default function QuotingTool() {
 
           <Card>
             <div className={CT}>Actions</div>
+            {Object.keys(totals).length === 0 && (
+              <div className="flex items-start gap-2 bg-[#fffbeb] border border-[#fbbf24] rounded-lg px-3 py-2 mb-3 text-[11px] text-[#92400e]">
+                <AlertTriangle size={13} className="shrink-0 mt-px" />
+                <span>
+                  No substrates have a quantity yet, so the exported quote will have no
+                  Coating System table. Tick the substrates and enter quantities first.
+                </span>
+              </div>
+            )}
             <div className="bg-[#f5f4f0] rounded-[10px] px-3.5 py-3 mb-3">
               <div className="text-[11px] font-bold uppercase text-[#666] mb-2 tracking-wide">Locked Price (ex GST)</div>
               <div className="flex gap-2 items-center">
@@ -1545,6 +1606,27 @@ const QUOTE_INCLUSIONS = [
   'Masking and protection of adjacent areas',
   'Full site clean-up and removal of waste',
 ]
+/** Surface preparation reads differently per trade. Cabinets are degreased and
+ *  scuffed rather than filled and gapped, so the job type picks the list. */
+const SURFACE_PREP_STANDARD = [
+  'Fill and sand all nail, screw and imperfection penetrations to a smooth finish',
+  'Seal paintable gaps at joints, trims and corners with flexible paintable sealant',
+  'Spot-prime all bare, cut or exposed substrates as required',
+  'Light sanding and dust-off between coats',
+  'Final tack-off and inspection prior to each coat',
+]
+const SURFACE_PREP_BY_TYPE: Record<string, string[]> = {
+  'Kitchen cabinets': [
+    'Cleaning and degreasing',
+    'Sanding/scuffing',
+    'Priming',
+    'Light sanding and dust-off between coats',
+    'Final tack-off and inspection prior to each coat',
+  ],
+}
+export const surfacePrepFor = (jobType: string): string[] =>
+  SURFACE_PREP_BY_TYPE[jobType] ?? SURFACE_PREP_STANDARD
+
 const QUOTE_EXCLUSIONS = [
   'Supply or installation of scaffolding',
   'Repairs to defective substrates beyond standard preparation',
@@ -1558,6 +1640,8 @@ const QUOTE_TERMS_TEXT =
 
 function buildQuoteHTML(o: {
   docType: string; to: string; proj: string; site: string
+  /** Kept separate from proj, which the user may retitle freely. */
+  jobType: string
   qno: string; dur: string
   coatRows: { sub: string; sys: string; coats: string; app: string; mat: string }[]
   lines: { desc: string; total: number }[]
@@ -1576,12 +1660,12 @@ function buildQuoteHTML(o: {
     + `application of finish coats to all nominated substrates, in accordance with the `
     + `finishes schedule and AS/NZS 2311:2017.`
 
-  // V16 falls back to a worked example when no substrates are quoted yet.
-  const coatBody = o.coatRows.length
-    ? o.coatRows.map(r => `<tr><td>${esc(r.sub)}</td><td>${esc(r.sys)}</td><td style="text-align:center">${esc(r.coats)}</td><td>${esc(r.app)}</td><td>${esc(r.mat)}</td></tr>`).join('')
-    : `<tr><td>Ceilings</td><td>Acrylic undercoat + flat ceiling white</td><td style="text-align:center">1+2</td><td>Spray + Backroll</td><td>Dulux Ceiling White</td></tr>`
-      + `<tr><td>Walls</td><td>Acrylic undercoat + low sheen acrylic</td><td style="text-align:center">1+2</td><td>Cut &amp; Roll</td><td>Dulux Wash&amp;Wear</td></tr>`
-      + `<tr><td>Doors &amp; Trims</td><td>Undercoat + semi-gloss enamel</td><td style="text-align:center">1+2</td><td>Spray + Backroll</td><td>Dulux Aquaenamel</td></tr>`
+  // V16 falls back to a hardcoded ceilings/walls/trims example when nothing is
+  // quoted. That puts work the client is not buying into a document they sign,
+  // so the section is left out instead.
+  const coatBody = o.coatRows
+    .map(r => `<tr><td>${esc(r.sub)}</td><td>${esc(r.sys)}</td><td style="text-align:center">${esc(r.coats)}</td><td>${esc(r.app)}</td><td>${esc(r.mat)}</td></tr>`)
+    .join('')
 
   return `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${esc(fileTitle)}</title><style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -1621,17 +1705,11 @@ table{width:100%;border-collapse:collapse;margin-bottom:10px;font-size:11px}
 <h2>Scope of Works</h2>
 <p>${esc(scope)}</p>
 <p><strong>Inclusions:</strong></p><ul>${bullets(QUOTE_INCLUSIONS)}</ul>
-<h2>Coating System</h2>
+${coatBody ? `<h2>Coating System</h2>
 <table class="ct"><thead><tr><th>Substrate</th><th>System</th><th style="width:70px;text-align:center">Coats</th><th>Application Method</th><th>Materials</th></tr></thead>
-<tbody>${coatBody}</tbody></table>
+<tbody>${coatBody}</tbody></table>` : ''}
 <h2>Surface Preparation</h2>
-<ul>
-  <li>Fill and sand all nail, screw and imperfection penetrations to a smooth finish</li>
-  <li>Seal paintable gaps at joints, trims and corners with flexible paintable sealant</li>
-  <li>Spot-prime all bare, cut or exposed substrates as required</li>
-  <li>Light sanding and dust-off between coats</li>
-  <li>Final tack-off and inspection prior to each coat</li>
-</ul>
+<ul>${bullets(surfacePrepFor(o.jobType))}</ul>
 <h2>Exclusions</h2><ul>${bullets(QUOTE_EXCLUSIONS)}</ul>
 <h2>Work Plan and Duration</h2>
 <ul><li>Estimated duration: <strong>${esc(o.dur || 'To be confirmed')}</strong></li><li>Works subject to access availability and weather conditions</li><li>Scheduling to be confirmed prior to commencement</li></ul>

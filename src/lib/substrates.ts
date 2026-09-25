@@ -13,6 +13,9 @@ export type Substrate = {
   paint: string
   defMethod: string
   defFinish: string
+  /** V16 defUCoats / defTopCoats — every substrate ships 0 and 2. */
+  defUCoats?: number
+  defTopCoats?: number
   /** Preset types for this substrate — e.g. French / solid / panel doors. */
   typeOpts: string[]
 }
@@ -144,14 +147,44 @@ export const GROUP_BG: Record<SubGroup, string> = {
 // and the quote builder use this shape, so a visit's takeoff transfers 1:1.
 
 export type SubLine = { id: string; type: string; qty: number; notes: string }
-export type SubEntry = { inc: boolean; lines: SubLine[] }
+export type SubEntry = { inc: boolean; lines: SubLine[]; coat?: CoatSettings }
+
+// ── Per-substrate coating settings (V16 qapp/quc/qucapp/qfin/qucc/qtop/qcol) ──
+export const UC_OPTS = ['None', 'Acrylic', 'Oil-based', 'Shellac', 'Special']
+export const COLOUR_OPTS = ['Same/Similar', 'Moderate change', 'Dramatic change', 'Special colour']
+
+export type CoatSettings = {
+  app: string       // application method for the top coats
+  uc: string        // undercoat type, 'None' when there is no undercoat
+  ucApp: string     // application method for the undercoat
+  fin: string       // finish / sheen
+  ucCoats: number
+  topCoats: number
+  colour: string
+}
+
+/** V16 defaults: undercoat None, UC application Brush, 0 undercoat and 2 top
+ *  coats, application and finish from the substrate's own defaults. */
+export const defaultCoat = (s: Substrate | undefined): CoatSettings => ({
+  app: s?.defMethod ?? 'Brush',
+  uc: 'None',
+  ucApp: 'Brush',
+  fin: s?.defFinish ?? 'Low Sheen',
+  ucCoats: s?.defUCoats ?? 0,
+  topCoats: s?.defTopCoats ?? 2,
+  colour: 'Same/Similar',
+})
+
+/** The settings for a substrate, falling back to its defaults. */
+export const coatOf = (subs: Record<string, SubEntry>, key: string): CoatSettings =>
+  subs?.[key]?.coat ?? defaultCoat(SUB_BY_KEY[key])
 
 let lineSeq = 0
 export const newSubLine = (): SubLine =>
   ({ id: `ln${Date.now().toString(36)}${lineSeq++}`, type: '', qty: 0, notes: '' })
 
 export const emptySubstrates = (): Record<string, SubEntry> =>
-  Object.fromEntries(SUBSTRATES.map(s => [s.key, { inc: false, lines: [newSubLine()] }]))
+  Object.fromEntries(SUBSTRATES.map(s => [s.key, { inc: false, lines: [newSubLine()], coat: defaultCoat(s) }]))
 
 export const subTotal = (e: SubEntry | undefined) =>
   (e?.lines ?? []).reduce((t, l) => t + (Number(l.qty) || 0), 0)
@@ -190,7 +223,8 @@ export function normaliseSubstrates(raw: any): Record<string, SubEntry> {
           qty: Number(l.qty ?? 0) || Number(l.sqm ?? 0) || Number(l.lm ?? 0) || 0,
         }))
       : [newSubLine()]
-    base[k] = { inc: !!v.inc, lines }
+    // Quotes saved before per-substrate coating settings existed get the defaults.
+    base[k] = { inc: !!v.inc, lines, coat: { ...defaultCoat(SUB_BY_KEY[k]), ...(v.coat ?? {}) } }
   })
   return base
 }
@@ -205,7 +239,10 @@ export function substrateLines(subs: Record<string, SubEntry>): string[] {
       const qty = Number(l.qty) || 0
       if (qty <= 0) return
       const name = l.type ? `${s.label} — ${l.type}` : s.label
-      out.push(`${name}: ${qty} ${unitLabel(s.unit)} — ${s.paint}, ${s.defMethod}, ${s.defFinish}${l.notes ? ` (${l.notes})` : ''}`)
+      // Describe what was actually specified, not the substrate's defaults
+      const c = coatOf(subs, s.key)
+      const uc = c.uc !== 'None' ? `${c.ucCoats} x ${c.uc} undercoat (${c.ucApp}) + ` : ''
+      out.push(`${name}: ${qty} ${unitLabel(s.unit)} — ${s.paint}, ${c.app}, ${uc}${c.topCoats} x ${c.fin}${l.notes ? ` (${l.notes})` : ''}`)
     })
   })
   return out
