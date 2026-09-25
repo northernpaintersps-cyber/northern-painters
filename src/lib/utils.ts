@@ -247,8 +247,10 @@ export function inYear(dateStr: string | null | undefined, year: number): boolea
 }
 
 // ── Job search ───────────────────────────────────────────────
+// Every field optional: the pages hold jobs as Record<string, any>, so a
+// required `id` here would make those arrays unassignable.
 export type PickableJob = {
-  id: string
+  id?: string | null
   client?: string | null
   address?: string | null
   job_desc?: string | null

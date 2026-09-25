@@ -102,6 +102,7 @@ function emptyForm() {
   return {
     id: '',
     job_id: '',
+    client: '',
     date: today(),
     supplier: '',
     mat_desc: '',
