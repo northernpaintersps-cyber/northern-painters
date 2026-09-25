@@ -52,9 +52,12 @@ export function lineItemsOf(row: any): InvoiceLineItem[] {
 }
 
 // ── GST ─────────────────────────────────────────────────────
+export const GST = 0.1
 export function exToInc(ex: number) { return ex * 1.1 }
 export function exToGST(ex: number) { return ex * 0.1 }
 export function incToEx(inc: number) { return inc / 1.1 }
+export const incOf = (ex: number) => ex * (1 + GST)
+export const exOf = (inc: number) => inc / (1 + GST)
 
 // ── Dates ───────────────────────────────────────────────────
 export function today() {
@@ -167,6 +170,43 @@ export function invStatus(inv: Inv): 'Paid' | 'Part Paid' | 'Unpaid' {
   return 'Unpaid'
 }
 
+/** An invoice ex GST. agreed_ex_gst is the stored figure, but imported V16 rows
+ *  often leave it null, so fall back to deriving it from the inc-GST total. */
+export function invExGST(inv: Inv & { agreed_ex_gst?: number | null }): number {
+  return inv.agreed_ex_gst ?? exOf(invIncGST(inv))
+}
+
+// ── Labour and material lines ────────────────────────────────
+// np_labour carries both rate (what the work costs) and charge_rate (what the
+// client pays); `billable` is hours x charge_rate. Older rows have neither, so
+// billable falls back to cost. Moved here from Labour.tsx so the billing
+// calculation and the Labour page cannot drift apart.
+type LabourRow = { billable?: number | null; cost?: number | null; hours?: number | null; rate?: number | null; billing_type?: string | null }
+export const labBillable = (l: LabourRow) => (l.billable !== undefined && l.billable !== null ? l.billable : (l.cost || 0))
+export const labCost = (l: LabourRow) => (l.cost != null ? l.cost : (l.hours || 0) * (l.rate || 0))
+export const isBillableLabour = (l: LabourRow) => l.billing_type === 'Hourly' || l.billing_type === 'Hourly/Estimate'
+
+// Materials have no charge column, so they bill at cost plus the global markup.
+// The existing Billing column decides whether a line is rechargeable at all.
+type MaterialRow = { cost_ex_gst?: number | null; billing_type?: string | null }
+export const matCost = (m: MaterialRow) => m.cost_ex_gst ?? 0
+export const isBillableMaterial = (m: MaterialRow) => m.billing_type === 'Hourly' || m.billing_type === 'Hourly/Estimate'
+export const matBillable = (m: MaterialRow, markupPct: number) => matCost(m) * (1 + markupPct / 100)
+
+// ── Payment schedule milestones ──────────────────────────────
+// np_pay_schedules stores the milestone array as JSON in its notes column.
+export type Milestone = {
+  label: string; pct: number; amount: number
+  dueDate: string; received: boolean; receivedDate: string
+}
+export function parseMilestones(schedule: { notes?: string | null } | undefined | null): Milestone[] {
+  if (!schedule?.notes) return []
+  try {
+    const parsed = JSON.parse(schedule.notes)
+    return Array.isArray(parsed) ? parsed as Milestone[] : []
+  } catch { return [] }
+}
+
 // ── Gross margin ─────────────────────────────────────────────
 export function grossMargin(revenue: number, labourCost: number, materialCost: number): number {
   if (!revenue) return 0
@@ -204,4 +244,35 @@ export function inYear(dateStr: string | null | undefined, year: number): boolea
   const d = new Date(dateStr)
   if (isNaN(d.getTime())) return false
   return d.getFullYear() === year
+}
+
+// ── Job search ───────────────────────────────────────────────
+export type PickableJob = {
+  id: string
+  client?: string | null
+  address?: string | null
+  job_desc?: string | null
+  status?: string | null
+}
+
+/** Digits only, so "12" matches "NP-0012" and "np 12" matches it too. */
+const digits = (s: string) => s.replace(/\D+/g, '')
+
+export function jobLabel(j: PickableJob | undefined): string {
+  if (!j) return ''
+  return [j.id, j.client, j.address?.split(',')[0]].filter(Boolean).join(' — ')
+}
+
+export function matchesJob(j: PickableJob, query: string): boolean {
+  const q = query.trim().toLowerCase()
+  if (!q) return true
+  // status is shown in the list, so it should be searchable too
+  const hay = `${j.id ?? ''} ${j.client ?? ''} ${j.address ?? ''} ${j.job_desc ?? ''} ${j.status ?? ''}`.toLowerCase()
+  if (hay.includes(q)) return true
+  // Bare numbers: "12" should find NP-0012 without typing the prefix or zeros.
+  const qd = digits(q)
+  if (qd && digits(j.id ?? '').includes(qd)) return true
+  // Every word present somewhere, so "jordy esmonde" still finds it.
+  const words = q.split(/\s+/).filter(Boolean)
+  return words.length > 1 && words.every(w => hay.includes(w))
 }

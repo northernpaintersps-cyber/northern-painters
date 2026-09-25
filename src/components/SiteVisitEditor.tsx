@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { SV_CONDITIONS, SV_PHOTO_TAGS, SV_TAG_BG, SV_TAG_FG } from '@/lib/siteVisitData'
 import { emptySubstrates, normaliseSubstrates, type SubEntry } from '@/lib/substrates'
 import SubstratePicker from '@/components/SubstratePicker'
+import JobPicker from '@/components/JobPicker'
 import { genId, today } from '@/lib/utils'
 import {
   ArrowLeft, Save, Check, Plus, Trash2, Mic, Camera, Upload, Copy,
@@ -237,13 +238,9 @@ export default function SiteVisitEditor({ initial, jobs, isNew, onClose, onSave,
             </div>
             <div>
               <label className="block text-xs font-medium text-gray-500 mb-1">Link to job</label>
-              <select value={sv.jobId} onChange={e => {
-                const j = jobs.find(x => x.id === e.target.value)
-                patch({ jobId: e.target.value, ...(j ? { client: j.client ?? '', address: j.address ?? '', jobType: j.type ?? sv.jobType } : {}) })
-              }} className={INP}>
-                <option value="">— Standalone visit —</option>
-                {jobs.map(j => <option key={j.id} value={j.id}>{j.id} — {j.client}</option>)}
-              </select>
+              <JobPicker jobs={jobs} value={sv.jobId} label={null}
+                noneLabel="— Standalone visit —"
+                onChange={(id, j) => patch({ jobId: id, ...(j ? { client: j.client ?? '', address: j.address ?? '', jobType: (j as any).type ?? sv.jobType } : {}) })} />
             </div>
             <div>
               <label className="block text-xs font-medium text-gray-500 mb-1">Client name</label>

@@ -6,6 +6,7 @@ import { useAuth } from '@/lib/auth'
 import { Badge } from '@/components/ui/Badge'
 import { Modal } from '@/components/ui/Modal'
 import { Input, Select, TextArea } from '@/components/ui/Field'
+import JobBillingTab from '@/components/JobBillingTab'
 import {
   fmtCurrency, fmtDate, nextJobId, genId, normaliseDate,
   getJobScheduledDates, today
@@ -428,7 +429,7 @@ export default function Jobs() {
   const [form, setForm] = useState<Job>(emptyForm())
   const [modalOpen, setModalOpen] = useState(false)
   const [saving, setSaving] = useState(false)
-  const [tab, setTab] = useState<'details'|'schedule'|'financials'|'costs'|'variations'>('details')
+  const [tab, setTab] = useState<'details'|'schedule'|'financials'|'costs'|'billing'|'variations'>('details')
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
@@ -733,7 +734,7 @@ export default function Jobs() {
 
         {/* Tabs */}
         <div className="flex gap-1 mb-5 bg-gray-50 p-1 rounded-lg">
-          {(['details','schedule','financials','costs','variations'] as const).map(t => (
+          {(['details','schedule','financials','costs','billing','variations'] as const).map(t => (
             <button key={t} onClick={() => setTab(t)}
               className={`flex-1 text-xs py-1.5 rounded-md font-medium transition-colors capitalize ${tab === t ? 'bg-gray-200 text-gray-900' : 'text-gray-500 hover:text-gray-900'}`}>
               {t === 'costs' ? 'Cost Tracker' : t}
@@ -809,6 +810,7 @@ export default function Jobs() {
         )}
 
         {tab === 'costs' && <CostTrackerTab job={form} jobId={selectedId} />}
+        {tab === 'billing' && <JobBillingTab job={form} jobId={selectedId} />}
         {tab === 'variations' && <VariationsTab jobId={selectedId} />}
 
         <div className="flex items-center justify-between mt-6 pt-4 border-t border-gray-200">

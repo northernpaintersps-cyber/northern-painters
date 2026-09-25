@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/lib/auth'
 import { Modal } from '@/components/ui/Modal'
+import JobPicker from '@/components/JobPicker'
 import { Input, Select, TextArea } from '@/components/ui/Field'
 import { fmtCurrency, today } from '@/lib/utils'
 import {
@@ -334,6 +335,14 @@ export default function Receipts() {
               {invoices.map(iv => <option key={iv.id} value={iv.id}>{iv.id || '—'} — {iv.client}</option>)}
             </select>
           </div>
+          {/* A receipt could only get a job by being linked from an invoice.
+              Searchable here so a standalone receipt can be attributed too. */}
+          <JobPicker jobs={jobs} value={form.job_id} label="Job (optional)" className="col-span-2"
+            onChange={(id, j) => setForm(p => ({
+              ...p, job_id: id || null,
+              client: j?.client ?? p.client,
+              address: (j as any)?.address ?? p.address,
+            }))} />
           <Input label="Receipt No." value={form.id || ''} onChange={ef('id')} />
           <Input label="Date Issued" type="date" value={form.date || ''} onChange={ef('date')} />
           <Input label="Received From" value={form.client || ''} onChange={ef('client')} />
