@@ -35,3 +35,19 @@ export async function fetchAllRows(
     if (rows.length < page) return out
   }
 }
+
+/**
+ * Drop-in for `supabase.from(t).select('*').eq('user_id', uid)` that is not
+ * capped at PostgREST's 1000-row default. Same `{ data, error }` shape, so the
+ * calling code does not change.
+ */
+export async function selectAll(
+  table: string, userId: string,
+  opts?: { columns?: string; orderBy?: string; ascending?: boolean },
+): Promise<{ data: any[] | null; error: any }> {
+  try {
+    return { data: await fetchAllRows(table, userId, opts), error: null }
+  } catch (error) {
+    return { data: null, error }
+  }
+}

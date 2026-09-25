@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '@/lib/auth'
-import { supabase } from '@/lib/supabase'
+import { supabase, selectAll } from '@/lib/supabase'
 import { fmtCurrency, calcOwed, invStatus, normaliseDate, genId, crewLabel } from '@/lib/utils'
 import {
   AlertCircle, UserPlus, Clock, Users, ExternalLink, Plus,
@@ -21,7 +21,7 @@ function useAllData() {
   const opts = (table: string) => ({
     queryKey: [table, uid],
     queryFn: async () => {
-      const { data, error } = await supabase.from(table as any).select('*').eq('user_id', uid!)
+      const { data, error } = await selectAll(table, uid!)
       if (error) throw error
       return (data ?? []) as any[]
     },

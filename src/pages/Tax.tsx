@@ -1,6 +1,6 @@
 import { useState, useMemo, useRef } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { supabase } from '@/lib/supabase'
+import { supabase, selectAll } from '@/lib/supabase'
 import { useAuth } from '@/lib/auth'
 import { fmtCurrency, invStatus, today } from '@/lib/utils'
 import { reconcileBankStatement } from '@/lib/ai'
@@ -17,7 +17,7 @@ function useTable(table: string) {
   return useQuery({
     queryKey: [table, user?.id],
     queryFn: async () => {
-      const { data } = await (supabase.from(table as any) as any).select('*').eq('user_id', user!.id)
+      const { data } = await selectAll(table, user!.id)
       return (data ?? []) as Row[]
     },
     enabled: !!user,

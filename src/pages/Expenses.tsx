@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { supabase } from '@/lib/supabase'
+import { supabase, selectAll } from '@/lib/supabase'
 import { useAuth } from '@/lib/auth'
 import { Modal } from '@/components/ui/Modal'
 import JobPicker from '@/components/JobPicker'
@@ -25,7 +25,7 @@ function useTable(table: string) {
   return useQuery({
     queryKey: [table, user?.id],
     queryFn: async () => {
-      const { data } = await (supabase.from(table as any) as any).select('*').eq('user_id', user!.id)
+      const { data } = await selectAll(table, user!.id)
       return (data ?? []) as Row[]
     },
     enabled: !!user,

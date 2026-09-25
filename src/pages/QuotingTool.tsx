@@ -1,7 +1,7 @@
 import { useState, useMemo, useRef, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { supabase } from '@/lib/supabase'
+import { supabase, selectAll } from '@/lib/supabase'
 import { useAuth } from '@/lib/auth'
 import { fmtCurrency, genId, nextJobId } from '@/lib/utils'
 import { useBusinessSettings } from '@/pages/SettingsPage'
@@ -125,7 +125,7 @@ export default function QuotingTool() {
   const { data: jobs = [] } = useQuery({
     queryKey: ['np_jobs', user?.id],
     queryFn: async () => {
-      const { data } = await supabase.from('np_jobs').select('*').eq('user_id', user!.id)
+      const { data } = await selectAll('np_jobs', user!.id)
       return (data ?? []) as Row[]
     },
     enabled: !!user,

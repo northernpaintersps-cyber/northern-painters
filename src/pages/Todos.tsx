@@ -1,6 +1,6 @@
 import { useState, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { supabase } from '@/lib/supabase'
+import { supabase, selectAll } from '@/lib/supabase'
 import { useAuth } from '@/lib/auth'
 import { genId } from '@/lib/utils'
 import { Plus, Loader2, Trash2, Mic } from 'lucide-react'
@@ -19,8 +19,7 @@ function useTodos() {
   return useQuery({
     queryKey: ['np_todos', user?.id],
     queryFn: async () => {
-      const { data } = await (supabase.from('np_todos') as any)
-        .select('*').eq('user_id', user!.id).order('created_at', { ascending: false })
+      const { data } = await selectAll('np_todos', user!.id, { orderBy: 'created_at' })
       return (data ?? []) as Row[]
     },
     enabled: !!user,

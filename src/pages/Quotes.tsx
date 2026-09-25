@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { supabase } from '@/lib/supabase'
+import { supabase, selectAll } from '@/lib/supabase'
 import { useAuth } from '@/lib/auth'
 import { Modal } from '@/components/ui/Modal'
 import { fmtCurrency, fmtDate } from '@/lib/utils'
@@ -23,8 +23,7 @@ function useQuotes() {
   return useQuery({
     queryKey: ['np_quotes', user?.id],
     queryFn: async () => {
-      const { data, error } = await (supabase.from('np_quotes') as any)
-        .select('*').eq('user_id', user!.id).order('created_at', { ascending: false })
+      const { data, error } = await selectAll('np_quotes', user!.id, { orderBy: 'created_at' })
       if (error) throw error
       return (data ?? []) as Row[]
     },

@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { supabase } from '@/lib/supabase'
+import { supabase, selectAll } from '@/lib/supabase'
 import { useAuth } from '@/lib/auth'
 import type { Database } from '@/lib/database.types'
 
@@ -11,11 +11,7 @@ export function useJobs() {
   return useQuery({
     queryKey: ['jobs', user?.id],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from('np_jobs')
-        .select('*')
-        .eq('user_id', user!.id)
-        .order('created_at', { ascending: false })
+      const { data, error } = await selectAll('np_jobs', user!.id, { orderBy: 'created_at' })
       if (error) throw error
       return data as Job[]
     },

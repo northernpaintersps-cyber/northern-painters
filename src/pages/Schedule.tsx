@@ -1,7 +1,7 @@
 import { useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { supabase } from '@/lib/supabase'
+import { supabase, selectAll } from '@/lib/supabase'
 import { useAuth } from '@/lib/auth'
 import { fmtCurrency, getJobScheduledDates, normaliseDate, crewLabel } from '@/lib/utils'
 import { Loader2, CalendarPlus, CalendarDays, Info } from 'lucide-react'
@@ -17,7 +17,7 @@ function useTable(table: string) {
   return useQuery({
     queryKey: [table, user?.id],
     queryFn: async () => {
-      const { data } = await (supabase.from(table as any) as any).select('*').eq('user_id', user!.id)
+      const { data } = await selectAll(table, user!.id)
       return (data ?? []) as Row[]
     },
     enabled: !!user,

@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { supabase } from '@/lib/supabase'
+import { supabase, selectAll } from '@/lib/supabase'
 import { useAuth } from '@/lib/auth'
 import { Modal } from '@/components/ui/Modal'
 import JobPicker from '@/components/JobPicker'
@@ -33,7 +33,7 @@ function useInvoices() {
   return useQuery({
     queryKey: ['np_invoices', user?.id],
     queryFn: async () => {
-      const { data, error } = await supabase.from('np_invoices').select('*').eq('user_id', user!.id).order('created_at', { ascending: false })
+      const { data, error } = await selectAll('np_invoices', user!.id, { orderBy: 'created_at' })
       if (error) throw error
       return (data ?? []) as Invoice[]
     },
@@ -46,7 +46,7 @@ function useJobs() {
   return useQuery({
     queryKey: ['np_jobs', user?.id],
     queryFn: async () => {
-      const { data } = await supabase.from('np_jobs').select('*').eq('user_id', user!.id).order('created_at', { ascending: false })
+      const { data } = await selectAll('np_jobs', user!.id, { orderBy: 'created_at' })
       return (data ?? []) as any[]
     },
     enabled: !!user,
@@ -58,7 +58,7 @@ function usePaySchedules() {
   return useQuery({
     queryKey: ['np_pay_schedules', user?.id],
     queryFn: async () => {
-      const { data } = await supabase.from('np_pay_schedules').select('*').eq('user_id', user!.id)
+      const { data } = await selectAll('np_pay_schedules', user!.id)
       return (data ?? []) as any[]
     },
     enabled: !!user,
@@ -72,7 +72,7 @@ function useUserTable(table: string) {
   return useQuery({
     queryKey: [table, user?.id],
     queryFn: async () => {
-      const { data } = await supabase.from(table as any).select('*').eq('user_id', user!.id)
+      const { data } = await selectAll(table, user!.id)
       return (data ?? []) as any[]
     },
     enabled: !!user,

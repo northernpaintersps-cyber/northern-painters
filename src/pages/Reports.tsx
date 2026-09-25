@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { supabase } from '@/lib/supabase'
+import { supabase, selectAll } from '@/lib/supabase'
 import { useAuth } from '@/lib/auth'
 import { fmtCurrency, fmtDate, inYear, grossMargin } from '@/lib/utils'
 import {
@@ -14,14 +14,14 @@ function useAll() {
   const { user } = useAuth()
   const uid = user?.id
 
-  const jobs      = useQuery<any[]>({ queryKey: ['rep_jobs', uid],      enabled: !!uid, queryFn: async () => { const { data } = await supabase.from('np_jobs').select('*').eq('user_id', uid!); return data ?? [] } })
-  const invoices  = useQuery<any[]>({ queryKey: ['rep_inv', uid],       enabled: !!uid, queryFn: async () => { const { data } = await supabase.from('np_invoices').select('*').eq('user_id', uid!); return data ?? [] } })
-  const labour    = useQuery<any[]>({ queryKey: ['rep_lab', uid],       enabled: !!uid, queryFn: async () => { const { data } = await supabase.from('np_labour').select('*').eq('user_id', uid!); return data ?? [] } })
-  const materials = useQuery<any[]>({ queryKey: ['rep_mat', uid],       enabled: !!uid, queryFn: async () => { const { data } = await supabase.from('np_materials').select('*').eq('user_id', uid!); return data ?? [] } })
-  const expenses  = useQuery<any[]>({ queryKey: ['rep_exp', uid],       enabled: !!uid, queryFn: async () => { const { data } = await supabase.from('np_expenses').select('*').eq('user_id', uid!); return data ?? [] } })
-  const enquiries = useQuery<any[]>({ queryKey: ['rep_enq', uid],       enabled: !!uid, queryFn: async () => { const { data } = await supabase.from('np_enquiries').select('*').eq('user_id', uid!); return data ?? [] } })
-  const assignments = useQuery<any[]>({ queryKey: ['rep_asg', uid],     enabled: !!uid, queryFn: async () => { const { data } = await supabase.from('np_assignments').select('*').eq('user_id', uid!); return data ?? [] } })
-  const adsSpend  = useQuery<any[]>({ queryKey: ['rep_ads', uid],       enabled: !!uid, queryFn: async () => { const { data } = await supabase.from('np_ads_spend').select('*').eq('user_id', uid!); return data ?? [] } })
+  const jobs      = useQuery<any[]>({ queryKey: ['rep_jobs', uid],      enabled: !!uid, queryFn: async () => { const { data } = await selectAll('np_jobs', uid!); return data ?? [] } })
+  const invoices  = useQuery<any[]>({ queryKey: ['rep_inv', uid],       enabled: !!uid, queryFn: async () => { const { data } = await selectAll('np_invoices', uid!); return data ?? [] } })
+  const labour    = useQuery<any[]>({ queryKey: ['rep_lab', uid],       enabled: !!uid, queryFn: async () => { const { data } = await selectAll('np_labour', uid!); return data ?? [] } })
+  const materials = useQuery<any[]>({ queryKey: ['rep_mat', uid],       enabled: !!uid, queryFn: async () => { const { data } = await selectAll('np_materials', uid!); return data ?? [] } })
+  const expenses  = useQuery<any[]>({ queryKey: ['rep_exp', uid],       enabled: !!uid, queryFn: async () => { const { data } = await selectAll('np_expenses', uid!); return data ?? [] } })
+  const enquiries = useQuery<any[]>({ queryKey: ['rep_enq', uid],       enabled: !!uid, queryFn: async () => { const { data } = await selectAll('np_enquiries', uid!); return data ?? [] } })
+  const assignments = useQuery<any[]>({ queryKey: ['rep_asg', uid],     enabled: !!uid, queryFn: async () => { const { data } = await selectAll('np_assignments', uid!); return data ?? [] } })
+  const adsSpend  = useQuery<any[]>({ queryKey: ['rep_ads', uid],       enabled: !!uid, queryFn: async () => { const { data } = await selectAll('np_ads_spend', uid!); return data ?? [] } })
 
   const loading = [jobs, invoices, labour, materials, expenses, enquiries].some(q => q.isLoading)
 

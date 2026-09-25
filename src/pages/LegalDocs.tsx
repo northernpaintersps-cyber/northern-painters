@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { supabase } from '@/lib/supabase'
+import { supabase, selectAll } from '@/lib/supabase'
 import { useAuth } from '@/lib/auth'
 import { Modal } from '@/components/ui/Modal'
 import { Input, Select } from '@/components/ui/Field'
@@ -17,7 +17,7 @@ function useDocs() {
   return useQuery({
     queryKey: ['np_legal_docs', user?.id],
     queryFn: async () => {
-      const { data, error } = await supabase.from('np_legal_docs').select('*').eq('user_id', user!.id).order('expiry_date', { ascending: true })
+      const { data, error } = await selectAll('np_legal_docs', user!.id, { orderBy: 'expiry_date', ascending: true })
       if (error) throw error
       return (data ?? []) as Doc[]
     },
