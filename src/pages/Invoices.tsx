@@ -285,7 +285,11 @@ export default function Invoices() {
             billed_labour:    chosen.filter(l => l.kind === 'labour').map(l => l.id),
             billed_materials: chosen.filter(l => l.kind === 'material').map(l => l.id),
             // Itemise it on the printed invoice too.
-            line_items: chosen.map(l => ({ description: l.description, qty: 1, total_ex_gst: l.amountExGST })),
+            // kind and hours let the printed invoice collapse to totals.
+            line_items: chosen.map(l => ({
+              description: l.description, qty: 1, total_ex_gst: l.amountExGST,
+              kind: l.kind, ...(l.hours ? { hours: l.hours } : {}),
+            })),
           },
         }
       } else if (selectedId) {
@@ -677,6 +681,14 @@ export default function Invoices() {
               ))}
             </div>
           )}
+          <div>
+            <label className="block text-xs font-medium text-gray-500 mb-1">Detail on the invoice</label>
+            <select value={form.extra?.pdf_detail ?? 'itemised'}
+              onChange={e => setExtra('pdf_detail', e.target.value === 'itemised' ? '' : e.target.value)}
+              className="w-full bg-white border border-black/20 rounded-lg px-3 py-2 text-[13px] focus:outline-none focus:ring-1 focus:ring-blue-500">
+              {INVOICE_DETAIL.map(d => <option key={d.id} value={d.id}>{d.label}</option>)}
+            </select>
+          </div>
           <Input label="Amount ex GST ($)" type="number" value={form.agreed_ex_gst || ''}
             onChange={fld('agreed_ex_gst')} min={0}
             readOnly={invMode === 'lines' && !!form.job_id}
@@ -982,29 +994,70 @@ const money2 = (v: any) => '$' + Number(v || 0).toLocaleString('en-AU', { minimu
 const esc = (v: any) => String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 
 // V16 _buildInvTable()
+/** How much detail the printed invoice shows. */
+export type InvoiceDetail = 'itemised' | 'totals' | 'single'
+export const INVOICE_DETAIL: { id: InvoiceDetail; label: string }[] = [
+  { id: 'itemised', label: 'Every line' },
+  { id: 'totals',   label: 'Labour and materials totals' },
+  { id: 'single',   label: 'One line' },
+]
+
+type PdfLine = { qty: number | string; description: string; unit: string; unitPrice: number; amount: number }
+
 function buildInvTable(inv: Invoice, collapsed: boolean) {
   const stored = inv.extra?.line_items
-  const rawItems = Array.isArray(stored) && stored.length
+  const rawItems: any[] = Array.isArray(stored) && stored.length
     ? stored
     : [{ qty: 1, description: inv.notes || 'Painting services', unitPrice: inv.agreed_ex_gst || 0, amount: inv.agreed_ex_gst || 0 }]
 
-  const normItems = rawItems.map((li: any) => ({
+  // total_ex_gst is what the line picker and the AI scanner both write;
+  // totalExGST and total are the V16 spellings. Missing it here silently
+  // printed every picked line as $0 while the invoice total stayed correct.
+  const amountOf = (li: any) =>
+    Number(li.amount ?? li.total_ex_gst ?? li.totalExGST ?? li.total ?? 0) || 0
+
+  const normItems: PdfLine[] = rawItems.map(li => ({
     qty: li.qty || 1,
     description: li.description || li.desc || 'Painting services',
     unit: li.unit && isNaN(Number(li.unit)) ? li.unit : 'lot',
-    unitPrice: li.unitPrice !== undefined ? li.unitPrice : (isNaN(Number(li.unit)) ? 0 : Number(li.unit) || 0),
-    amount: li.amount !== undefined ? li.amount : (li.totalExGST || li.total || 0),
+    unitPrice: li.unitPrice !== undefined ? li.unitPrice : amountOf(li) / (Number(li.qty) || 1),
+    amount: amountOf(li),
   }))
 
-  const lineItems = collapsed
-    ? [{
-        qty: 1,
-        description: inv.notes || 'Painting services',
-        unit: 'lot',
-        unitPrice: normItems.reduce((s: number, l: any) => s + l.amount, 0),
-        amount: normItems.reduce((s: number, l: any) => s + l.amount, 0),
-      }]
-    : normItems
+  const sum = (rows: any[]) => Math.round(rows.reduce((s, l) => s + amountOf(l), 0) * 100) / 100
+  const detail: InvoiceDetail = collapsed ? 'single' : (inv.extra?.pdf_detail ?? 'itemised')
+
+  let lineItems: PdfLine[]
+  if (detail === 'single') {
+    const total = sum(rawItems)
+    lineItems = [{ qty: 1, description: inv.notes || 'Painting services', unit: 'lot', unitPrice: total, amount: total }]
+  } else if (detail === 'totals') {
+    // Group by the kind recorded when the lines were picked. Anything without
+    // one — a manual invoice, or a scan — keeps its own row rather than being
+    // lumped somewhere it does not belong.
+    const labour = rawItems.filter(l => l.kind === 'labour')
+    const mats   = rawItems.filter(l => l.kind === 'material')
+    const rest   = rawItems.filter(l => l.kind !== 'labour' && l.kind !== 'material')
+    lineItems = []
+    if (labour.length) {
+      const hrs = Math.round(labour.reduce((s, l) => s + (Number(l.hours) || 0), 0) * 100) / 100
+      const amt = sum(labour)
+      lineItems.push({
+        qty: hrs || 1,
+        description: 'Labour — painting services',
+        unit: hrs ? 'hrs' : 'lot',
+        unitPrice: hrs ? Math.round((amt / hrs) * 100) / 100 : amt,
+        amount: amt,
+      })
+    }
+    if (mats.length) {
+      const amt = sum(mats)
+      lineItems.push({ qty: 1, description: 'Materials and consumables', unit: 'lot', unitPrice: amt, amount: amt })
+    }
+    rest.forEach(l => lineItems.push(normItems[rawItems.indexOf(l)]))
+  } else {
+    lineItems = normItems
+  }
 
   return {
     lineItems,

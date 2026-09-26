@@ -279,6 +279,8 @@ export type InvoiceableLine = {
   id: string
   date: string
   description: string
+  /** Labour only — lets the invoice summarise as "Labour — 24 hrs". */
+  hours?: number
   /** What the client is charged for this line, ex GST. */
   amountExGST: number
   /** Already covered by another invoice on this job. */
@@ -310,6 +312,7 @@ export function invoiceableLines(input: {
       date: l.date ?? '',
       description: [l.sub, l.labour_desc].filter(Boolean).join(' — ')
         || `${l.hours ?? 0} hrs labour`,
+      hours: Number(l.hours) || 0,
       amountExGST: labBillable(l),
       billed: billed.labour.has(String(l.id)),
       billedOn: whichInvoice('labour', String(l.id)),
