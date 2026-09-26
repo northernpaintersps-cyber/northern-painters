@@ -198,6 +198,10 @@ export const matBillable = (m: MaterialRow, markupPct: number) => matCost(m) * (
 export type Milestone = {
   label: string; pct: number; amount: number
   dueDate: string; received: boolean; receivedDate: string
+  /** Set when the schedule was built without GST. np_pay_schedules has no
+   *  column for it, and a schedule can exist without a job to read it from,
+   *  so it rides along on the milestones themselves. */
+  gstFree?: boolean
 }
 export function parseMilestones(schedule: { notes?: string | null } | undefined | null): Milestone[] {
   if (!schedule?.notes) return []

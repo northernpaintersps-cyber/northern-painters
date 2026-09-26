@@ -24,9 +24,9 @@ const STRUCTURES = [
 ]
 
 // V16 buildMS()
-function buildMS(agreed: number, struct: string, dep: number, start: string, job?: any): Milestone[] {
-  // A cash job is not invoiced, so the agreed figure is the whole amount.
-  const inc = jobTotal(job, agreed)
+function buildMS(agreed: number, struct: string, dep: number, start: string, gstFree = false): Milestone[] {
+  // Cash work is not invoiced, so the agreed figure is the whole amount.
+  const inc = gstFree ? agreed : agreed * 1.1
   const rem = 100 - dep
   const addD = (d: string, n: number) => {
     if (!d) return ''
@@ -34,7 +34,8 @@ function buildMS(agreed: number, struct: string, dep: number, start: string, job
     return dt.toISOString().split('T')[0]
   }
   const mk = (label: string, pct: number, dueDate: string): Milestone =>
-    ({ label, pct, amount: Math.round((inc * pct) / 100), dueDate, received: false, receivedDate: '' })
+    ({ label, pct, amount: Math.round((inc * pct) / 100), dueDate, received: false, receivedDate: '',
+       ...(gstFree ? { gstFree: true } : {}) })
 
   if (struct === 'df') return [mk('Deposit', dep, start), mk('Final payment', rem, '')]
   if (struct === 'dpf') return [
@@ -112,6 +113,7 @@ export default function Payments() {
   const [struct, setStruct] = useState('df')
   const [depPct, setDepPct] = useState(20)
   const [start, setStart] = useState('')
+  const [gstFree, setGstFree] = useState(false)
 
   const todayStr = new Date().toISOString().slice(0, 10)
 
@@ -130,8 +132,10 @@ export default function Payments() {
     const sched = ms.reduce((b, m) => b + (m.amount || 0), 0)
     const job = jobs.find(j => j.id === s.id)
     const isFixed = billingBasis(job) === 'fixed'
-    const target = isFixed ? jobTotal(job, s.amount || 0) : sched
-    acc.value += jobTotal(job, s.amount || 0)
+    const noGst = isCashJob(job) || ms.some(m => m.gstFree)
+    const value = noGst ? (s.amount || 0) : jobTotal(job, s.amount || 0)
+    const target = isFixed ? value : sched
+    acc.value += value
     acc.received += rec
     acc.left += Math.max(0, target - rec)
     return acc
@@ -139,18 +143,18 @@ export default function Payments() {
   const overdue = filtered.reduce((a, s) => a + msOf(s).filter(m => !m.received && m.dueDate && m.dueDate < todayStr).length, 0)
 
   const preview = useMemo(
-    () => (typeof value === 'number' && value > 0 ? buildMS(value, struct, depPct, start, jobs.find(x => x.id === jobId)) : []),
-    [value, struct, depPct, start, jobId, jobs],
+    () => (typeof value === 'number' && value > 0 ? buildMS(value, struct, depPct, start, gstFree) : []),
+    [value, struct, depPct, start, gstFree],
   )
 
   function openNew() {
-    setJobId(''); setValue(''); setStruct('df'); setDepPct(20); setStart(''); setModal(true)
+    setJobId(''); setValue(''); setStruct('df'); setDepPct(20); setStart(''); setGstFree(false); setModal(true)
   }
 
   async function create() {
     if (!value || value <= 0) { alert('Enter agreed value'); return }
     const j = jobs.find(x => x.id === jobId)
-    const ms = buildMS(value, struct, depPct, start, j)
+    const ms = buildMS(value, struct, depPct, start, gstFree)
     await upsert.mutateAsync({
       id: jobId || genId('ps'),
       worker: j?.client || 'Unknown',
@@ -267,8 +271,9 @@ export default function Payments() {
         // A fixed quote has to add up to the contract; an estimate is open-ended,
         // so the final total does not have to match what was estimated.
         const isFixed = billingBasis(job) === 'fixed'
-        const cash = isCashJob(job)
-        const contractIncGST = jobTotal(job, s.amount || 0)
+        // The job says so, or the schedule was built without GST.
+        const cash = isCashJob(job) || ms.some(m => m.gstFree)
+        const contractIncGST = cash ? (s.amount || 0) : jobTotal(job, s.amount || 0)
         // Progress is measured against the contract on a fixed job, and against
         // what has actually been scheduled on an estimate.
         const target = isFixed ? contractIncGST : scheduled
@@ -414,6 +419,7 @@ export default function Payments() {
               onChange={(id, j) => {
                 setJobId(id)
                 if ((j as any)?.agreed_ex_gst) setValue((j as any).agreed_ex_gst)
+                if (j) setGstFree(isCashJob(j as any))   // default from the job, still overridable
               }} />
           </div>
           <Input label="Agreed value (ex GST)" type="number" value={value}
@@ -425,6 +431,14 @@ export default function Payments() {
               {STRUCTURES.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}
             </select>
           </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-500 mb-1">GST</label>
+            <select value={gstFree ? 'cash' : 'books'} onChange={e => setGstFree(e.target.value === 'cash')}
+              className="w-full bg-white border border-black/20 rounded-lg px-3 py-2 text-[13px] focus:outline-none focus:ring-1 focus:ring-blue-500">
+              <option value="books">On the books — add 10% GST</option>
+              <option value="cash">Cash — no GST</option>
+            </select>
+          </div>
           <Input label="Deposit %" type="number" value={depPct} onChange={e => setDepPct(parseFloat(e.target.value) || 0)} />
           <Input label="Start date" type="date" value={start} onChange={e => setStart(e.target.value)} />
         </div>
@@ -433,7 +447,7 @@ export default function Payments() {
           <table className="w-full border-collapse text-[13px] mt-3.5">
             <thead>
               <tr>
-                {['Milestone','Amount inc GST','Due'].map(h => (
+                {['Milestone', gstFree ? 'Amount (no GST)' : 'Amount inc GST', 'Due'].map(h => (
                   <th key={h} className="px-1.5 py-1 text-left border-b border-black/[0.12] text-[#666] font-medium">{h}</th>
                 ))}
               </tr>
