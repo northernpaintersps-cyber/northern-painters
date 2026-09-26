@@ -1099,7 +1099,7 @@ function buildInvoiceHTML(inv: Invoice, biz?: any, collapsed = false): string {
   const page = `<div id="inv-prev" class="np-invoice-sample" style="background:#fff;width:794px;min-height:1123px;margin:0 auto;padding:92px 78px 50px;font-family:Arial,Helvetica,sans-serif;color:#111;font-size:14px;line-height:1.25">
   <div style="display:grid;grid-template-columns:1fr 1fr;align-items:end;border-bottom:2px solid #111;padding-bottom:8px">
     <div><img src="${origin}/np-logo.png" alt="Northern Painters" style="width:300px;height:auto;display:block"></div>
-    <div style="text-align:right;font-size:54px;font-weight:800;letter-spacing:.5px;line-height:.9;padding-bottom:4px">TAX INVOICE</div>
+    <div style="text-align:right;font-size:38px;font-weight:400;letter-spacing:1.5px;line-height:1;padding-bottom:4px">TAX INVOICE</div>
   </div>
   <div style="display:grid;grid-template-columns:70px 1fr 70px 130px;align-items:center;margin:4px 0 30px;font-size:16px">
     <div style="font-weight:700">To:</div><div>${esc(inv.client)}</div>
