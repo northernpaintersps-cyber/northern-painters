@@ -509,3 +509,73 @@ export function jobBillingType(job: { billing_type?: string | null; terms?: stri
 export function jobDefaults(job: { billing_type?: string | null; terms?: string | null; on_books?: string | null } | undefined | null) {
   return { billing_type: jobBillingType(job), on_books: isCashJob(job) ? 'Cash' : 'Invoiced' }
 }
+
+// ── Invoice numbering ────────────────────────────────────────
+// Invoices are named  <job>_<n>_<concept>_<street>, e.g.
+//   NP-0083_1_Painting_services_81_Esmonde_St
+// so the number alone says which job it belongs to, which invoice in the
+// sequence it is, what it covers and where. The printed file takes its name
+// from the same string.
+
+/** Safe for a filename and for an id: words joined by single underscores. */
+export const slugPart = (v: any) =>
+  String(v ?? '')
+    .replace(/[\/:*?"<>|,]/g, ' ')
+    .replace(/[^A-Za-z0-9&'-]+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_|_$/g, '')
+
+/**
+ * What the invoice is for, read from its description.
+ *
+ * Falls back to the description's own opening words so an unusual invoice
+ * still names itself, and to "Painting services" when there is nothing.
+ */
+export function invoiceConcept(notes: any): string {
+  const s = String(notes ?? '').trim()
+  if (/\bdeposit\b/i.test(s)) return 'Booking deposit'
+  if (/\bprogress\b|\bclaim\b/i.test(s)) return 'Progress claim'
+  if (/\bfinal\b/i.test(s)) return 'Final invoice'
+  if (/\bvariation\b/i.test(s)) return 'Variation'
+  if (/\btouch|\bmake good\b|\bdefect/i.test(s)) return 'Defects and touch ups'
+  if (!s) return 'Painting services'
+  return s.split(/\s+/).slice(0, 4).join(' ')
+}
+
+/** Street part of an address — the suburb and state add length, not meaning. */
+export const streetOf = (address: any) => String(address ?? '').split(',')[0].trim()
+
+export function buildInvoiceNo(opts: {
+  jobId?: string | null
+  seq: number
+  notes?: string | null
+  address?: string | null
+}): string {
+  return [
+    slugPart(opts.jobId || 'INV'),
+    String(opts.seq),
+    slugPart(invoiceConcept(opts.notes)),
+    slugPart(streetOf(opts.address)),
+  ].filter(Boolean).join('_')
+}
+
+/**
+ * The next free number for this job. Counts the job's existing invoices and
+ * steps past anything already taken, so a rebuilt number never collides.
+ */
+export function nextInvoiceNo(opts: {
+  jobId?: string | null
+  notes?: string | null
+  address?: string | null
+  invoices: { id?: string | null; job_id?: string | null }[]
+  excludeId?: string | null
+}): string {
+  const taken = new Set(opts.invoices.map(i => String(i.id ?? '')).filter(id => id && id !== opts.excludeId))
+  const onJob = opts.invoices.filter(i =>
+    i.job_id === opts.jobId && String(i.id ?? '') !== opts.excludeId).length
+  for (let seq = onJob + 1; seq < onJob + 200; seq++) {
+    const candidate = buildInvoiceNo({ ...opts, seq })
+    if (!taken.has(candidate)) return candidate
+  }
+  return buildInvoiceNo({ ...opts, seq: Date.now() })
+}

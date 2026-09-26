@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase, selectAll } from '@/lib/supabase'
@@ -8,7 +8,7 @@ import JobPicker from '@/components/JobPicker'
 import { Input, TextArea } from '@/components/ui/Field'
 import {
   fmtCurrency, fmtDate, calcOwed, invStatus, genId, today,
-  normaliseDate, parseMilestones, exOf, matchesJob,
+  normaliseDate, parseMilestones, exOf, matchesJob, nextInvoiceNo,
 } from '@/lib/utils'
 import {
   Plus, Loader2, Trash2, Check, Banknote, Edit2, FileText, Receipt,
@@ -193,6 +193,19 @@ export default function Invoices() {
     () => parseMilestones(paySchedules.find(s => s.id === form.job_id)),
     [paySchedules, form.job_id])
 
+  // New invoices are numbered <job>_<n>_<concept>_<street>. Recomputed as the
+  // job or description changes, but never once the user has edited it by hand
+  // and never for an invoice that already exists.
+  const [numberTouched, setNumberTouched] = useState(false)
+  useEffect(() => {
+    if (selectedId || numberTouched || !modalOpen) return
+    const job = jobs.find(j => j.id === form.job_id)
+    const suggested = nextInvoiceNo({
+      jobId: form.job_id, notes: form.notes, address: job?.address, invoices,
+    })
+    if (suggested !== form.id) setForm(f => ({ ...f, id: suggested }))
+  }, [form.job_id, form.notes, modalOpen, selectedId, numberTouched, jobs, invoices])
+
   function set(k: string, v: any) { setForm(prev => ({ ...prev, [k]: v })) }
   function setExtra(k: string, v: any) {
     setForm(prev => {
@@ -224,7 +237,7 @@ export default function Invoices() {
   function openNew(prefill?: Invoice) {
     setForm({ ...emptyForm(), ...(prefill ?? {}) })
     setSelectedId(null)
-    setInvMode('manual'); setPicked(new Set())
+    setInvMode('manual'); setPicked(new Set()); setNumberTouched(false)
     setModalOpen(true)
   }
   function openEdit(inv: Invoice) {
@@ -234,13 +247,14 @@ export default function Invoices() {
     const ids = [...b.labour, ...b.materials]
     setInvMode(ids.length ? 'lines' : 'manual')
     setPicked(new Set(ids))
+    setNumberTouched(true)   // an existing number is never rewritten
     setModalOpen(true)
   }
 
   async function handleSave() {
     setSaving(true)
     try {
-      const id = selectedId || genId('INV-')
+      const id = selectedId || (form.id || '').trim() || genId('INV-')
       let payload: Invoice = { ...form, id, created_at: form.created_at || new Date().toISOString() }
 
       if (invMode === 'lines' && form.job_id) {
@@ -526,6 +540,25 @@ export default function Invoices() {
         <div className="grid grid-cols-2 gap-3">
           <JobPicker jobs={jobs} value={form.job_id} label="Linked job" className="col-span-2"
             onChange={id => fld('job_id')({ target: { value: id } } as any)} />
+          <div className="col-span-2">
+            <label className="block text-xs font-medium text-gray-500 mb-1">
+              Invoice number{' '}
+              <span className="font-normal text-[#999]">
+                {selectedId ? '(fixed once saved)' : 'job_number_concept_street — edit if you need to'}
+              </span>
+            </label>
+            <div className="flex gap-2">
+              <input value={form.id || ''} readOnly={!!selectedId}
+                onChange={e => { setNumberTouched(true); set('id', e.target.value) }}
+                className={`flex-1 min-w-0 bg-white border border-black/20 rounded-lg px-3 py-2 text-[13px] font-mono focus:outline-none focus:ring-1 focus:ring-blue-500 ${selectedId ? 'opacity-60 cursor-not-allowed' : ''}`} />
+              {!selectedId && numberTouched && (
+                <button type="button" onClick={() => setNumberTouched(false)}
+                  className="px-2.5 py-1.5 text-[11px] bg-white border border-black/20 rounded-lg hover:bg-[#f5f4f0] whitespace-nowrap">
+                  Rebuild
+                </button>
+              )}
+            </div>
+          </div>
           {formMilestones.length > 0 && (
             <div className="col-span-2">
               <label className="block text-xs font-medium text-gray-500 mb-1">
