@@ -120,6 +120,10 @@ function Card({ children, className = '' }: { children: React.ReactNode; classNa
   return <div className={`bg-white border border-black/[0.12] rounded-xl ${className}`}>{children}</div>
 }
 
+/** Invoice-level defaults for billing logged work, both editable per invoice. */
+const DEFAULT_MARKUP_PCT = 10
+const DEFAULT_HOURLY_RATE = 70
+
 export default function Invoices() {
   const { data: invoices = [], isLoading } = useInvoices()
   const { data: jobs = [] } = useJobs()
@@ -144,6 +148,9 @@ export default function Invoices() {
   // An invoice is either a typed amount or a selection of logged lines.
   const [invMode, setInvMode] = useState<'manual' | 'lines'>('manual')
   const [picked, setPicked] = useState<Set<string>>(new Set())
+  // Kept on the invoice itself, so reopening it re-prices the same way.
+  const invMarkupPct = Number(form.extra?.markup_pct ?? DEFAULT_MARKUP_PCT) || 0
+  const invHourlyRate = Number(form.extra?.hourly_rate ?? DEFAULT_HOURLY_RATE) || 0
 
   const filtered = useMemo(() => {
     const rows = invoices.filter(inv => {
@@ -173,9 +180,10 @@ export default function Invoices() {
     return invoiceableLines({
       job,
       invoices: invoices.filter(i => i.id !== selectedId),
-      labour, materials, markupPct,
+      labour, materials,
+      markupPct: invMarkupPct, rateOverride: invHourlyRate,
     })
-  }, [jobs, form.job_id, invoices, selectedId, labour, materials, markupPct])
+  }, [jobs, form.job_id, invoices, selectedId, labour, materials, invMarkupPct, invHourlyRate])
 
   const pickedTotal = selectedTotal(lines, picked)
 
@@ -187,6 +195,28 @@ export default function Invoices() {
       gst: +(ex * rate).toFixed(2),
       total_inc_gst: +(ex * (1 + rate)).toFixed(2),
     }
+  }
+
+  /**
+   * Change a pricing field and re-total the picked lines in the same update.
+   * `lines` is a memo of the previous rate, so the new figures are recomputed
+   * here rather than read from it.
+   */
+  function setRate(k: 'markup_pct' | 'hourly_rate', v: string) {
+    setForm(prev => {
+      const extra = { ...(prev.extra ?? {}) }
+      if (v === '') delete extra[k]; else extra[k] = Number(v) || 0
+      const job = jobs.find(j => j.id === prev.job_id)
+      if (!job || invMode !== 'lines') return { ...prev, extra }
+      const priced = invoiceableLines({
+        job,
+        invoices: invoices.filter(i => i.id !== selectedId),
+        labour, materials,
+        markupPct: Number(extra.markup_pct ?? DEFAULT_MARKUP_PCT) || 0,
+        rateOverride: Number(extra.hourly_rate ?? DEFAULT_HOURLY_RATE) || 0,
+      })
+      return { ...prev, extra, ...amountFields(selectedTotal(priced, picked), prev.job_id) }
+    })
   }
 
   function togglePick(id: string) {
@@ -630,6 +660,17 @@ export default function Invoices() {
                   </button>
                 ))}
               </div>
+
+              {invMode === 'lines' && (
+                <div className="grid grid-cols-2 gap-3 mb-3">
+                  <Input label="Materials mark-up (%)" type="number" min={0}
+                    value={form.extra?.markup_pct ?? DEFAULT_MARKUP_PCT}
+                    onChange={e => setRate('markup_pct', e.target.value)} />
+                  <Input label="Billable hourly rate ($)" type="number" min={0}
+                    value={form.extra?.hourly_rate ?? DEFAULT_HOURLY_RATE}
+                    onChange={e => setRate('hourly_rate', e.target.value)} />
+                </div>
+              )}
 
               {invMode === 'lines' && (lines.length === 0 ? (
                 <div className="text-[11px] text-[#666] bg-[#f5f4f0] rounded-lg px-3 py-2.5">

@@ -294,10 +294,18 @@ export type InvoiceableLine = {
  * stays visible instead of silently disappearing.
  */
 export function invoiceableLines(input: {
-  job: Row; invoices: Row[]; labour?: Row[]; materials?: Row[]; markupPct?: number
+  job: Row; invoices: Row[]; labour?: Row[]; materials?: Row[]
+  markupPct?: number
+  /**
+   * Charge every labour line at this rate per hour instead of the rate it was
+   * logged at. Used when a whole invoice is billed at one agreed rate. Ignored
+   * for a line with no hours recorded, which keeps its own billable figure.
+   */
+  rateOverride?: number
 }): InvoiceableLine[] {
   const jobId = input.job?.id
   const markupPct = input.markupPct ?? 0
+  const rate = Number(input.rateOverride) || 0
   const invoices = (input.invoices ?? []).filter(i => i.job_id === jobId)
   const billed = billedIds(invoices)
   const whichInvoice = (kind: 'labour' | 'materials', id: string) =>
@@ -313,7 +321,9 @@ export function invoiceableLines(input: {
       description: [l.sub, l.labour_desc].filter(Boolean).join(' — ')
         || `${l.hours ?? 0} hrs labour`,
       hours: Number(l.hours) || 0,
-      amountExGST: labBillable(l),
+      amountExGST: rate > 0 && Number(l.hours)
+        ? Math.round(Number(l.hours) * rate * 100) / 100
+        : labBillable(l),
       billed: billed.labour.has(String(l.id)),
       billedOn: whichInvoice('labour', String(l.id)),
     })
