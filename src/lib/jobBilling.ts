@@ -334,3 +334,26 @@ export function invoiceableLines(input: {
 /** Total of the ticked lines, ex GST. */
 export const selectedTotal = (lines: InvoiceableLine[], picked: Set<string>) =>
   Math.round(lines.filter(l => picked.has(l.id)).reduce((s, l) => s + l.amountExGST, 0) * 100) / 100
+
+// ── Where a job sits in the billing cycle ────────────────────
+export type BillingStage = 'to-invoice' | 'awaiting-payment' | 'paid' | 'nothing'
+
+export const BILLING_STAGES: { id: BillingStage | 'all'; label: string }[] = [
+  { id: 'all',               label: 'All' },
+  { id: 'to-invoice',        label: 'To invoice' },
+  { id: 'awaiting-payment',  label: 'Awaiting payment' },
+  { id: 'paid',              label: 'Fully paid' },
+]
+
+/**
+ * A job is 'to-invoice' while billable work is still unbilled,
+ * 'awaiting-payment' once everything is invoiced but money is outstanding,
+ * 'paid' when both are settled, and 'nothing' when there is neither a value to
+ * bill against nor an invoice — a job that has not started costing anything.
+ */
+export function billingStage(b: JobBilling): BillingStage {
+  if (!b.hasValue && b.invoicedIncGST === 0) return 'nothing'
+  if (b.leftToInvoiceIncGST > 0) return 'to-invoice'
+  if (b.owedIncGST > 0) return 'awaiting-payment'
+  return b.invoicedIncGST > 0 ? 'paid' : 'nothing'
+}

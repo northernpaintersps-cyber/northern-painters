@@ -17,7 +17,8 @@ import {
 import { useBusinessSettings } from '@/pages/SettingsPage'
 import {
   computeJobBilling, billingBreakdown, unbilledSummary,
-  invoiceableLines, selectedTotal, billedLinesOf, type JobBilling,
+  invoiceableLines, selectedTotal, billedLinesOf,
+  billingStage, BILLING_STAGES, type BillingStage, type JobBilling,
 } from '@/lib/jobBilling'
 
 type Invoice = Record<string, any>
@@ -672,6 +673,7 @@ function JobFinancialSummary({
   onNewInvoice: (j: any, b: JobBilling, milestoneIndex?: number) => void
 }) {
   const [q, setQ] = useState('')
+  const [stage, setStage] = useState<BillingStage | 'all'>('all')
 
   const active = jobs.filter(j =>
     invoices.some(i => i.job_id === j.id) ||
@@ -679,8 +681,24 @@ function JobFinancialSummary({
     ['In Progress', 'Scheduled', 'Not Started', 'Hourly Rate Accepted'].includes(j.status)
   ).sort((a, b) => (a.id || '').localeCompare(b.id || ''))
 
+  // Worked out once per job so the filter and the cards agree, and so the
+  // arithmetic is not repeated for every render of every card.
+  const billingByJob = useMemo(() => {
+    const m = new Map<string, JobBilling>()
+    active.forEach(j => m.set(j.id, computeJobBilling({
+      job: j, invoices, labour, materials, variations, markupPct,
+      paySchedule: paySchedules.find(s => s.id === j.id),
+    })))
+    return m
+  }, [active, invoices, labour, materials, variations, markupPct, paySchedules])
+
   // Same matcher as the job picker, so a number, client or street finds it.
-  const jobsToShow = active.filter(j => matchesJob(j, q))
+  const jobsToShow = active.filter(j => {
+    if (!matchesJob(j, q)) return false
+    if (stage === 'all') return true
+    const b = billingByJob.get(j.id)
+    return !!b && billingStage(b) === stage
+  })
 
   if (!active.length) return (
     <Card className="text-center py-8 text-[#666]">No active or invoiced jobs yet.</Card>
@@ -712,13 +730,32 @@ function JobFinancialSummary({
             </button>
           )}
         </div>
+        <div className="flex gap-1 bg-gray-50 p-1 rounded-lg">
+          {BILLING_STAGES.map(st => {
+            const n = st.id === 'all'
+              ? active.length
+              : active.filter(j => { const b = billingByJob.get(j.id); return !!b && billingStage(b) === st.id }).length
+            return (
+              <button key={st.id} onClick={() => setStage(st.id)}
+                className={`text-xs px-2.5 py-1.5 rounded-md font-medium whitespace-nowrap ${
+                  stage === st.id ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-900'}`}>
+                {st.label} <span className="text-[#999]">{n}</span>
+              </button>
+            )
+          })}
+        </div>
         <span className="text-[11px] text-[#666]">
-          {q ? `${jobsToShow.length} of ${active.length} jobs` : `${active.length} job${active.length !== 1 ? 's' : ''}`}
+          {jobsToShow.length === active.length
+            ? `${active.length} job${active.length !== 1 ? 's' : ''}`
+            : `${jobsToShow.length} of ${active.length} jobs`}
         </span>
       </div>
 
       {jobsToShow.length === 0 && (
-        <Card className="text-center py-8 text-[#666]">No job matches “{q}”.</Card>
+        <Card className="text-center py-8 text-[#666]">
+          {q ? <>No job matches “{q}”{stage !== 'all' ? ' in this filter' : ''}.</>
+             : <>No jobs are {BILLING_STAGES.find(x => x.id === stage)?.label.toLowerCase()}.</>}
+        </Card>
       )}
 
       <div className="text-[11px] text-[#666] mb-2.5 flex items-center gap-1">
@@ -727,10 +764,7 @@ function JobFinancialSummary({
         and materials logged so far. Left to invoice = that figure minus what you have already invoiced.
       </div>
       {jobsToShow.map(j => {
-        const b = computeJobBilling({
-          job: j, invoices, labour, materials, variations, markupPct,
-          paySchedule: paySchedules.find(s => s.id === j.id),
-        })
+        const b = billingByJob.get(j.id)!
         const invs = b.invoices
         const isEstimate = b.basis === 'actuals'
         const jobValueIncGST = b.billableToDateIncGST
