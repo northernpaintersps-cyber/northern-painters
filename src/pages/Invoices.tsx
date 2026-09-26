@@ -20,6 +20,7 @@ import {
   invoiceableLines, selectedTotal, billedLinesOf,
   billingStage, BILLING_STAGES, type BillingStage, type JobBilling,
 } from '@/lib/jobBilling'
+import { invalidateTable } from '../lib/queryKeys'
 
 type Invoice = Record<string, any>
 
@@ -94,7 +95,7 @@ function useUpsertInvoice() {
       const { error } = await supabase.from('np_invoices').upsert({ ...inv, user_id: user!.id, updated_at: new Date().toISOString() } as any)
       if (error) throw error
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['np_invoices'] }),
+    onSuccess: () => invalidateTable(qc, 'np_invoices'),
   })
 }
 
@@ -105,7 +106,7 @@ function useDeleteInvoice() {
       const { error } = await supabase.from('np_invoices').delete().eq('id', id)
       if (error) throw error
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['np_invoices'] }),
+    onSuccess: () => invalidateTable(qc, 'np_invoices'),
   })
 }
 

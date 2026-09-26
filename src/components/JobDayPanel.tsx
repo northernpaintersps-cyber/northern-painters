@@ -5,6 +5,7 @@ import { useAuth } from '@/lib/auth'
 import { Modal } from '@/components/ui/Modal'
 import { genId, findCrew, isWorkDay } from '@/lib/utils'
 import { Check, Loader2, MessageSquare } from 'lucide-react'
+import { invalidateTable } from '../lib/queryKeys'
 
 type Row = Record<string, any>
 
@@ -149,8 +150,8 @@ export default function JobDayPanel({ jobId, date, onClose }: {
       }
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['np_assignments'] })
-      qc.invalidateQueries({ queryKey: ['np_jobs'] })
+      invalidateTable(qc, 'np_assignments')
+      invalidateTable(qc, 'np_jobs')
       onClose()
     },
     onError: (e: any) => alert('Save failed: ' + e.message),

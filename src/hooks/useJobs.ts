@@ -2,6 +2,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase, selectAll } from '@/lib/supabase'
 import { useAuth } from '@/lib/auth'
 import type { Database } from '@/lib/database.types'
+import { invalidateTable } from '../lib/queryKeys'
 
 type Job = Database['public']['Tables']['np_jobs']['Row']
 type JobInsert = Database['public']['Tables']['np_jobs']['Insert']
@@ -33,7 +34,7 @@ export function useUpsertJob() {
       if (error) throw error
       return data
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['jobs'] }),
+    onSuccess: () => invalidateTable(qc, 'np_jobs'),
   })
 }
 
@@ -44,7 +45,7 @@ export function useDeleteJob() {
       const { error } = await supabase.from('np_jobs').delete().eq('id', id)
       if (error) throw error
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['jobs'] }),
+    onSuccess: () => invalidateTable(qc, 'np_jobs'),
   })
 }
 

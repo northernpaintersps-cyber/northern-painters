@@ -5,6 +5,7 @@ import { supabase, selectAll } from '@/lib/supabase'
 import { useAuth } from '@/lib/auth'
 import { fmtCurrency } from '@/lib/utils'
 import { Loader2, X, BarChart3, Edit2, Info } from 'lucide-react'
+import { invalidateTable } from '../lib/queryKeys'
 
 const JS_OPTS = ['Not Started','Scheduled','In Progress','Hourly Rate Accepted','Finished','Closed']
 const QS_OPTS = ['Info Collected','Site Visit','Quote Created','Sent','Negotiating','Accepted','Booked','Not Accepted','Lost']
@@ -39,7 +40,7 @@ function useSetRate() {
         .eq('id', jobId).eq('user_id', user!.id)
       if (error) throw error
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['np_jobs'] }),
+    onSuccess: () => invalidateTable(qc, 'np_jobs'),
   })
 }
 

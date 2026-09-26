@@ -6,6 +6,7 @@ import { Modal } from '@/components/ui/Modal'
 import { Input, Select } from '@/components/ui/Field'
 import { fmtCurrency, genId, today, normaliseDate } from '@/lib/utils'
 import { Plus, Loader2, Trash2, TrendingUp } from 'lucide-react'
+import { invalidateTable } from '../lib/queryKeys'
 
 type Row = Record<string, any>
 
@@ -44,7 +45,7 @@ function useUpsert() {
         .upsert({ ...row, user_id: user!.id, updated_at: new Date().toISOString() })
       if (error) throw error
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['np_ads_spend'] }),
+    onSuccess: () => invalidateTable(qc, 'np_ads_spend'),
   })
 }
 
@@ -55,7 +56,7 @@ function useDel() {
       const { error } = await (supabase.from('np_ads_spend') as any).delete().eq('id', id)
       if (error) throw error
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['np_ads_spend'] }),
+    onSuccess: () => invalidateTable(qc, 'np_ads_spend'),
   })
 }
 

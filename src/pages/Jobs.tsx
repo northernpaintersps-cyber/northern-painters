@@ -15,6 +15,7 @@ import {
   Plus, Loader2, Trash2, Edit2,
   Bell, Copy, Check, CalendarPlus, Camera, ArrowUpDown, X, Info,
 } from 'lucide-react'
+import { invalidateTable } from '../lib/queryKeys'
 
 const VAR_STATUSES = ['Pending','Approved','Rejected']
 
@@ -40,7 +41,7 @@ function useUpsertVariation() {
       const { error } = await supabase.from('np_variations').upsert({ ...row, user_id: user!.id, updated_at: new Date().toISOString() } as any)
       if (error) throw error
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['np_variations'] }),
+    onSuccess: () => invalidateTable(qc, 'np_variations'),
   })
 }
 
@@ -51,7 +52,7 @@ function useDeleteVariation() {
       const { error } = await supabase.from('np_variations').delete().eq('id', id)
       if (error) throw error
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['np_variations'] }),
+    onSuccess: () => invalidateTable(qc, 'np_variations'),
   })
 }
 
@@ -187,7 +188,7 @@ function useUpsertJob() {
       const { error } = await supabase.from('np_jobs').upsert({ ...job, user_id: user!.id, updated_at: new Date().toISOString() } as any)
       if (error) throw error
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['np_jobs'] }),
+    onSuccess: () => invalidateTable(qc, 'np_jobs'),
   })
 }
 
@@ -198,7 +199,7 @@ function useDeleteJob() {
       const { error } = await supabase.from('np_jobs').delete().eq('id', id)
       if (error) throw error
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['np_jobs'] }),
+    onSuccess: () => invalidateTable(qc, 'np_jobs'),
   })
 }
 
@@ -401,7 +402,7 @@ function useQuickEdit() {
         .update(patch).eq('id', job.id).eq('user_id', user!.id)
       if (error) throw error
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['np_jobs'] }),
+    onSuccess: () => invalidateTable(qc, 'np_jobs'),
   })
 }
 

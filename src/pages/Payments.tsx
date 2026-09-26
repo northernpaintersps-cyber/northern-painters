@@ -12,6 +12,7 @@ import {
 import { billingBasis } from '@/lib/jobBilling'
 import { Plus, Loader2, Trash2, Copy, Check, Banknote } from 'lucide-react'
 import { useBusinessSettings } from '@/pages/SettingsPage'
+import { invalidateTable } from '../lib/queryKeys'
 
 type Milestone = { label: string; pct: number; amount: number; dueDate: string; received: boolean; receivedDate: string }
 type Row = Record<string, any>
@@ -81,7 +82,7 @@ function useUpsert() {
         .upsert({ ...row, user_id: user!.id, updated_at: new Date().toISOString() })
       if (error) throw error
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['np_pay_schedules'] }),
+    onSuccess: () => invalidateTable(qc, 'np_pay_schedules'),
   })
 }
 
@@ -92,7 +93,7 @@ function useDel() {
       const { error } = await (supabase.from('np_pay_schedules') as any).delete().eq('id', id)
       if (error) throw error
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['np_pay_schedules'] }),
+    onSuccess: () => invalidateTable(qc, 'np_pay_schedules'),
   })
 }
 

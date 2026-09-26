@@ -15,6 +15,7 @@ import {
   Plus, Loader2, Trash2, Edit2, Scan, AlertCircle,
   Camera, ScanLine, ArrowUpDown, X, Info, AlertTriangle, MapPin, ChevronDown,
 } from 'lucide-react'
+import { invalidateTable } from '../lib/queryKeys'
 
 const CATEGORIES = ['Paint', 'Primer/Undercoat', 'Filler/Putty', 'Tape/Masking', 'Brushes/Rollers', 'Sandpaper/Prep', 'Caulk/Sealant', 'Solvent/Cleaner', 'Hardware', 'Other']
 const BILLING_TYPES = ['Fixed Quote', 'Hourly', 'Hourly/Estimate']
@@ -86,7 +87,7 @@ function useUpsertMaterial() {
       })
       if (error) throw error
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['np_materials'] }),
+    onSuccess: () => invalidateTable(qc, 'np_materials'),
   })
 }
 
@@ -97,7 +98,7 @@ function useDeleteMaterial() {
       const { error } = await (supabase.from('np_materials') as any).delete().eq('id', id)
       if (error) throw error
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['np_materials'] }),
+    onSuccess: () => invalidateTable(qc, 'np_materials'),
   })
 }
 

@@ -10,6 +10,7 @@ import {
   findOverlappingLabour, labourSpan, jobBillingType, type LabourOverlap,
 } from '@/lib/utils'
 import { Plus, Loader2, Trash2, ArrowUpDown, X, Clock, AlertTriangle } from 'lucide-react'
+import { invalidateTable } from '../lib/queryKeys'
 
 type Row = Record<string, any>
 
@@ -62,7 +63,7 @@ function useUpsert() {
       }
       throw error
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['np_labour'] }),
+    onSuccess: () => invalidateTable(qc, 'np_labour'),
   })
 }
 
@@ -73,7 +74,7 @@ function useDel() {
       const { error } = await (supabase.from('np_labour') as any).delete().eq('id', id)
       if (error) throw error
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['np_labour'] }),
+    onSuccess: () => invalidateTable(qc, 'np_labour'),
   })
 }
 

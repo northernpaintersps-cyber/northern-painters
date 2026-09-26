@@ -10,6 +10,7 @@ import {
   Plus, Loader2, Trash2, Edit2, Hammer, ArrowUpDown,
   Camera, MapPin, Paperclip, Download,
 } from 'lucide-react'
+import { invalidateTable } from '../lib/queryKeys'
 
 type Row = Record<string, any>
 
@@ -48,7 +49,7 @@ function useUpsert() {
         .upsert({ ...row, user_id: user!.id, updated_at: new Date().toISOString() })
       if (error) throw error
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['np_enquiries'] }),
+    onSuccess: () => invalidateTable(qc, 'np_enquiries'),
   })
 }
 
@@ -59,7 +60,7 @@ function useDel() {
       const { error } = await (supabase.from('np_enquiries') as any).delete().eq('id', id)
       if (error) throw error
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['np_enquiries'] }),
+    onSuccess: () => invalidateTable(qc, 'np_enquiries'),
   })
 }
 

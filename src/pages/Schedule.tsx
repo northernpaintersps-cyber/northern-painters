@@ -5,6 +5,7 @@ import { supabase, selectAll } from '@/lib/supabase'
 import { useAuth } from '@/lib/auth'
 import { fmtCurrency, getJobScheduledDates, normaliseDate, crewLabel } from '@/lib/utils'
 import { Loader2, CalendarPlus, CalendarDays, Info } from 'lucide-react'
+import { invalidateTable } from '../lib/queryKeys'
 
 type Row = Record<string, any>
 
@@ -38,7 +39,7 @@ function useQuickEdit() {
         .update(patch).eq('id', job.id).eq('user_id', user!.id)
       if (error) throw error
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['np_jobs'] }),
+    onSuccess: () => invalidateTable(qc, 'np_jobs'),
   })
 }
 

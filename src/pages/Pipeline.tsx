@@ -5,6 +5,7 @@ import { useAuth } from '@/lib/auth'
 import { fmtCurrency } from '@/lib/utils'
 import { Loader2, List } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
+import { invalidateTable } from '../lib/queryKeys'
 
 const QS_OPTS = ['','Info Collected','Site Visit','Quote Created','Sent','Negotiating','Accepted','Booked','Not Accepted','Lost']
 const JS_OPTS  = ['','Not Started','Scheduled','In Progress','Hourly Rate Accepted','Finished','Closed']
@@ -60,7 +61,7 @@ function useUpdateJob() {
       const { error } = await db.from('np_jobs').update({ [field]: value, updated_at: new Date().toISOString() }).eq('id', id).eq('user_id', user!.id)
       if (error) throw error
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['np_jobs'] }),
+    onSuccess: () => invalidateTable(qc, 'np_jobs'),
   })
 }
 
