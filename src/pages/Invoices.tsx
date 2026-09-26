@@ -6,10 +6,13 @@ import { useAuth } from '@/lib/auth'
 import { Modal } from '@/components/ui/Modal'
 import JobPicker from '@/components/JobPicker'
 import { Input, TextArea } from '@/components/ui/Field'
-import { fmtCurrency, fmtDate, calcOwed, invStatus, genId, today, normaliseDate, parseMilestones, exOf } from '@/lib/utils'
+import {
+  fmtCurrency, fmtDate, calcOwed, invStatus, genId, today,
+  normaliseDate, parseMilestones, exOf, matchesJob,
+} from '@/lib/utils'
 import {
   Plus, Loader2, Trash2, Check, Banknote, Edit2, FileText, Receipt,
-  ArrowUpDown, List, BarChart3, Info, MapPin,
+  ArrowUpDown, List, BarChart3, Info, MapPin, Search, X,
 } from 'lucide-react'
 import { useBusinessSettings } from '@/pages/SettingsPage'
 import {
@@ -668,13 +671,18 @@ function JobFinancialSummary({
   onPreview: (inv: Invoice) => void
   onNewInvoice: (j: any, b: JobBilling, milestoneIndex?: number) => void
 }) {
-  const jobsToShow = jobs.filter(j =>
+  const [q, setQ] = useState('')
+
+  const active = jobs.filter(j =>
     invoices.some(i => i.job_id === j.id) ||
     ['Accepted', 'Booked'].includes(j.quote_status) ||
     ['In Progress', 'Scheduled', 'Not Started', 'Hourly Rate Accepted'].includes(j.status)
   ).sort((a, b) => (a.id || '').localeCompare(b.id || ''))
 
-  if (!jobsToShow.length) return (
+  // Same matcher as the job picker, so a number, client or street finds it.
+  const jobsToShow = active.filter(j => matchesJob(j, q))
+
+  if (!active.length) return (
     <Card className="text-center py-8 text-[#666]">No active or invoiced jobs yet.</Card>
   )
 
@@ -691,6 +699,28 @@ function JobFinancialSummary({
 
   return (
     <>
+      <div className="flex items-center gap-2 mb-2.5 flex-wrap">
+        <div className="relative">
+          <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[#999]" />
+          <input value={q} onChange={e => setQ(e.target.value)}
+            placeholder="Search job number, client or address…"
+            className="w-72 max-w-full pl-8 pr-7 py-2 text-[13px] bg-white border border-black/20 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500" />
+          {q && (
+            <button onClick={() => setQ('')} title="Clear"
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-[#999] hover:text-[#c0392b]">
+              <X size={13} />
+            </button>
+          )}
+        </div>
+        <span className="text-[11px] text-[#666]">
+          {q ? `${jobsToShow.length} of ${active.length} jobs` : `${active.length} job${active.length !== 1 ? 's' : ''}`}
+        </span>
+      </div>
+
+      {jobsToShow.length === 0 && (
+        <Card className="text-center py-8 text-[#666]">No job matches “{q}”.</Card>
+      )}
+
       <div className="text-[11px] text-[#666] mb-2.5 flex items-center gap-1">
         <Info size={12} /> Shows all active, accepted, and invoiced jobs. Fixed-price jobs are measured
         against the agreed price plus approved variations; hourly and estimate jobs against the labour
