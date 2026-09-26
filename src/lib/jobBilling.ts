@@ -166,11 +166,16 @@ export function computeJobBilling(input: {
     .filter((d): d is string => typeof d === 'string' && !!d)
   const invoicedUpTo = periods.length ? periods.reduce((a, b) => (a > b ? a : b)) : null
 
-  // Anything dated after that cutoff is not yet covered. Undated entries are
-  // counted as uncovered too — better surfaced than silently assumed billed.
-  const uncovered = (row: Row) => !invoicedUpTo || !row.date || row.date > invoicedUpTo
-  const unbilledLabour = labour.filter(l => isBillableLabour(l) && uncovered(l))
-  const unbilledMaterials = materials.filter(m => isBillableMaterial(m) && uncovered(m))
+  // Two ways a line can already be covered: an invoice names it outright, or it
+  // falls inside a period an invoice claims. Lines named on an invoice are the
+  // precise record; the period is the fallback for invoices raised before line
+  // picking existed. Undated entries count as uncovered — better surfaced than
+  // silently assumed billed.
+  const alreadyBilled = billedIds(invoices)
+  const uncovered = (row: Row, set: Set<string>) =>
+    !set.has(String(row.id)) && (!invoicedUpTo || !row.date || row.date > invoicedUpTo)
+  const unbilledLabour = labour.filter(l => isBillableLabour(l) && uncovered(l, alreadyBilled.labour))
+  const unbilledMaterials = materials.filter(m => isBillableMaterial(m) && uncovered(m, alreadyBilled.materials))
   const unbilledDates = [...unbilledLabour, ...unbilledMaterials]
     .map(r => r.date).filter((d): d is string => typeof d === 'string' && !!d).sort()
   const unbilledMatCost = unbilledMaterials.reduce((s, m) => s + matCost(m), 0)
@@ -243,3 +248,89 @@ const shortDate = (d: string) => {
   const dt = new Date(d)
   return isNaN(dt.getTime()) ? d : dt.toLocaleDateString('en-AU', { day: 'numeric', month: 'short' })
 }
+
+// ── Invoicing logged work line by line ───────────────────────
+// An invoice can be a manually typed amount, or built from the labour and
+// materials actually logged against the job. When built that way it records
+// which rows it covers in extra.billed_labour / extra.billed_materials, so a
+// line is never billed twice and the job can say exactly what is left.
+
+export type BilledLines = { labour: string[]; materials: string[] }
+
+export function billedLinesOf(inv: Row): BilledLines {
+  const arr = (v: any) => (Array.isArray(v) ? v.filter(x => typeof x === 'string') : [])
+  return { labour: arr(inv?.extra?.billed_labour), materials: arr(inv?.extra?.billed_materials) }
+}
+
+/** Every labour and material row already covered by an invoice on this job. */
+export function billedIds(invoices: Row[]): { labour: Set<string>; materials: Set<string> } {
+  const labour = new Set<string>()
+  const materials = new Set<string>()
+  invoices.forEach(i => {
+    const b = billedLinesOf(i)
+    b.labour.forEach(id => labour.add(id))
+    b.materials.forEach(id => materials.add(id))
+  })
+  return { labour, materials }
+}
+
+export type InvoiceableLine = {
+  kind: 'labour' | 'material'
+  id: string
+  date: string
+  description: string
+  /** What the client is charged for this line, ex GST. */
+  amountExGST: number
+  /** Already covered by another invoice on this job. */
+  billed: boolean
+  billedOn: string | null
+}
+
+/**
+ * The logged work on a job that could go on an invoice, with anything already
+ * invoiced marked rather than hidden — so the record of what has been billed
+ * stays visible instead of silently disappearing.
+ */
+export function invoiceableLines(input: {
+  job: Row; invoices: Row[]; labour?: Row[]; materials?: Row[]; markupPct?: number
+}): InvoiceableLine[] {
+  const jobId = input.job?.id
+  const markupPct = input.markupPct ?? 0
+  const invoices = (input.invoices ?? []).filter(i => i.job_id === jobId)
+  const billed = billedIds(invoices)
+  const whichInvoice = (kind: 'labour' | 'materials', id: string) =>
+    invoices.find(i => billedLinesOf(i)[kind].includes(id))?.id ?? null
+
+  const out: InvoiceableLine[] = []
+
+  ;(input.labour ?? []).filter(l => l.job_id === jobId && isBillableLabour(l)).forEach(l => {
+    out.push({
+      kind: 'labour',
+      id: String(l.id),
+      date: l.date ?? '',
+      description: [l.sub, l.labour_desc].filter(Boolean).join(' — ')
+        || `${l.hours ?? 0} hrs labour`,
+      amountExGST: labBillable(l),
+      billed: billed.labour.has(String(l.id)),
+      billedOn: whichInvoice('labour', String(l.id)),
+    })
+  })
+
+  ;(input.materials ?? []).filter(m => m.job_id === jobId && isBillableMaterial(m)).forEach(m => {
+    out.push({
+      kind: 'material',
+      id: String(m.id),
+      date: m.date ?? '',
+      description: [m.supplier, m.mat_desc].filter(Boolean).join(' — ') || 'Materials',
+      amountExGST: Math.round(matCost(m) * (1 + markupPct / 100) * 100) / 100,
+      billed: billed.materials.has(String(m.id)),
+      billedOn: whichInvoice('materials', String(m.id)),
+    })
+  })
+
+  return out.sort((a, b) => (a.date || '').localeCompare(b.date || '') || a.kind.localeCompare(b.kind))
+}
+
+/** Total of the ticked lines, ex GST. */
+export const selectedTotal = (lines: InvoiceableLine[], picked: Set<string>) =>
+  Math.round(lines.filter(l => picked.has(l.id)).reduce((s, l) => s + l.amountExGST, 0) * 100) / 100

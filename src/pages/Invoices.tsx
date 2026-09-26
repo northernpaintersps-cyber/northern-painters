@@ -12,7 +12,10 @@ import {
   ArrowUpDown, List, BarChart3, Info, MapPin,
 } from 'lucide-react'
 import { useBusinessSettings } from '@/pages/SettingsPage'
-import { computeJobBilling, billingBreakdown, unbilledSummary, type JobBilling } from '@/lib/jobBilling'
+import {
+  computeJobBilling, billingBreakdown, unbilledSummary,
+  invoiceableLines, selectedTotal, billedLinesOf, type JobBilling,
+} from '@/lib/jobBilling'
 
 type Invoice = Record<string, any>
 
@@ -134,6 +137,9 @@ export default function Invoices() {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [modalOpen, setModalOpen] = useState(false)
   const [saving, setSaving] = useState(false)
+  // An invoice is either a typed amount or a selection of logged lines.
+  const [invMode, setInvMode] = useState<'manual' | 'lines'>('manual')
+  const [picked, setPicked] = useState<Set<string>>(new Set())
 
   const filtered = useMemo(() => {
     const rows = invoices.filter(inv => {
@@ -153,6 +159,30 @@ export default function Invoices() {
   const totR = invoices.reduce((a, b) => a + (b.received || 0), 0)
   const totO = invoices.reduce((a, b) => a + calcOwed(b), 0)
   const totCash = invoices.reduce((a, b) => a + cashOf(b), 0)
+
+  // Logged labour and materials for the job this invoice is against. Lines
+  // already covered by another invoice are included but flagged, so the record
+  // of what has been billed stays visible.
+  const lines = useMemo(() => {
+    const job = jobs.find(j => j.id === form.job_id)
+    if (!job) return []
+    return invoiceableLines({
+      job,
+      invoices: invoices.filter(i => i.id !== selectedId),
+      labour, materials, markupPct,
+    })
+  }, [jobs, form.job_id, invoices, selectedId, labour, materials, markupPct])
+
+  const pickedTotal = selectedTotal(lines, picked)
+
+  function togglePick(id: string) {
+    setPicked(p => {
+      const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id)
+      const total = selectedTotal(lines, n)
+      setForm(f => ({ ...f, agreed_ex_gst: total, gst: +(total * 0.1).toFixed(2), total_inc_gst: +(total * 1.1).toFixed(2) }))
+      return n
+    })
+  }
 
   // Milestones of the job this invoice is linked to, for the milestone select
   const formMilestones = useMemo(
@@ -190,17 +220,52 @@ export default function Invoices() {
   function openNew(prefill?: Invoice) {
     setForm({ ...emptyForm(), ...(prefill ?? {}) })
     setSelectedId(null)
+    setInvMode('manual'); setPicked(new Set())
     setModalOpen(true)
   }
   function openEdit(inv: Invoice) {
-    setForm({ ...inv }); setSelectedId(inv.id); setModalOpen(true)
+    setForm({ ...inv }); setSelectedId(inv.id)
+    // Reopen in the mode it was built in, with its lines still ticked.
+    const b = billedLinesOf(inv)
+    const ids = [...b.labour, ...b.materials]
+    setInvMode(ids.length ? 'lines' : 'manual')
+    setPicked(new Set(ids))
+    setModalOpen(true)
   }
 
   async function handleSave() {
     setSaving(true)
     try {
       const id = selectedId || genId('INV-')
-      await upsert.mutateAsync({ ...form, id, created_at: form.created_at || new Date().toISOString() })
+      let payload: Invoice = { ...form, id, created_at: form.created_at || new Date().toISOString() }
+
+      if (invMode === 'lines' && form.job_id) {
+        const chosen = lines.filter(l => picked.has(l.id))
+        const total = selectedTotal(lines, picked)
+        payload = {
+          ...payload,
+          agreed_ex_gst: total,
+          gst: +(total * 0.1).toFixed(2),
+          total_inc_gst: +(total * 1.1).toFixed(2),
+          extra: {
+            ...(payload.extra ?? {}),
+            // What this invoice covers, so a line is never billed twice and the
+            // job can say exactly what is left.
+            billed_labour:    chosen.filter(l => l.kind === 'labour').map(l => l.id),
+            billed_materials: chosen.filter(l => l.kind === 'material').map(l => l.id),
+            // Itemise it on the printed invoice too.
+            line_items: chosen.map(l => ({ description: l.description, qty: 1, total_ex_gst: l.amountExGST })),
+          },
+        }
+      } else if (selectedId) {
+        // Switched back to a typed amount — drop the line record so those
+        // lines become available to invoice again.
+        const extra = { ...(payload.extra ?? {}) }
+        delete extra.billed_labour; delete extra.billed_materials
+        payload = { ...payload, extra }
+      }
+
+      await upsert.mutateAsync(payload)
       setModalOpen(false)
     } catch (e: any) { alert('Save failed: ' + e.message) } finally { setSaving(false) }
   }
@@ -491,7 +556,72 @@ export default function Invoices() {
             onChange={e => setExtra('covers_from', e.target.value)} />
           <Input label="Covers work to" type="date" value={form.extra?.covers_to || ''}
             onChange={e => setExtra('covers_to', e.target.value)} />
-          <Input label="Amount ex GST ($)" type="number" value={form.agreed_ex_gst || ''} onChange={fld('agreed_ex_gst')} min={0} />
+          {form.job_id && (
+            <div className="col-span-2">
+              <div className="flex gap-1 mb-2 bg-gray-50 p-1 rounded-lg w-fit">
+                {([['manual', 'Enter an amount'], ['lines', 'Pick logged work']] as const).map(([id, label]) => (
+                  <button key={id} type="button" onClick={() => setInvMode(id)}
+                    className={`text-xs px-3 py-1.5 rounded-md font-medium ${invMode === id ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500'}`}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+
+              {invMode === 'lines' && (lines.length === 0 ? (
+                <div className="text-[11px] text-[#666] bg-[#f5f4f0] rounded-lg px-3 py-2.5">
+                  No billable labour or materials logged against this job yet. Lines marked
+                  <b> Fixed Quote</b> are excluded, since a fixed price already covers them.
+                </div>
+              ) : (
+                <div className="border border-black/[0.12] rounded-lg overflow-hidden">
+                  <div className="flex items-center justify-between px-2.5 py-1.5 bg-[#f5f4f0] text-[11px]">
+                    <div className="flex gap-2">
+                      <button type="button" className="text-[#2563eb] font-semibold"
+                        onClick={() => { const n = new Set(lines.filter(l => !l.billed).map(l => l.id)); setPicked(n)
+                          const tt = selectedTotal(lines, n)
+                          setForm(f => ({ ...f, agreed_ex_gst: tt, gst: +(tt * 0.1).toFixed(2), total_inc_gst: +(tt * 1.1).toFixed(2) })) }}>
+                        Select all unbilled
+                      </button>
+                      <button type="button" className="text-[#666]"
+                        onClick={() => { setPicked(new Set())
+                          setForm(f => ({ ...f, agreed_ex_gst: 0, gst: 0, total_inc_gst: 0 })) }}>
+                        Clear
+                      </button>
+                    </div>
+                    <span className="text-[#666]">
+                      {picked.size} selected · <b className="text-[#2563eb]">{fmtCurrency(pickedTotal)}</b> ex GST
+                    </span>
+                  </div>
+                  <div className="max-h-56 overflow-y-auto">
+                    {lines.map(l => (
+                      <label key={l.id}
+                        className={`flex items-center gap-2 px-2.5 py-1.5 text-[11px] border-t border-black/[0.06] cursor-pointer ${l.billed ? 'bg-[#fafaf8]' : 'hover:bg-[#f8f8f6]'}`}>
+                        <input type="checkbox" checked={picked.has(l.id)} onChange={() => togglePick(l.id)}
+                          className="w-4 h-4 accent-blue-600 shrink-0" />
+                        <span className={`px-1.5 py-0.5 rounded-full text-[9px] font-semibold shrink-0 ${
+                          l.kind === 'labour' ? 'bg-[#dbeafe] text-[#1e40af]' : 'bg-[#f3e8ff] text-[#6b21a8]'}`}>
+                          {l.kind === 'labour' ? 'Labour' : 'Material'}
+                        </span>
+                        <span className="text-[#666] whitespace-nowrap">{fmtDate(l.date)}</span>
+                        <span className="flex-1 truncate">{l.description}</span>
+                        {l.billed && (
+                          <span className="text-[9px] text-[#b45309] whitespace-nowrap"
+                            title={`Already on invoice ${l.billedOn ?? ''}`}>
+                            invoiced {l.billedOn ? `· ${l.billedOn}` : ''}
+                          </span>
+                        )}
+                        <span className="font-mono whitespace-nowrap">{fmtCurrency(l.amountExGST)}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+          <Input label="Amount ex GST ($)" type="number" value={form.agreed_ex_gst || ''}
+            onChange={fld('agreed_ex_gst')} min={0}
+            readOnly={invMode === 'lines' && !!form.job_id}
+            className={invMode === 'lines' && !!form.job_id ? 'opacity-60 cursor-not-allowed' : undefined} />
           <Input label="GST ($)" type="number" value={form.gst || ''} readOnly className="opacity-60 cursor-not-allowed" />
           <Input label="Total inc GST ($)" type="number" value={form.total_inc_gst || ''} readOnly className="opacity-60 cursor-not-allowed" />
           <Input label="Amount received ($)" type="number" value={form.received || ''} onChange={e => {
