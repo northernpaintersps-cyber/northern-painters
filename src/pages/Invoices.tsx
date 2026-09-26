@@ -8,7 +8,7 @@ import JobPicker from '@/components/JobPicker'
 import { Input, TextArea } from '@/components/ui/Field'
 import {
   fmtCurrency, fmtDate, calcOwed, invStatus, genId, today,
-  normaliseDate, parseMilestones, exOf, matchesJob, nextInvoiceNo,
+  normaliseDate, parseMilestones, exOf, matchesJob, nextInvoiceNo, jobGstRate,
 } from '@/lib/utils'
 import {
   Plus, Loader2, Trash2, Check, Banknote, Edit2, FileText, Receipt,
@@ -179,11 +179,20 @@ export default function Invoices() {
 
   const pickedTotal = selectedTotal(lines, picked)
 
+  /** Money fields for an ex-GST figure, respecting a cash job carrying no GST. */
+  function amountFields(ex: number, jobId?: string | null) {
+    const rate = jobGstRate(jobs.find(j => j.id === (jobId ?? form.job_id)))
+    return {
+      agreed_ex_gst: ex,
+      gst: +(ex * rate).toFixed(2),
+      total_inc_gst: +(ex * (1 + rate)).toFixed(2),
+    }
+  }
+
   function togglePick(id: string) {
     setPicked(p => {
       const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id)
-      const total = selectedTotal(lines, n)
-      setForm(f => ({ ...f, agreed_ex_gst: total, gst: +(total * 0.1).toFixed(2), total_inc_gst: +(total * 1.1).toFixed(2) }))
+      setForm(f => ({ ...f, ...amountFields(selectedTotal(lines, n)) }))
       return n
     })
   }
@@ -217,8 +226,8 @@ export default function Invoices() {
   const fld = (k: string) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
     const val: any = e.target.value
     if (k === 'agreed_ex_gst') {
-      const ex = parseFloat(val) || 0
-      setForm(prev => ({ ...prev, agreed_ex_gst: ex, gst: parseFloat((ex * 0.1).toFixed(2)), total_inc_gst: parseFloat((ex * 1.1).toFixed(2)) }))
+      // Through amountFields, so a cash job is not given GST here either.
+      setForm(prev => ({ ...prev, ...amountFields(parseFloat(val) || 0) }))
       return
     }
     if (k === 'job_id') {
@@ -227,17 +236,23 @@ export default function Invoices() {
         // A milestone index only means something against its own job.
         const extra = { ...(prev.extra ?? {}) }
         delete extra.milestone_index; delete extra.milestone_job_id
-        return { ...prev, job_id: val, client: job?.client || prev.client, extra }
+        // Moving to or from a cash job changes whether GST applies.
+        return {
+          ...prev, job_id: val, client: job?.client || prev.client, extra,
+          ...amountFields(prev.agreed_ex_gst || 0, val),
+        }
       })
       return
     }
     set(k, val)
   }
 
-  function openNew(prefill?: Invoice) {
+  function openNew(prefill?: Invoice, opts?: { mode?: 'manual' | 'lines'; pick?: string[] }) {
     setForm({ ...emptyForm(), ...(prefill ?? {}) })
     setSelectedId(null)
-    setInvMode('manual'); setPicked(new Set()); setNumberTouched(false)
+    setInvMode(opts?.mode ?? 'manual')
+    setPicked(new Set(opts?.pick ?? []))
+    setNumberTouched(false)
     setModalOpen(true)
   }
   function openEdit(inv: Invoice) {
@@ -262,9 +277,7 @@ export default function Invoices() {
         const total = selectedTotal(lines, picked)
         payload = {
           ...payload,
-          agreed_ex_gst: total,
-          gst: +(total * 0.1).toFixed(2),
-          total_inc_gst: +(total * 1.1).toFixed(2),
+          ...amountFields(total),
           extra: {
             ...(payload.extra ?? {}),
             // What this invoice covers, so a line is never billed twice and the
@@ -424,9 +437,18 @@ export default function Invoices() {
             // progress invoice the remainder is the number actually wanted,
             // and on an hourly job agreed_ex_gst is zero or stale.
             const ms = milestoneIndex != null ? b.milestones[milestoneIndex] : undefined
+            // Everything on this job not already covered by another invoice.
+            const avail = invoiceableLines({ job: j, invoices, labour, materials, markupPct })
+            const unbilledLines = avail.filter(l => !l.billed)
+            // Invoicing a specific milestone bills that milestone's amount and
+            // nothing else; otherwise start from the unbilled work itself, so
+            // the amount and the ticked lines cannot disagree.
+            const useLines = !ms && unbilledLines.length > 0
             const ex = ms
               ? Math.round(exOf(ms.amount) * 100) / 100
-              : Math.round(Math.max(0, b.billableToDateExGST - b.invoicedExGST) * 100) / 100
+              : useLines
+                ? selectedTotal(avail, new Set(unbilledLines.map(l => l.id)))
+                : Math.round(Math.max(0, b.billableToDateExGST - b.invoicedExGST) * 100) / 100
             // Pick up where the last claim stopped, through to today.
             const from = b.invoicedUpTo
               ? new Date(new Date(b.invoicedUpTo).getTime() + 86400000).toISOString().slice(0, 10)
@@ -434,15 +456,16 @@ export default function Invoices() {
             openNew({
               job_id: j.id, client: j.client,
               notes: ms ? `${j.job_desc || j.client} — ${ms.label}` : (j.job_desc || ''),
+              ...amountFields(ex, j.id),
               agreed_ex_gst: ex || undefined,
-              gst: +(ex * 0.1).toFixed(2),
-              total_inc_gst: +(ex * 1.1).toFixed(2),
               extra: {
                 ...(ms ? { milestone_index: milestoneIndex, milestone_job_id: j.id } : {}),
                 ...(from ? { covers_from: from } : {}),
                 covers_to: today(),
               },
-            })
+            }, useLines
+              ? { mode: 'lines', pick: unbilledLines.map(l => l.id) }
+              : undefined)
           }}
         />
       ) : (
@@ -615,13 +638,12 @@ export default function Invoices() {
                     <div className="flex gap-2">
                       <button type="button" className="text-[#2563eb] font-semibold"
                         onClick={() => { const n = new Set(lines.filter(l => !l.billed).map(l => l.id)); setPicked(n)
-                          const tt = selectedTotal(lines, n)
-                          setForm(f => ({ ...f, agreed_ex_gst: tt, gst: +(tt * 0.1).toFixed(2), total_inc_gst: +(tt * 1.1).toFixed(2) })) }}>
+                          setForm(f => ({ ...f, ...amountFields(selectedTotal(lines, n)) })) }}>
                         Select all unbilled
                       </button>
                       <button type="button" className="text-[#666]"
                         onClick={() => { setPicked(new Set())
-                          setForm(f => ({ ...f, agreed_ex_gst: 0, gst: 0, total_inc_gst: 0 })) }}>
+                          setForm(f => ({ ...f, ...amountFields(0) })) }}>
                         Clear
                       </button>
                     </div>
