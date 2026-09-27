@@ -212,20 +212,23 @@ export default function CalendarPage() {
       {isLoading
         ? <div className="flex-1 flex items-center justify-center"><Loader2 size={20} className="animate-spin text-blue-600" /></div>
         : (
-          <div className="grid grid-cols-7 gap-1 flex-1 min-h-0 auto-rows-[minmax(76px,1fr)]">
+          <div className="grid grid-cols-7 gap-1 auto-rows-[minmax(88px,auto)]">
             {cells.map(({ date, isCurrentMonth }) => {
               const items = itemsByDate[date] || []
               const isToday = date === todayStr
               return (
                 <div key={date} onClick={() => openCell(date)}
-                  className={`rounded-lg p-1.5 cursor-pointer min-h-0 overflow-hidden flex flex-col transition-colors
+                  className={`rounded-lg p-1.5 cursor-pointer flex flex-col transition-colors
                     ${isCurrentMonth ? 'bg-white hover:bg-gray-50' : 'bg-white/40 opacity-50 hover:opacity-70'}
                     ${isToday ? 'ring-2 ring-blue-500' : 'border border-gray-200'}`}>
                   <div className={`text-xs font-medium mb-1 ${isToday ? 'text-blue-600' : isCurrentMonth ? 'text-gray-600' : 'text-gray-600'}`}>
                     {new Date(date + 'T12:00:00').getDate()}
                   </div>
-                  <div className="space-y-0.5 overflow-hidden">
-                    {items.slice(0, 3).map((item, i) => (
+                  {/* Every item shows: a day with a job and two quote visits was
+                      being cut off at three with no way to reach the rest. The
+                      row grows to fit, and only a truly packed day scrolls. */}
+                  <div className="space-y-0.5 max-h-44 overflow-y-auto">
+                    {items.map((item, i) => (
                       <div key={i}
                         onClick={item.type === 'event'
                           ? (e) => openEvent(item.data, e)
@@ -235,9 +238,6 @@ export default function CalendarPage() {
                         {item.label}
                       </div>
                     ))}
-                    {items.length > 3 && (
-                      <div className="text-[10px] text-gray-500 px-1">+{items.length - 3} more</div>
-                    )}
                   </div>
                 </div>
               )
