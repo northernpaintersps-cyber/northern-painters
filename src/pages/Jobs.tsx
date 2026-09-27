@@ -13,7 +13,7 @@ import {
 } from '@/lib/utils'
 import {
   Plus, Loader2, Trash2, Edit2,
-  Bell, Copy, Check, CalendarPlus, Camera, ArrowUpDown, X, Info,
+  Bell, Copy, Check, CalendarPlus, Camera, ArrowUpDown, X, Info, ChevronDown,
 } from 'lucide-react'
 import { invalidateTable } from '../lib/queryKeys'
 
@@ -425,6 +425,9 @@ export default function Jobs() {
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('All')
   const [quoteFilter, setQuoteFilter] = useState('All')
+  // Collapsed on every visit. Deliberately not remembered: the point of the
+  // card is to be opened when you are chasing quotes, not to greet you.
+  const [showFollowUp, setShowFollowUp] = useState(false)
   const [asc, setAsc] = useState(false)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [form, setForm] = useState<Job>(emptyForm())
@@ -596,16 +599,19 @@ export default function Jobs() {
 
         {/* Quote follow-up card */}
         {needFollowUp.length > 0 && (
-          <div className="bg-white border border-black/[0.12] rounded-xl px-4 py-3.5 mb-3" style={{ borderLeft: '4px solid #f59e0b' }}>
-            <div className="mb-2.5">
+          <div className="bg-white border border-black/[0.12] rounded-xl px-4 py-2.5 mb-3" style={{ borderLeft: '4px solid #f59e0b' }}>
+            <button type="button" onClick={() => setShowFollowUp(v => !v)}
+              aria-expanded={showFollowUp}
+              className={`flex items-center w-full text-left gap-1.5 ${showFollowUp ? 'mb-2.5' : ''}`}>
+              <ChevronDown size={14} className={`text-[#92400e] shrink-0 transition-transform ${showFollowUp ? '' : '-rotate-90'}`} />
               <span className="text-[13px] font-bold text-[#92400e] inline-flex items-center gap-1.5">
                 <Bell size={14} /> Quote follow-up needed
               </span>
-              <span className="text-[11px] text-[#666] ml-2">
+              <span className="text-[11px] text-[#666]">
                 {needFollowUp.length} quote{needFollowUp.length === 1 ? '' : 's'} sent 7+ days ago with no response
               </span>
-            </div>
-            <div className="flex flex-col gap-1.5">
+            </button>
+            <div className={`flex-col gap-1.5 ${showFollowUp ? 'flex' : 'hidden'}`}>
               {needFollowUp.map(j => {
                 const sent = normaliseDate(j.quote_sent)!
                 const days = Math.floor((Date.now() - new Date(sent).getTime()) / 864e5)
