@@ -51,3 +51,30 @@ export async function selectAll(
     return { data: null, error }
   }
 }
+
+/**
+ * Postgres rejects the whole statement when one column is missing, so a schema
+ * that has drifted behind the app fails the save outright — assigning crew to a
+ * job died on `Could not find the 'client' column of 'np_assignments'`.
+ *
+ * Strip the offending column and retry, so the rest of the row still saves.
+ * Returns the names of any columns dropped, for the caller to warn about.
+ * Columns are finite and never re-added, so this always terminates.
+ */
+const MISSING_COL = /Could not find the '([^']+)' column/i
+
+export async function upsertRows(
+  table: string, rows: any[], opts?: { onConflict?: string },
+): Promise<string[]> {
+  if (!rows.length) return []
+  const dropped: string[] = []
+  for (;;) {
+    const { error } = await (supabase.from(table as any) as any)
+      .upsert(rows, opts?.onConflict ? { onConflict: opts.onConflict } : undefined)
+    if (!error) return dropped
+    const missing = error.message?.match(MISSING_COL)?.[1]
+    if (!missing || dropped.includes(missing)) throw error
+    dropped.push(missing)
+    for (const r of rows) delete r[missing]
+  }
+}

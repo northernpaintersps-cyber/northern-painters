@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { supabase, selectAll } from '@/lib/supabase'
+import { supabase, selectAll, upsertRows } from '@/lib/supabase'
 import { useAuth } from '@/lib/auth'
 import { Modal } from '@/components/ui/Modal'
 import { genId, findCrew, isWorkDay } from '@/lib/utils'
@@ -92,6 +92,8 @@ export default function JobDayPanel({ jobId, date, onClose }: {
       const ticked = [...selected]
       const unticked = crew.map(c => c.id).filter(id => !selected.has(id))
 
+      let warn: string[] = []
+
       // Remove unticked crew from every date in range
       const toDelete: string[] = []
       unticked.forEach(crewId => {
@@ -122,15 +124,14 @@ export default function JobDayPanel({ jobId, date, onClose }: {
             date: d,
             time_slot: slot,
             notes: notes || existing?.notes || null,
-            client: job?.client ?? null,
             created_at: existing?.created_at ?? new Date().toISOString(),
             updated_at: new Date().toISOString(),
           })
         })
       })
       if (rows.length) {
-        const { error } = await (supabase.from('np_assignments') as any).upsert(rows)
-        if (error) throw error
+        const dropped = await upsertRows('np_assignments', rows)
+        if (dropped.length) warn = dropped
       }
 
       // V16 syncs the job's scheduled dates from its assignments
@@ -148,8 +149,15 @@ export default function JobDayPanel({ jobId, date, onClose }: {
           if (error) throw error
         }
       }
+      return warn
     },
-    onSuccess: () => {
+    onSuccess: (warn: string[]) => {
+      if (warn.length) {
+        alert(
+          `Saved, but without ${warn.join(', ')} — that column does not exist in ` +
+          `np_assignments. Add it in Supabase to keep this detail.`,
+        )
+      }
       invalidateTable(qc, 'np_assignments')
       invalidateTable(qc, 'np_jobs')
       onClose()
