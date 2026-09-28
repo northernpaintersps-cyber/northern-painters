@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase, selectAll } from '@/lib/supabase'
 import { useAuth } from '@/lib/auth'
@@ -6,6 +6,7 @@ import { fmtCurrency } from '@/lib/utils'
 import { Loader2, List } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { invalidateTable } from '../lib/queryKeys'
+import JobModal from '@/components/JobModal'
 
 const QS_OPTS = ['','Info Collected','Site Visit','Quote Created','Sent','Negotiating','Accepted','Booked','Not Accepted','Lost']
 const JS_OPTS  = ['','Not Started','Scheduled','In Progress','Hourly Rate Accepted','Finished','Closed']
@@ -69,6 +70,9 @@ export default function Pipeline() {
   const { data: jobs = [], isLoading } = useJobs()
   const updateJob = useUpdateJob()
   const navigate = useNavigate()
+  // A card opens the job itself rather than dumping you on the Jobs list,
+  // which lost the board's scroll position and made you find the row again.
+  const [openJobId, setOpenJobId] = useState<string | null>(null)
 
   const colsWithJobs = useMemo(() => {
     const placed = new Set<string>()
@@ -127,7 +131,7 @@ export default function Pipeline() {
               <div className="space-y-1.5">
                 {col.jobs.map(j => (
                   <div key={j.id} className="bg-white border border-black/10 rounded-lg p-2.5 cursor-pointer hover:shadow-sm transition-shadow"
-                    onClick={() => navigate('/jobs')}>
+                    onClick={() => setOpenJobId(j.id)}>
                     <div className="flex justify-between items-start gap-1 mb-1">
                       <span className="text-[10px] text-gray-500 font-mono font-semibold">{j.id}</span>
                       {(j.agreed_ex_gst || j.quote_ex_gst) && (
@@ -165,6 +169,12 @@ export default function Pipeline() {
           )
         })}
       </div>
+
+      <JobModal
+        open={!!openJobId}
+        jobId={openJobId}
+        onClose={() => setOpenJobId(null)}
+      />
     </div>
   )
 }
