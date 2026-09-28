@@ -9,7 +9,7 @@ import { Input, Select, TextArea } from '@/components/ui/Field'
 import JobBillingTab from '@/components/JobBillingTab'
 import {
   fmtCurrency, fmtDate, nextJobId, genId, normaliseDate,
-  getJobScheduledDates, today
+  getJobScheduledDates, deriveScheduledDates, today
 } from '@/lib/utils'
 import {
   Plus, Loader2, Trash2, Edit2,
@@ -396,7 +396,7 @@ function useQuickEdit() {
       const patch: Record<string, any> = { [field]: value, updated_at: new Date().toISOString() }
       // V16 recomputes scheduled dates when start/days change
       if (field === 'sched_start' || field === 'est_days') {
-        patch.scheduled_dates = getJobScheduledDates({ ...job, ...patch })
+        patch.scheduled_dates = deriveScheduledDates({ ...job, ...patch })
       }
       const { error } = await (supabase.from('np_jobs') as any)
         .update(patch).eq('id', job.id).eq('user_id', user!.id)
@@ -533,7 +533,7 @@ export default function Jobs() {
       const id = selectedId || nextJobId(jobs.map((j: Job) => j.id))
       const quoteNo = form.quote_no || genQuoteNo(existingNos)
       // Recalculate scheduled dates if start/days changed
-      const schedDates = getJobScheduledDates(form)
+      const schedDates = deriveScheduledDates(form)
       await upsert.mutateAsync({
         ...form,
         id,
@@ -777,7 +777,7 @@ export default function Jobs() {
                 <div className="bg-gray-50 rounded-lg p-3">
                   <p className="text-xs text-gray-500 mb-2">Calculated working days:</p>
                   <div className="flex flex-wrap gap-1.5">
-                    {getJobScheduledDates(form).map(d => (
+                    {deriveScheduledDates(form).map(d => (
                       <span key={d} className="text-xs bg-blue-500/20 text-blue-400 px-2 py-0.5 rounded">{fmtDate(d)}</span>
                     ))}
                   </div>

@@ -129,6 +129,28 @@ export function getJobScheduledDates(
   return getWorkingDates(start, days, workWeekends)
 }
 
+/**
+ * The working days a start date and a duration imply, ignoring any dates
+ * already stored on the job.
+ *
+ * getJobScheduledDates lets a stored list win, which is right for reading —
+ * crew can be assigned to days the duration does not cover. But every caller
+ * that meant to *recompute* after the start or the day count changed was also
+ * calling it, so the stored list won there too and the change never reached
+ * the calendar. Recompute with this; read with the other.
+ */
+export function deriveScheduledDates(
+  job: {
+    schedStart?: string | null; sched_start?: string | null
+    estDays?: number | null; est_days?: number | null
+  },
+  workWeekends = false,
+): string[] {
+  const start = normaliseDate(job.sched_start ?? job.schedStart)
+  if (!start) return []
+  return getWorkingDates(start, Number(job.est_days ?? job.estDays) || 1, workWeekends)
+}
+
 
 // ── Crew references ──────────────────────────────────────────
 // Assignments store a crew reference that may be a crew id (V16 exports

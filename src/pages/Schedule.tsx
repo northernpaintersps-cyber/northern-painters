@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase, selectAll } from '@/lib/supabase'
 import { useAuth } from '@/lib/auth'
-import { fmtCurrency, getJobScheduledDates, normaliseDate, crewLabel } from '@/lib/utils'
+import { fmtCurrency, getJobScheduledDates, deriveScheduledDates, normaliseDate, crewLabel } from '@/lib/utils'
 import { Loader2, CalendarPlus, CalendarDays, Info } from 'lucide-react'
 import { invalidateTable } from '../lib/queryKeys'
 
@@ -33,7 +33,7 @@ function useQuickEdit() {
     mutationFn: async ({ job, field, value }: { job: Row; field: string; value: any }) => {
       const patch: Row = { [field]: value, updated_at: new Date().toISOString() }
       if (field === 'sched_start' || field === 'est_days') {
-        patch.scheduled_dates = getJobScheduledDates({ ...job, ...patch })
+        patch.scheduled_dates = deriveScheduledDates({ ...job, ...patch })
       }
       const { error } = await (supabase.from('np_jobs') as any)
         .update(patch).eq('id', job.id).eq('user_id', user!.id)
