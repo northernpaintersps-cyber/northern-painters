@@ -9,6 +9,7 @@ import SiteVisitEditor, { emptySVState, normaliseSV, type SVState } from '@/comp
 import {
   Plus, Loader2, Trash2, Edit2, Calculator, ArrowUpDown, X, Camera, MapPin,
 } from 'lucide-react'
+import { takeHandoff } from '@/lib/handoff'
 
 type Row = Record<string, any>
 
@@ -91,17 +92,14 @@ export default function SiteVisits() {
     setEditing({ id: v.id, state: { ...state, jobId: v.job_id ?? state.jobId, date: v.date ?? state.date } })
   }
 
-  // Arriving from an enquiry
+  // Arriving from an enquiry, or from a job's site-visit button
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search)
-    if (params.get('new') !== '1') return
-    let pre: any = {}
-    try {
-      const raw = sessionStorage.getItem('np_prefill_visit')
-      if (raw) { pre = JSON.parse(raw); sessionStorage.removeItem('np_prefill_visit') }
-    } catch {}
-    openNew({ client: pre.client ?? '', address: pre.address ?? '', date: pre.date ?? today() })
-    window.history.replaceState({}, '', window.location.pathname)
+    const pre = takeHandoff('np_prefill_visit')
+    if (!pre) return
+    openNew({
+      jobId: pre.jobId ?? '', client: pre.client ?? '',
+      address: pre.address ?? '', date: pre.date ?? today(),
+    })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 

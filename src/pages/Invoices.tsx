@@ -21,6 +21,7 @@ import {
   billingStage, BILLING_STAGES, type BillingStage, type JobBilling,
 } from '@/lib/jobBilling'
 import { invalidateTable } from '../lib/queryKeys'
+import { takeHandoff } from '@/lib/handoff'
 
 type Invoice = Record<string, any>
 
@@ -87,6 +88,12 @@ function useUserTable(table: string) {
   })
 }
 
+/** A deposit invoice that has now been settled, in full. */
+function isSettledDeposit(inv: Invoice): boolean {
+  if (!inv.extra?.booking_deposit || !inv.job_id) return false
+  return !!inv.manual_paid || (Number(inv.received) || 0) >= (Number(inv.total_inc_gst) || 0)
+}
+
 function useUpsertInvoice() {
   const qc = useQueryClient()
   const { user } = useAuth()
@@ -94,8 +101,20 @@ function useUpsertInvoice() {
     mutationFn: async (inv: Invoice) => {
       const { error } = await supabase.from('np_invoices').upsert({ ...inv, user_id: user!.id, updated_at: new Date().toISOString() } as any)
       if (error) throw error
+      // Paying the booking deposit is what books the job. Every path that
+      // settles an invoice — Mark Paid, a cash payment, the inline received
+      // box, the modal — comes through here, so this is the one place that
+      // needs to know. The status stays hand-editable afterwards.
+      if (isSettledDeposit(inv)) {
+        await (supabase.from('np_jobs') as any)
+          .update({ quote_status: 'Booked', updated_at: new Date().toISOString() })
+          .eq('id', inv.job_id).eq('user_id', user!.id)
+      }
     },
-    onSuccess: () => invalidateTable(qc, 'np_invoices'),
+    onSuccess: (_d, inv) => {
+      invalidateTable(qc, 'np_invoices')
+      if (isSettledDeposit(inv)) invalidateTable(qc, 'np_jobs')
+    },
   })
 }
 
@@ -245,6 +264,28 @@ export default function Invoices() {
     })
     if (suggested !== form.id) setForm(f => ({ ...f, id: suggested }))
   }, [form.job_id, form.notes, modalOpen, selectedId, numberTouched, jobs, invoices])
+
+  // Arriving from a job's "new invoice" or "book job" button.
+  useEffect(() => {
+    // Wait for the jobs to load: whether the job is cash decides the GST, and
+    // taking the handoff early would consume it against an empty list.
+    if (!jobs.length) return
+    const pre = takeHandoff<any>('np_prefill_invoice')
+    if (!pre) return
+    const job = jobs.find(j => j.id === pre.job_id)
+    const rate = jobGstRate(job)
+    const ex = Number(pre.depositExGST) || 0
+    openNew({
+      job_id: pre.job_id, client: pre.client, date: pre.date, notes: pre.notes,
+      ...(ex ? {
+        agreed_ex_gst: ex,
+        gst: +(ex * rate).toFixed(2),
+        total_inc_gst: +(ex * (1 + rate)).toFixed(2),
+      } : {}),
+      ...(pre.bookingDeposit ? { extra: { booking_deposit: true } } : {}),
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jobs.length])
 
   function set(k: string, v: any) { setForm(prev => ({ ...prev, [k]: v })) }
   function setExtra(k: string, v: any) {

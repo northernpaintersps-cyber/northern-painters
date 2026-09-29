@@ -5,12 +5,15 @@ import { supabase, selectAll } from '@/lib/supabase'
 import { useAuth } from '@/lib/auth'
 import { Badge } from '@/components/ui/Badge'
 import JobModal, { useDeleteJob, JOB_STATUSES, QUOTE_STATUSES } from '@/components/JobModal'
+import JobDayPanel from '@/components/JobDayPanel'
+import { handOff } from '@/lib/handoff'
 import {
   fmtCurrency, fmtDate, normaliseDate, deriveScheduledDates, today
 } from '@/lib/utils'
 import {
   Plus, Loader2, Trash2, Edit2,
   Bell, Copy, Check, CalendarPlus, Camera, ArrowUpDown, X, Info, ChevronDown,
+  Receipt, BookmarkCheck,
 } from 'lucide-react'
 import { invalidateTable } from '../lib/queryKeys'
 
@@ -20,6 +23,9 @@ type Job = Record<string, any>
 
 const II = 'border-none bg-transparent text-[12.5px] font-inherit text-inherit w-full focus:outline-none focus:bg-blue-50/60 rounded px-0.5'
 const IS = 'border-none bg-transparent text-xs font-inherit text-inherit cursor-pointer focus:outline-none'
+/** Default booking deposit, matching the Payments page's own default. */
+const DEPOSIT_PCT = 20
+
 const BTN = 'ml-1 px-1.5 py-1 rounded-md bg-white border border-black/20 hover:bg-[#f5f4f0] align-middle'
 
 
@@ -95,6 +101,9 @@ export default function Jobs() {
   const [asc, setAsc] = useState(false)
   // The job modal is its own component; the page only says which job it is on.
   const [openJob, setOpenJob] = useState<{ id: string | null; initial?: Job } | null>(null)
+  // Booking crew happens right here rather than on another page, so the row
+  // you were working through stays where it was.
+  const [crewDay, setCrewDay] = useState<{ jobId: string; date: string } | null>(null)
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
@@ -169,6 +178,46 @@ export default function Jobs() {
 
   const openNew = () => setOpenJob({ id: null })
   const openEdit = (j: Job) => setOpenJob({ id: j.id })
+
+  /** Value of the job ex GST — what is agreed if it is, else what was quoted. */
+  const jobValueEx = (j: Job) => Number(j.agreed_ex_gst || j.quote_ex_gst) || 0
+
+  function newSiteVisit(j: Job) {
+    nav('/visits' + handOff('np_prefill_visit', {
+      jobId: j.id, client: j.client ?? '', address: j.address ?? '', date: today(),
+    }))
+  }
+
+  function newInvoice(j: Job) {
+    nav('/invoices' + handOff('np_prefill_invoice', {
+      job_id: j.id, client: j.client ?? '', date: today(),
+    }))
+  }
+
+  /**
+   * Raise the booking deposit. The job is not marked Booked here — it becomes
+   * Booked when the deposit is actually paid, which the Invoices page does on
+   * the unpaid to paid transition. Until then it is quoted work like any other.
+   */
+  function bookJob(j: Job) {
+    const value = jobValueEx(j)
+    if (!value) {
+      alert(`${j.id} has no quoted or agreed amount yet, so there is nothing to take a deposit on.`)
+      return
+    }
+    const raw = prompt(`Booking deposit for ${j.id} — percentage of ${fmtCurrency(value)} ex GST:`, String(DEPOSIT_PCT))
+    if (raw === null) return
+    const pct = parseFloat(raw)
+    if (!(pct > 0 && pct <= 100)) { alert('Enter a percentage between 0 and 100.'); return }
+    nav('/invoices' + handOff('np_prefill_invoice', {
+      job_id: j.id,
+      client: j.client ?? '',
+      date: today(),
+      notes: 'Booking deposit',
+      depositExGST: Math.round(value * pct) / 100,
+      bookingDeposit: true,
+    }))
+  }
 
   return (
     <div className="p-5">
@@ -327,9 +376,15 @@ export default function Jobs() {
                             }} />
                         </td>
                         <td className="px-2.5 py-[7px] whitespace-nowrap">
-                          <button onClick={() => nav('/visits')} title="New site visit" className={BTN}><Camera size={13} /></button>
-                          <button onClick={() => nav('/crew')} title="Schedule to crew calendar"
+                          <button onClick={() => newSiteVisit(j)} title="New site visit for this job" className={BTN}><Camera size={13} /></button>
+                          <button onClick={() => setCrewDay({ jobId: j.id, date: normaliseDate(j.sched_start) || today() })}
+                            title="Book crew on this job"
                             className={BTN} style={scheduled ? { color: '#059669' } : undefined}><CalendarPlus size={13} /></button>
+                          <button onClick={() => newInvoice(j)} title="New invoice for this job" className={BTN}><Receipt size={13} /></button>
+                          <button onClick={() => bookJob(j)} title="Book job — raise the deposit invoice"
+                            className={BTN} style={j.quote_status === 'Booked' ? { color: '#059669' } : undefined}>
+                            <BookmarkCheck size={13} />
+                          </button>
                           <button onClick={() => openEdit(j)} title="Edit"
                             className="ml-1 px-1.5 py-1 rounded-md bg-blue-600 text-white hover:bg-blue-700 align-middle"><Edit2 size={13} /></button>
                           <button onClick={() => quickDelete(j)} title="Delete"
@@ -349,6 +404,12 @@ export default function Jobs() {
       </div>
 
       {/* Edit/New Modal */}
+
+      <JobDayPanel
+        jobId={crewDay?.jobId ?? null}
+        date={crewDay?.date ?? null}
+        onClose={() => setCrewDay(null)}
+      />
 
       <JobModal
         open={!!openJob}
