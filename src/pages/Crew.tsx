@@ -36,7 +36,10 @@ const SLOT = {
   afternoon: { label: 'Afternoon', short: 'PM', bg: '#fef3c7', fg: '#92400e', brd: '#fde68a' },
 } as const
 type SlotKey = keyof typeof SLOT
-const slotOf = (a: Row): SlotKey => (a.time_slot in SLOT ? a.time_slot : 'full')
+const slotOf = (a: Row): SlotKey =>
+  (typeof a.time_slot === 'string' && a.time_slot in SLOT) ? a.time_slot as SlotKey : 'full'
+/** No shift recorded at all — counted as a full day, which is the safe reading. */
+const slotMissing = (a: Row) => !(typeof a.time_slot === 'string' && a.time_slot in SLOT)
 
 function useTable(table: string) {
   const { user } = useAuth()
@@ -112,24 +115,45 @@ export default function Crew() {
   const weekKeys = days.map(localStr)
   const todayStr = localStr(new Date())
 
-  // V16 conflict map — same crew, same date, overlapping slot, different job
-  const conflictIds = useMemo(() => {
-    const out = new Set<string>()
-    const overlaps = (a: SlotKey, b: SlotKey) => a === b || a === 'full' || b === 'full'
-    weekKeys.forEach(date => {
-      const onDay = assignments.filter(a => a.date === date)
-      const refs = [...new Set(onDay.map(a => crewLabel(crew, a.crew_name)).filter(Boolean))]
-      refs.forEach(name => {
-        const mine = onDay.filter(a => crewLabel(crew, a.crew_name) === name)
-        for (let i = 0; i < mine.length; i++)
-          for (let j = i + 1; j < mine.length; j++)
-            if (mine[i].job_id !== mine[j].job_id && overlaps(slotOf(mine[i]), slotOf(mine[j]))) {
-              out.add(mine[i].id); out.add(mine[j].id)
-            }
-      })
+  /**
+   * One person, one day, two different jobs, on shifts they cannot both work.
+   *
+   * Morning on one job and afternoon on another is not a clash — that is what
+   * the shifts are for. A full day clashes with everything, including another
+   * full day, because it covers both halves.
+   *
+   * Scanned across every assignment, not just the week on screen: the list
+   * below shows all dates, and a clash next month used to go unmarked until
+   * you happened to page the grid onto it.
+   */
+  const conflicts = useMemo(() => {
+    const clashes = (a: SlotKey, b: SlotKey) => a === 'full' || b === 'full' || a === b
+    const byPersonDay = new Map<string, Row[]>()
+    assignments.forEach(a => {
+      const who = crewLabel(crew, a.crew_name)
+      if (!a.date || !who) return
+      const key = `${a.date}|${who}`
+      const list = byPersonDay.get(key)
+      if (list) list.push(a); else byPersonDay.set(key, [a])
     })
-    return out
-  }, [assignments, crew, weekKeys.join()])
+    const ids = new Set<string>()
+    let unset = 0
+    byPersonDay.forEach(mine => {
+      for (let i = 0; i < mine.length; i++) {
+        for (let j = i + 1; j < mine.length; j++) {
+          if (mine[i].job_id === mine[j].job_id) continue
+          if (!clashes(slotOf(mine[i]), slotOf(mine[j]))) continue
+          ids.add(mine[i].id); ids.add(mine[j].id)
+        }
+      }
+    })
+    ids.forEach(id => {
+      const a = assignments.find(x => x.id === id)
+      if (a && slotMissing(a)) unset++
+    })
+    return { ids, unset }
+  }, [assignments, crew])
+  const conflictIds = conflicts.ids
 
   const schedOf = useMemo(() => {
     const m: Record<string, string[]> = {}
@@ -265,7 +289,11 @@ export default function Crew() {
       <Card className="p-3 overflow-x-auto">
         {conflictIds.size > 0 && (
           <div className="bg-[#fee2e2] border border-[#fca5a5] rounded-lg px-3 py-2 mb-2.5 text-xs text-[#991b1b] font-semibold">
-            ⚠ Scheduling conflict — one or more crew members are assigned to overlapping shifts on the same day. Tap the cell to fix.
+            ⚠ Scheduling conflict — someone is on two jobs the same day, on shifts they cannot both work.
+            Morning on one job and afternoon on another is fine; a full day is not.
+            {conflicts.unset > 0 && (
+              <> {conflicts.unset} of the flagged bookings have no shift recorded, so they count as a full day — set their shift to clear those.</>
+            )}
           </div>
         )}
         <div style={{ minWidth: 700 }}>
