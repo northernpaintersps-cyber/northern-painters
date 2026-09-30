@@ -134,20 +134,25 @@ export default function JobDayPanel({ jobId, date, onClose }: {
         if (dropped.length) warn = dropped
       }
 
-      // V16 syncs the job's scheduled dates from its assignments
-      if (job) {
-        const existingDates = Array.isArray(job.scheduled_dates) ? job.scheduled_dates as string[] : []
-        const assignDates = assignments.filter(a => a.job_id === jobId).map(a => a.date)
-        const all = [...new Set([...existingDates, ...assignDates, ...(rows.length ? dates : [])])].filter(Boolean).sort()
-        if (all.length) {
-          const { error } = await (supabase.from('np_jobs') as any).update({
-            scheduled_dates: all,
-            sched_start: all[0],
-            est_days: all.length,
-            updated_at: new Date().toISOString(),
-          }).eq('id', jobId).eq('user_id', user!.id)
-          if (error) throw error
-        }
+      // Give the job a schedule if it has none. It is deliberate that a job
+      // which already has one is left alone.
+      //
+      // This used to write sched_start, est_days and scheduled_dates back from
+      // the union of every date the job had ever held plus every assignment.
+      // That made the two directions fight: shortening a job from five days to
+      // two on the Jobs page was undone the next time crew were saved, because
+      // the old dates were still in the union and the stale assignments were
+      // still there. The list could only ever grow. The job's own start and
+      // day count are the plan; bookings say who works when, not how long the
+      // job is.
+      if (job && !job.sched_start && dates.length && rows.length) {
+        const { error } = await (supabase.from('np_jobs') as any).update({
+          scheduled_dates: dates,
+          sched_start: dates[0],
+          est_days: dates.length,
+          updated_at: new Date().toISOString(),
+        }).eq('id', jobId).eq('user_id', user!.id)
+        if (error) throw error
       }
       return warn
     },
