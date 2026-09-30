@@ -56,8 +56,9 @@ export default function JobDayPanel({ jobId, date, onClose }: {
   const { data: jobs = [] } = useTable('np_jobs')
   const { data: assignments = [] } = useTable('np_assignments')
 
-  const [selected, setSelected] = useState<Set<string>>(new Set())
-  const [slot, setSlot] = useState<string>('full')
+  // crew id -> time slot. Being in the map is what "booked" means, so one
+  // person can be on for the morning while another is there all day.
+  const [picked, setPicked] = useState<Record<string, string>>({})
   const [startDate, setStartDate] = useState('')
   const [days, setDays] = useState(1)
   const [notes, setNotes] = useState('')
@@ -73,13 +74,12 @@ export default function JobDayPanel({ jobId, date, onClose }: {
   // Seed the panel from what is already booked that day
   useEffect(() => {
     if (!open) return
-    const ids = new Set<string>()
+    const next: Record<string, string> = {}
     assignedOnDay.forEach(a => {
       const c = findCrew(crew, a.crew_name)
-      if (c?.id) ids.add(c.id)
+      if (c?.id) next[c.id] = a.time_slot || 'full'
     })
-    setSelected(ids)
-    setSlot(assignedOnDay[0]?.time_slot ?? 'full')
+    setPicked(next)
     setStartDate(date!)
     setDays(1)
     setNotes(assignedOnDay[0]?.notes ?? '')
@@ -89,8 +89,8 @@ export default function JobDayPanel({ jobId, date, onClose }: {
   const save = useMutation({
     mutationFn: async () => {
       const dates = workingDatesFrom(startDate || date!, Math.max(1, days))
-      const ticked = [...selected]
-      const unticked = crew.map(c => c.id).filter(id => !selected.has(id))
+      const ticked = Object.keys(picked)
+      const unticked = crew.map(c => c.id).filter(id => !(id in picked))
 
       let warn: string[] = []
 
@@ -122,7 +122,7 @@ export default function JobDayPanel({ jobId, date, onClose }: {
             job_id: jobId,
             crew_name: member.name,
             date: d,
-            time_slot: slot,
+            time_slot: picked[crewId] || 'full',
             notes: notes || existing?.notes || null,
             created_at: existing?.created_at ?? new Date().toISOString(),
             updated_at: new Date().toISOString(),
@@ -173,7 +173,8 @@ export default function JobDayPanel({ jobId, date, onClose }: {
   async function briefing(crewId: string) {
     const member = crew.find(c => c.id === crewId)
     const a = assignedOnDay.find(x => findCrew(crew, x.crew_name)?.id === crewId)
-    const slotLabel = SLOTS.find(s => s.v === (a?.time_slot ?? slot))?.l ?? 'Full day'
+    const mySlot = picked[crewId] || a?.time_slot || 'full'
+    const slotLabel = SLOTS.find(s => s.v === mySlot)?.l ?? 'Full day'
     const msg = `Hi ${(member?.name ?? '').split(' ')[0]},\n\nYou're booked for ${slotLabel.toLowerCase()} on ${date}.\n\nJob: ${jobId}${job?.client ? ` — ${job.client}` : ''}\nSite: ${job?.address || 'TBC'}\n${job?.job_desc ? `Scope: ${job.job_desc}\n` : ''}${a?.notes ? `Notes: ${a.notes}\n` : ''}\nSee you there.\n\nNorthern Painters`
     try {
       await navigator.clipboard.writeText(msg)
@@ -195,7 +196,7 @@ export default function JobDayPanel({ jobId, date, onClose }: {
       </div>
 
       <label className="block text-xs font-medium text-gray-500 mb-1.5">
-        Tap to assign · tap again to remove · Msg copies a briefing message
+        Tap to assign · tap again to remove · set each person's shift below their name
       </label>
 
       {crew.length === 0 ? (
@@ -203,32 +204,48 @@ export default function JobDayPanel({ jobId, date, onClose }: {
       ) : (
         <div className="flex flex-col gap-1.5 mb-3">
           {crew.map(c => {
-            const on = selected.has(c.id)
+            const on = c.id in picked
             const wasAssigned = assignedOnDay.some(a => findCrew(crew, a.crew_name)?.id === c.id)
             return (
               <div key={c.id}
-                onClick={() => setSelected(s => {
-                  const n = new Set(s)
-                  n.has(c.id) ? n.delete(c.id) : n.add(c.id)
-                  return n
-                })}
-                className="flex items-center gap-2.5 px-3 py-2.5 rounded-lg cursor-pointer select-none transition-all"
+                className="rounded-lg select-none transition-all"
                 style={{
                   border: `2px solid ${on ? '#16a34a' : 'rgba(0,0,0,.12)'}`,
                   background: on ? '#f0fdf4' : undefined,
                 }}>
-                <div className="w-5 h-5 rounded-full shrink-0 flex items-center justify-center text-white"
-                  style={{ border: `2px solid ${on ? '#16a34a' : '#ccc'}`, background: on ? '#16a34a' : undefined }}>
-                  {on && <Check size={12} />}
+                <div className="flex items-center gap-2.5 px-3 py-2.5 cursor-pointer"
+                  onClick={() => setPicked(prev => {
+                    const next = { ...prev }
+                    if (c.id in next) delete next[c.id]; else next[c.id] = 'full'
+                    return next
+                  })}>
+                  <div className="w-5 h-5 rounded-full shrink-0 flex items-center justify-center text-white"
+                    style={{ border: `2px solid ${on ? '#16a34a' : '#ccc'}`, background: on ? '#16a34a' : undefined }}>
+                    {on && <Check size={12} />}
+                  </div>
+                  <span className="flex-1 text-[13px]">
+                    <strong>{c.name}</strong> <span className="text-[#666] text-[11px]">— {c.role || 'Painter'}</span>
+                  </span>
+                  {wasAssigned && (
+                    <button onClick={e => { e.stopPropagation(); briefing(c.id) }}
+                      className="flex items-center gap-1 px-2 py-1 text-[11px] bg-white border border-black/20 rounded-md hover:bg-[#f5f4f0] shrink-0">
+                      <MessageSquare size={11} /> Msg
+                    </button>
+                  )}
                 </div>
-                <span className="flex-1 text-[13px]">
-                  <strong>{c.name}</strong> <span className="text-[#666] text-[11px]">— {c.role || 'Painter'}</span>
-                </span>
-                {wasAssigned && (
-                  <button onClick={e => { e.stopPropagation(); briefing(c.id) }}
-                    className="flex items-center gap-1 px-2 py-1 text-[11px] bg-white border border-black/20 rounded-md hover:bg-[#f5f4f0] shrink-0">
-                    <MessageSquare size={11} /> Msg
-                  </button>
+                {on && (
+                  <div className="flex gap-1.5 px-3 pb-2.5">
+                    {SLOTS.map(sl => (
+                      <button key={sl.v} type="button"
+                        onClick={() => setPicked(prev => ({ ...prev, [c.id]: sl.v }))}
+                        className="flex-1 px-2 py-1 text-[11px] rounded-md border font-semibold"
+                        style={picked[c.id] === sl.v
+                          ? { background: '#2563eb', color: '#fff', borderColor: '#2563eb' }
+                          : { background: sl.bg, color: sl.fg, borderColor: sl.brd }}>
+                        {sl.l}
+                      </button>
+                    ))}
+                  </div>
                 )}
               </div>
             )
@@ -255,21 +272,6 @@ export default function JobDayPanel({ jobId, date, onClose }: {
           {days > 4 ? '…' : ''}) — weekends are skipped.
         </div>
       )}
-
-      <div className="mb-2.5">
-        <label className="block text-xs font-medium text-gray-500 mb-1">Shift / Time slot</label>
-        <div className="flex gap-1.5">
-          {SLOTS.map(s => (
-            <button key={s.v} onClick={() => setSlot(s.v)}
-              className="flex-1 px-2 py-1.5 text-xs rounded-lg border font-semibold"
-              style={slot === s.v
-                ? { background: '#2563eb', color: '#fff', borderColor: '#2563eb' }
-                : { background: s.bg, color: s.fg, borderColor: s.brd }}>
-              {s.l}
-            </button>
-          ))}
-        </div>
-      </div>
 
       <div className="mb-1">
         <label className="block text-xs font-medium text-gray-500 mb-1">Notes</label>
