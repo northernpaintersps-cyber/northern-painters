@@ -16,12 +16,13 @@ import {
   BENCHMARKS,
 } from '@/lib/quoteData'
 import {
-  SUBSTRATES, emptySubstrates, normaliseSubstrates, substrateLines as buildSubLines,
-  substrateTotals, newSubLine, coatOf, type SubEntry,
+  SUBSTRATES, SUB_BY_KEY, emptySubstrates, normaliseSubstrates,
+  substrateLines as buildSubLines, substrateTotals, subTotal, newSubLine,
+  coatOf, unitLabel, type SubEntry, type FinishSpec,
 } from '@/lib/substrates'
 import SubstratePicker from '@/components/SubstratePicker'
-import { SUB_BY_KEY, unitLabel, subTotal } from '@/lib/substrates'
 import { checkTakeoff, hasError, type Warning } from '@/lib/takeoffChecks'
+import { applyFinishRows, finishScheduleText } from '@/lib/finishes'
 import {
   Plus, Trash2, Loader2, Sparkles, Save, ClipboardList, Settings2,
   FileText, Image as ImageIcon, Ruler, Hammer, RefreshCw,
@@ -187,6 +188,10 @@ export default function QuotingTool() {
   const [applied, setApplied] = useState(0)
   // Indexing a 40 sheet set then measuring takes minutes; silence reads as a hang.
   const [extractStage, setExtractStage] = useState('')
+  // Products and colours an architect specified. Kept beside the coating
+  // settings rather than inside them: CoatSettings.colour is the magnitude of
+  // colour change, which drives coat counts, not the colour itself.
+  const [finishSpecs, setFinishSpecs] = useState<Record<string, FinishSpec>>({})
   const imgRef = useRef<HTMLInputElement>(null)
   const pdfRef = useRef<HTMLInputElement>(null)
 
@@ -302,7 +307,8 @@ export default function QuotingTool() {
     } catch {}
   }, [])
 
-  const substrateLines = useMemo(() => buildSubLines(substrates).join('\n'), [substrates])
+  const substrateLines = useMemo(
+    () => buildSubLines(substrates, finishSpecs).join('\n'), [substrates, finishSpecs])
   const totals = useMemo(() => substrateTotals(substrates), [substrates])
 
   // V16 PROD_RATES baseline — a sanity figure next to the AI's hours
@@ -328,7 +334,9 @@ export default function QuotingTool() {
     SUBSTRATES.forEach(sub => {
       const q = totals[sub.key] ?? 0
       if (q <= 0) return
-      const first = sub.paint.toLowerCase().split(' ')[0]
+      // A specified product is what gets bought, so it is what gets priced.
+      const want = finishSpecs[sub.key]?.product || sub.paint
+      const first = want.toLowerCase().split(' ')[0]
       const hit = lib.find(p => (p.product ?? '').toLowerCase().includes(first))
       const coverage = hit?.coverage ?? 12
       // linear metres and counts convert to an approximate painted area
@@ -336,7 +344,7 @@ export default function QuotingTool() {
       // Coats now come from the substrate's own settings, undercoats included
       const c = coatOf(substrates, sub.key)
       const litres = (m2 * (c.topCoats + (c.uc !== 'None' ? c.ucCoats : 0))) / coverage
-      const key = hit?.product ?? sub.paint
+      const key = hit?.product ?? want
       if (!products[key]) products[key] = { product: key, size: hit?.size ?? '4L', litres: 0, coverage, price: hit?.yours ?? 0 }
       products[key].litres += litres
     })
@@ -346,7 +354,7 @@ export default function QuotingTool() {
       return { ...p, tins, cost: tins * p.price }
     })
     return { rows, total: rows.reduce((s, r) => s + r.cost, 0) + extraMatTotal }
-  }, [totals, substrates, biz, extraMatTotal])
+  }, [totals, substrates, biz, extraMatTotal, finishSpecs])
 
   const subtotal = labourCost + materials.total + consTotal + equipTotal
   const gst = subtotal * 0.1
@@ -442,6 +450,31 @@ export default function QuotingTool() {
       }))
     } catch (e: any) { setGenErr(e?.message ?? 'Extraction failed') }
     finally { setExtracting(false); setExtractStage('') }
+  }
+
+  /**
+   * Fold the finishes schedule into the coating settings and remember the
+   * named products. Separate from the quantities, since one may be wanted
+   * without the other.
+   */
+  function applyFinishes() {
+    if (!extractRes?.finishes.length) return
+    const { coats, specs, unmatched } = applyFinishRows(extractRes.finishes)
+    setSubstrates(prev => {
+      const out = { ...prev }
+      Object.entries(coats).forEach(([key, patch]) => {
+        if (!(key in out)) return
+        out[key] = { ...out[key], coat: { ...coatOf(prev, key), ...patch } }
+      })
+      return out
+    })
+    setFinishSpecs(prev => ({ ...prev, ...specs }))
+    const n = Object.keys(coats).length
+    alert(unmatched.length
+      ? `${n} coating setting${n === 1 ? '' : 's'} applied. ${unmatched.length} schedule `
+        + `row${unmatched.length === 1 ? '' : 's'} could not be matched to a substrate: `
+        + unmatched.map(f => f.area).filter(Boolean).join(', ')
+      : `${n} coating setting${n === 1 ? '' : 's'} applied from the finishes schedule.`)
   }
 
   /** Write the ticked rows into the substrates, then clear the review. */
@@ -636,6 +669,10 @@ export default function QuotingTool() {
           .map((p: any) => `${p.product} ${p.size}: $${p.yours} trade, ${p.coverage}m2/L`).join('; '),
         benchmarks: benchmarkText,
         siteNotes, logisticsNotes,
+        finishesSchedule: finishScheduleText(
+          finishSpecs,
+          Object.fromEntries(Object.keys(finishSpecs).map(k => [k, coatOf(substrates, k)])),
+        ),
       })
       setEstimate(text)
       // V16 seeds the adjustment panels from the estimate it just built.
@@ -708,6 +745,7 @@ export default function QuotingTool() {
       client, address, jobType, terms, substrates, prep, ceilingHeight, access,
       method, coats, processes, prepLevels, consPrep, consTotal, consNotes, extraMats,
       painters, travelKm, equip, siteNotes, logisticsNotes, estimate, lockedPrice, rooms,
+      finishSpecs,
       adjLab, adjMat, waste, contingency, overheadPct, bufDays, bufHrs, travelCost,
       paintRows, laHpd, laPrep, laTop, laBufD, laBufH, laRates,
     }
@@ -717,6 +755,7 @@ export default function QuotingTool() {
     setClient(d.client ?? ''); setAddress(d.address ?? ''); setJobType(d.jobType ?? JOB_TYPES[0])
     setTerms(d.terms ?? QUOTE_TERMS[0])
     setSubstrates(normaliseSubstrates(d.substrates ?? d.qty))
+    setFinishSpecs(d.finishSpecs ?? {})
     setPrep(d.prep ?? PREP_OPTS[1]); setCeilingHeight(d.ceilingHeight ?? HEIGHT_OPTS[0]); setAccess(d.access ?? ACCESS_OPTS[0])
     setMethod(d.method ?? 'roll'); setCoats(d.coats ?? '2'); setProcesses(d.processes ?? [])
     // Drafts saved before per-item prep levels existed fall back to the type's defaults.
@@ -803,14 +842,18 @@ export default function QuotingTool() {
     const coatRows = SUBSTRATES.filter(s => (totals[s.key] ?? 0) > 0).map(s => {
       const c = coatOf(substrates, s.key)
       const hasUC = c.uc !== 'None'
+      const spec = finishSpecs[s.key]
+      // Name what the architect specified, with the colour, so the client sees
+      // their own schedule reflected back.
+      const mat = (spec?.product || s.paint) + (spec?.colour ? ` — ${spec.colour}` : '')
       return s.group === 'Specialty'
-        ? { sub: s.label, sys: `${c.fin} system`, coats: String(c.topCoats), app: c.app, mat: s.paint }
+        ? { sub: s.label, sys: `${c.fin} system`, coats: String(c.topCoats), app: c.app, mat }
         : {
             sub: s.group === 'Exterior' ? `${s.label} (ext)` : s.label,
             sys: hasUC ? `${c.uc} undercoat (${c.ucApp}) + ${c.fin}` : c.fin,
             coats: hasUC ? `${c.ucCoats} + ${c.topCoats}` : String(c.topCoats),
             app: c.app,
-            mat: s.paint,
+            mat,
           }
     })
 
@@ -1037,6 +1080,13 @@ export default function QuotingTool() {
                       <summary className="text-[11px] text-[#2563eb] cursor-pointer">
                         Finishes schedule ({extractRes.finishes.length})
                       </summary>
+                      <button onClick={applyFinishes} className={`${BTN} mt-1.5`}>
+                        <Check size={12} /> Apply to coating settings
+                      </button>
+                      <div className="text-[10px] text-[#666] mt-1">
+                        Sets the sheen, coats and undercoat per substrate, and names the
+                        specified products and colours in the quote.
+                      </div>
                       <table className="w-full text-[11px] mt-1.5 border-collapse">
                         <tbody>
                           {extractRes.finishes.map((f, i) => (

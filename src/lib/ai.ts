@@ -189,6 +189,8 @@ export interface QuoteInput {
   benchmarks: string
   siteNotes: string
   logisticsNotes: string
+  /** Products and colours named by the architect's finishes schedule. */
+  finishesSchedule?: string
   photos?: Array<{ dataUrl: string; tag?: string; caption?: string }>
 }
 
@@ -215,7 +217,9 @@ ${q.materialsTotal ? `Total materials: ${money(q.materialsTotal)} ex GST` : ''}
 ## Suggested Price Range
 Low / Mid / High ex GST (±10% variance)
 ## Assumptions and Exclusions
-## Benchmark Check`
+## Benchmark Check
+${q.finishesSchedule ? `
+SPECIFIED FINISHES: this job has an architect's finishes schedule. The products and colours below are contractual — name them in the Scope of Work and in the Paint Materials table, and do not substitute. If a specified product has no trade price above, price it as given and say so under Assumptions rather than quietly swapping it for something we stock.` : ''}`
 
   const user = `Quote for: ${q.client || 'Unknown'} at ${q.address || 'TBC'}
 Job type: ${q.jobType}
@@ -238,6 +242,7 @@ CONSUMABLES (pre-estimated): ${money(q.consumables)} ex GST
 ${q.equipTotal > 0 ? `EQUIPMENT HIRE: ${money(q.equipTotal)} ex GST` : ''}
 ${q.siteNotes ? 'SITE/SCOPE NOTES: ' + q.siteNotes : ''}
 ${q.logisticsNotes ? 'LOGISTICS NOTES: ' + q.logisticsNotes : ''}
+${q.finishesSchedule ? `SPECIFIED FINISHES (from the finishes schedule — contractual):\n${q.finishesSchedule}` : ''}
 
 PRE-CALCULATED MATERIALS BREAKDOWN (present in ## Paint Materials exactly — do not recalculate):
 ${q.materialsBreakdown}`
