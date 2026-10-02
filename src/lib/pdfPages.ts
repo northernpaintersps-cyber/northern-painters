@@ -8,7 +8,15 @@
 // pdf-lib rather than pdf.js: pdf.js renders pages to a canvas, it cannot emit
 // a PDF, and what is needed here is to carve the set into smaller PDFs.
 
-import { PDFDocument } from 'pdf-lib'
+// pdf-lib is 428KB and only runs when a large PDF is uploaded, so it is
+// loaded on demand rather than shipped in the bundle every page load. This is
+// a phone app most of the time.
+type PDFDocumentCtor = typeof import('pdf-lib')['PDFDocument']
+let _PDFDocument: PDFDocumentCtor | null = null
+async function pdfLib(): Promise<PDFDocumentCtor> {
+  if (!_PDFDocument) _PDFDocument = (await import('pdf-lib')).PDFDocument
+  return _PDFDocument
+}
 
 /** Raw bytes per request chunk. Base64 takes 32MB of payload to ~24MB of data. */
 export const MAX_CHUNK_BYTES = 15 * 1024 * 1024
@@ -20,7 +28,8 @@ export class PdfReadError extends Error {
   }
 }
 
-async function load(file: File): Promise<PDFDocument> {
+async function load(file: File) {
+  const PDFDocument = await pdfLib()
   try {
     return await PDFDocument.load(await file.arrayBuffer(), { ignoreEncryption: true })
   } catch (e: any) {
@@ -41,7 +50,7 @@ export async function pdfSubset(file: File, pages: number[], name?: string): Pro
     .sort((a, b) => a - b)
   if (!wanted.length) throw new PdfReadError(`No usable pages selected from ${file.name}`)
 
-  const out = await PDFDocument.create()
+  const out = await (await pdfLib()).create()
   const copied = await out.copyPages(src, wanted.map(p => p - 1))
   copied.forEach(p => out.addPage(p))
   const bytes = await out.save()
