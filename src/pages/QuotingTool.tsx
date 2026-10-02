@@ -387,7 +387,10 @@ export default function QuotingTool() {
         const entry = out[key]
         const lines = entry.lines.length ? [...entry.lines] : [newSubLine()]
         lines[0] = { ...lines[0], qty }
-        out[key] = { inc: true, lines }
+        // Spread the entry: a bare { inc, lines } dropped `coat`, so setting up
+        // the coating and then running extract or the room calculator silently
+        // reset it to the substrate defaults.
+        out[key] = { ...entry, inc: true, lines }
       })
       return out
     })
