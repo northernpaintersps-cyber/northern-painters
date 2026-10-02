@@ -185,6 +185,8 @@ export default function QuotingTool() {
   // Proposed quantities awaiting review; null once applied or dismissed.
   const [review, setReview] = useState<ReviewRow[] | null>(null)
   const [applied, setApplied] = useState(0)
+  // Indexing a 40 sheet set then measuring takes minutes; silence reads as a hang.
+  const [extractStage, setExtractStage] = useState('')
   const imgRef = useRef<HTMLInputElement>(null)
   const pdfRef = useRef<HTMLInputElement>(null)
 
@@ -417,7 +419,7 @@ export default function QuotingTool() {
     if (!apiKey) { setGenErr('No API key set. Add your Anthropic API key in Settings.'); return }
     setExtracting(true); setGenErr(''); setApplied(0); setReview(null)
     try {
-      const res = await extractQuantities(apiKey, docs, siteNotes)
+      const res = await extractQuantities(apiKey, docs, siteNotes, setExtractStage)
       setExtractRes(res)
       const warnings = checkTakeoff(res.quantities, { totalFloorArea: res.totalFloorArea })
       setReview(res.quantities.map(q => {
@@ -438,7 +440,8 @@ export default function QuotingTool() {
           warnings: ws,
         }
       }))
-    } catch (e: any) { setGenErr(e?.message ?? 'Extraction failed') } finally { setExtracting(false) }
+    } catch (e: any) { setGenErr(e?.message ?? 'Extraction failed') }
+    finally { setExtracting(false); setExtractStage('') }
   }
 
   /** Write the ticked rows into the substrates, then clear the review. */
@@ -910,6 +913,9 @@ export default function QuotingTool() {
                   {extracting ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />} Extract quantities
                 </button>
               )}
+              {extracting && extractStage && (
+                <span className="text-[11px] text-[#666] self-center">{extractStage}</span>
+              )}
             </div>
             {docs.map((d, i) => (
               <div key={i} className="bg-[#f5f4f0] rounded-[7px] px-2.5 py-1.5 mb-1.5">
@@ -1043,6 +1049,25 @@ export default function QuotingTool() {
                           ))}
                         </tbody>
                       </table>
+                    </details>
+                  )}
+                  {extractRes.sheetIndex && extractRes.sheetIndex.length > 0 && (
+                    <details>
+                      <summary className="text-[11px] text-[#2563eb] cursor-pointer">
+                        Sheet index ({extractRes.sheetIndex.filter(e => e.relevant).length} of{' '}
+                        {extractRes.sheetIndex.length} sheets measured)
+                      </summary>
+                      <div className="mt-1.5 max-h-56 overflow-auto">
+                        {extractRes.sheetIndex.map(e => (
+                          <div key={e.page} className="flex gap-2 text-[10px] py-0.5"
+                            style={{ color: e.relevant ? '#111' : '#999' }}>
+                            <span className="w-8 shrink-0 text-right">p{e.page}</span>
+                            <span className="w-14 shrink-0 font-mono">{e.sheetNo || '—'}</span>
+                            <span className="flex-1 truncate">{e.title}</span>
+                            <span className="text-[#666] shrink-0">{e.kind}</span>
+                          </div>
+                        ))}
+                      </div>
                     </details>
                   )}
                   {extractRes.model && (
