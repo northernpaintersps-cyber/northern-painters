@@ -20,6 +20,8 @@ import {
   substrateTotals, newSubLine, coatOf, type SubEntry,
 } from '@/lib/substrates'
 import SubstratePicker from '@/components/SubstratePicker'
+import { SUB_BY_KEY, unitLabel, subTotal } from '@/lib/substrates'
+import { checkTakeoff, hasError, type Warning } from '@/lib/takeoffChecks'
 import {
   Plus, Trash2, Loader2, Sparkles, Save, ClipboardList, Settings2,
   FileText, Image as ImageIcon, Ruler, Hammer, RefreshCw,
@@ -180,6 +182,9 @@ export default function QuotingTool() {
   const [siteNotes, setSiteNotes] = useState('')
   const [extracting, setExtracting] = useState(false)
   const [extractRes, setExtractRes] = useState<QuantityExtraction | null>(null)
+  // Proposed quantities awaiting review; null once applied or dismissed.
+  const [review, setReview] = useState<ReviewRow[] | null>(null)
+  const [applied, setApplied] = useState(0)
   const imgRef = useRef<HTMLInputElement>(null)
   const pdfRef = useRef<HTMLInputElement>(null)
 
@@ -378,6 +383,18 @@ export default function QuotingTool() {
     e.target.value = ''
   }
 
+  /**
+   * A proposed quantity, waiting to be checked. The extractor used to write
+   * straight into the form, so a misread scale reached the quote with nothing
+   * in between.
+   */
+  type ReviewRow = {
+    key: string; label: string; unit: string
+    proposed: number; value: number; current: number
+    take: boolean; basis: string; confidence: string
+    sheets: string[]; warnings: Warning[]
+  }
+
   /** Tick a substrate on and set its quantity, keeping any typed lines intact. */
   function applyQuantities(next: Record<string, number>) {
     setSubstrates(prev => {
@@ -398,19 +415,44 @@ export default function QuotingTool() {
 
   async function runExtract() {
     if (!apiKey) { setGenErr('No API key set. Add your Anthropic API key in Settings.'); return }
-    setExtracting(true); setGenErr('')
+    setExtracting(true); setGenErr(''); setApplied(0); setReview(null)
     try {
       const res = await extractQuantities(apiKey, docs, siteNotes)
       setExtractRes(res)
-      const next: Record<string, number> = {}
-      ;(['interior', 'exterior', 'specialty'] as const).forEach(sec => {
-        const vals = (res as any)[sec] as Record<string, number> | undefined
-        if (!vals) return
-        Object.entries(vals).forEach(([k, v]) => { if (v > 0) next[k] = v })
-      })
-      applyQuantities(next)
+      const warnings = checkTakeoff(res.quantities, { totalFloorArea: res.totalFloorArea })
+      setReview(res.quantities.map(q => {
+        const sub = SUB_BY_KEY[q.key]
+        const ws = warnings[q.key] ?? []
+        return {
+          key: q.key,
+          label: sub?.label ?? q.key,
+          unit: unitLabel(sub?.unit ?? 'sqm'),
+          proposed: q.qty,
+          value: q.qty,
+          current: subTotal(substrates[q.key]),
+          // Anything the checks call an error has to be opted into, not out of.
+          take: !hasError(ws),
+          basis: q.basis,
+          confidence: q.confidence,
+          sheets: q.sheets,
+          warnings: ws,
+        }
+      }))
     } catch (e: any) { setGenErr(e?.message ?? 'Extraction failed') } finally { setExtracting(false) }
   }
+
+  /** Write the ticked rows into the substrates, then clear the review. */
+  function applyReview() {
+    if (!review) return
+    const next: Record<string, number> = {}
+    review.forEach(r => { if (r.take && r.value > 0) next[r.key] = r.value })
+    applyQuantities(next)
+    setReview(null)
+    setApplied(Object.keys(next).length)
+  }
+
+  const setRow = (key: string, patch: Partial<ReviewRow>) =>
+    setReview(rs => rs?.map(r => (r.key === key ? { ...r, ...patch } : r)) ?? null)
 
   function applyRooms() {
     const ceil = rooms.reduce((s, r) => s + r.w * r.l, 0)
@@ -886,12 +928,130 @@ export default function QuotingTool() {
                 </div>
               </div>
             ))}
-            {extractRes && (
+            {applied > 0 && !review && (
               <div className="bg-[#f0fdf4] border border-[#86efac] rounded-lg px-3 py-2 mb-2.5 text-xs text-[#166534]">
                 <Check size={12} className="inline mr-1" />
-                Quantities applied to the substrates below.
-                {extractRes.confidence && <span className="ml-1 font-bold">{extractRes.confidence.toUpperCase()}</span>}
-                {extractRes.scopeNotes && <div className="mt-1 text-[#92400e]">{extractRes.scopeNotes}</div>}
+                {applied} quantit{applied === 1 ? 'y' : 'ies'} applied to the substrates below.
+              </div>
+            )}
+
+            {extractRes && review && (
+              <div className="border border-black/[0.12] rounded-lg mb-2.5 overflow-hidden">
+                <div className="flex items-center gap-2 flex-wrap px-3 py-2 bg-[#f0fdf4] border-b border-[#86efac]">
+                  <strong className="text-xs text-[#166534]">
+                    {review.length} quantit{review.length === 1 ? 'y' : 'ies'} to review
+                  </strong>
+                  {extractRes.jobType && <span className="text-[11px] text-[#666]">{extractRes.jobType}</span>}
+                  {!!extractRes.totalFloorArea && (
+                    <span className="text-[11px] text-[#666]">· {extractRes.totalFloorArea} m² floor area</span>
+                  )}
+                  {extractRes.confidence && (() => {
+                    const c = extractRes.confidence.toLowerCase()
+                    const col = c.startsWith('high') ? '#16a34a' : c.startsWith('medium') ? '#b45309' : '#c0392b'
+                    const bg = c.startsWith('high') ? '#f0fdf4' : c.startsWith('medium') ? '#fef3c7' : '#fef2f2'
+                    return <span className="text-[10px] font-bold px-2 py-0.5 rounded" style={{ background: bg, color: col }}>
+                      {extractRes.confidence.toUpperCase()}
+                    </span>
+                  })()}
+                  <span className="flex-1" />
+                  <button onClick={() => setReview(rs => rs?.map(r => ({ ...r, take: true })) ?? null)}
+                    className="text-[11px] text-[#2563eb] font-semibold">All</button>
+                  <button onClick={() => setReview(rs => rs?.map(r => ({ ...r, take: false })) ?? null)}
+                    className="text-[11px] text-[#666]">None</button>
+                  <button onClick={applyReview} disabled={!review.some(r => r.take)}
+                    className={`${BTN_P} disabled:opacity-50`}>
+                    <Check size={12} /> Apply {review.filter(r => r.take).length}
+                  </button>
+                  <button onClick={() => setReview(null)} className="text-[11px] text-[#666]">Discard</button>
+                </div>
+
+                <div className="max-h-80 overflow-y-auto">
+                  {review.map(r => {
+                    const err = hasError(r.warnings)
+                    const warn = !err && r.warnings.length > 0
+                    return (
+                      <div key={r.key} className="px-3 py-1.5 border-t border-black/[0.06] first:border-t-0"
+                        style={{
+                          borderLeft: `3px solid ${err ? '#dc2626' : warn ? '#f59e0b' : 'transparent'}`,
+                          background: err ? '#fef2f2' : warn ? '#fffbeb' : undefined,
+                        }}>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <input type="checkbox" checked={r.take} className="w-4 h-4 accent-blue-600 shrink-0"
+                            onChange={e => setRow(r.key, { take: e.target.checked })} />
+                          <span className="text-xs font-medium flex-1 min-w-[110px]">{r.label}</span>
+                          <input type="number" value={r.value} min={0}
+                            onChange={e => setRow(r.key, { value: parseFloat(e.target.value) || 0 })}
+                            className="w-20 px-1.5 py-0.5 border border-black/[0.18] rounded-[5px] text-[11px] text-right bg-white focus:outline-none" />
+                          <span className="text-[10px] text-[#666] w-10">{r.unit}</span>
+                          <span className="text-[10px] text-[#666] w-20 text-right">
+                            {r.current > 0 ? `was ${r.current}` : ''}
+                          </span>
+                          <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded-full shrink-0"
+                            style={r.confidence === 'high'
+                              ? { background: '#dcfce7', color: '#166534' }
+                              : r.confidence === 'medium'
+                                ? { background: '#fef3c7', color: '#92400e' }
+                                : { background: '#fee2e2', color: '#991b1b' }}>
+                            {r.confidence}
+                          </span>
+                        </div>
+                        {r.basis && (
+                          <div className="text-[10px] text-[#666] mt-0.5 ml-6 break-words">
+                            {r.basis}
+                            {r.sheets.length > 0 && <span className="ml-1 text-[#2563eb]">· {r.sheets.join(', ')}</span>}
+                          </div>
+                        )}
+                        {r.warnings.map((w, i) => (
+                          <div key={i} className="text-[10px] mt-0.5 ml-6"
+                            style={{ color: w.level === 'error' ? '#991b1b' : '#92400e' }}>
+                            ⚠ {w.text}
+                          </div>
+                        ))}
+                      </div>
+                    )
+                  })}
+                </div>
+
+                <div className="px-3 py-2 border-t border-black/[0.08] space-y-1.5">
+                  {extractRes.scopeNotes && (
+                    <div className="text-[11px] text-[#92400e] bg-[#fffbeb] rounded px-2 py-1.5">
+                      <strong>Notes:</strong> {extractRes.scopeNotes}
+                    </div>
+                  )}
+                  {extractRes.extractionSummary && (
+                    <details>
+                      <summary className="text-[11px] text-[#2563eb] cursor-pointer">Room-by-room working</summary>
+                      <pre className="text-[10px] whitespace-pre-wrap mt-1.5 text-[#444] max-h-64 overflow-auto">
+                        {extractRes.extractionSummary}
+                      </pre>
+                    </details>
+                  )}
+                  {extractRes.finishes.length > 0 && (
+                    <details>
+                      <summary className="text-[11px] text-[#2563eb] cursor-pointer">
+                        Finishes schedule ({extractRes.finishes.length})
+                      </summary>
+                      <table className="w-full text-[11px] mt-1.5 border-collapse">
+                        <tbody>
+                          {extractRes.finishes.map((f, i) => (
+                            <tr key={i} className="border-b border-black/[0.06]">
+                              <td className="py-1 pr-2 font-medium">{f.area}</td>
+                              <td className="py-1 pr-2 text-[#666]">{f.product}</td>
+                              <td className="py-1 pr-2 text-[#666]">{f.colour}</td>
+                              <td className="py-1 text-[#666] text-center">{f.coats ? `${f.coats}x` : ''}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </details>
+                  )}
+                  {extractRes.model && (
+                    <div className="text-[10px] text-[#999]">
+                      Read by {extractRes.model}
+                      {extractRes.usage && ` · ${Math.round(extractRes.usage.inputTokens / 1000)}k tokens in`}
+                    </div>
+                  )}
+                </div>
               </div>
             )}
             <Field label="Site / Quoting Notes (used by AI in calculations)">

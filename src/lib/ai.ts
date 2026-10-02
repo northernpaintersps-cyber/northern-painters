@@ -1,6 +1,10 @@
 // AI utilities — calls Anthropic Claude API directly from the browser
 // using the key stored in business settings (np_settings key='business')
 
+import {
+  TAKEOFF_TOOL, SUBSTRATE_DOC, type TakeoffRow, type FinishRow,
+} from './takeoffSchema'
+import { SUB_BY_KEY } from './substrates'
 import { normaliseLineItems, reconcileGst, type InvoiceLineItem } from './utils'
 
 export type { InvoiceLineItem }
@@ -20,14 +24,36 @@ export interface InvoiceExtraction {
   items: InvoiceLineItem[]
 }
 
+export interface CallUsage {
+  model: string
+  inputTokens: number
+  outputTokens: number
+  cacheReadTokens: number
+}
+
 async function callClaude(
   apiKey: string, messages: any[], system?: string,
   opts?: {
     model?: string; maxTokens?: number; temperature?: number
     /** Forces the reply through a schema, so the result is always valid JSON. */
     tool?: { name: string; description: string; input_schema: any }
+    /**
+     * Let the model reason before answering. Forcing a tool is rejected
+     * alongside extended thinking, so a thinking call declares its tool and
+     * leaves the choice automatic — with one tool and a system prompt that
+     * demands it, it is called. `toolOptional` covers the case where it is not.
+     */
+    thinking?: { budgetTokens: number }
+    /** Return the text instead of throwing when no tool block comes back. */
+    toolOptional?: boolean
+    /** Cache the system prompt — worth it when it is long and byte-stable. */
+    cacheSystem?: boolean
+    onUsage?: (u: CallUsage) => void
   },
 ): Promise<string> {
+  const model = opts?.model ?? 'claude-haiku-4-5-20251001'
+  const sysText = system ?? 'You are a helpful assistant for a painting business in Australia.'
+  const forceTool = !!opts?.tool && !opts?.thinking
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
@@ -37,12 +63,23 @@ async function callClaude(
       'content-type': 'application/json',
     },
     body: JSON.stringify({
-      model: opts?.model ?? 'claude-haiku-4-5-20251001',
+      model,
       max_tokens: opts?.maxTokens ?? 1024,
-      system: system ?? 'You are a helpful assistant for a painting business in Australia.',
+      system: opts?.cacheSystem
+        ? [{ type: 'text', text: sysText, cache_control: { type: 'ephemeral' } }]
+        : sysText,
       messages,
-      ...(opts?.temperature != null ? { temperature: opts.temperature } : {}),
-      ...(opts?.tool ? { tools: [opts.tool], tool_choice: { type: 'tool', name: opts.tool.name } } : {}),
+      // Temperature cannot be set alongside extended thinking.
+      ...(opts?.temperature != null && !opts?.thinking ? { temperature: opts.temperature } : {}),
+      ...(opts?.thinking
+        ? { thinking: { type: 'enabled', budget_tokens: opts.thinking.budgetTokens } }
+        : {}),
+      ...(opts?.tool
+        ? {
+            tools: [opts.tool],
+            tool_choice: forceTool ? { type: 'tool', name: opts.tool.name } : { type: 'auto' },
+          }
+        : {}),
     }),
   })
 
@@ -52,12 +89,24 @@ async function callClaude(
   }
 
   const data = await res.json()
+
+  opts?.onUsage?.({
+    model: data.model ?? model,
+    inputTokens: data.usage?.input_tokens ?? 0,
+    outputTokens: data.usage?.output_tokens ?? 0,
+    cacheReadTokens: data.usage?.cache_read_input_tokens ?? 0,
+  })
+
+  const text = () =>
+    data.content?.find((c: any) => c.type === 'text')?.text ?? data.content?.[0]?.text ?? ''
+
   if (opts?.tool) {
     const block = data.content?.find((c: any) => c.type === 'tool_use')
-    if (!block) throw new Error('AI did not return structured data. Try again.')
-    return JSON.stringify(block.input ?? {})
+    if (block) return JSON.stringify(block.input ?? {})
+    if (opts.toolOptional) return text()
+    throw new Error('AI did not return structured data. Try again.')
   }
-  return data.content?.find((c: any) => c.type === 'text')?.text ?? data.content?.[0]?.text ?? ''
+  return text()
 }
 
 /** Shrink a large photo before sending. A phone shot can be 10MB+, which makes
@@ -325,98 +374,60 @@ export interface ExtractDoc {
 
 export interface QuantityExtraction {
   jobType?: string
-  interior?: Record<string, number>
-  exterior?: Record<string, number>
-  specialty?: Record<string, number>
-  finishes?: Array<{ area: string; product: string; colour: string; coats: number; notes: string }>
-  scopeNotes?: string
-  totalFloorArea?: number
+  totalFloorArea?: number | null
+  /** One row per substrate, each carrying the arithmetic it came from. */
+  quantities: TakeoffRow[]
+  finishes: FinishRow[]
   extractionSummary?: string
+  scopeNotes?: string
   confidence?: string
+  /** Which model actually answered, so a silent fallback is visible. */
+  model?: string
+  usage?: { inputTokens: number; outputTokens: number }
 }
 
-const TAKEOFF_PROMPT = `You are a senior Australian painting estimator and quantity surveyor with 25+ years experience. You specialise in reading architectural drawings, floor plans, elevations, sections, finishes schedules, specification documents, and scope-of-works for residential and commercial painting projects.
+const TAKEOFF_SYSTEM = `You are a senior Australian painting estimator and quantity surveyor with 25+ years experience reading architectural drawings, elevations, sections, finishes schedules and scopes of work.
 
-MISSION: Extract EVERY paintable surface quantity from the uploaded documents with maximum precision. Be thorough — missing a surface costs money. Every surface visible in a drawing that can be painted must be quantified.
+Your job is to measure every paintable surface in the documents you are given and record it with the record_takeoff tool. Missing a surface costs money; inventing one costs trust. Do both carefully.
 
-STEP 1 — DOCUMENT TYPE IDENTIFICATION
-For each document, identify:
-- Type: floor plan / elevation drawing / section / finishes schedule / specification / site photo / sketch / scope of works / quote / other
-- Scale: explicit scale bar, stated scale (1:100, 1:50 etc.), or NTS with labelled dimensions
-- Orientation: north point, floor levels, grid lines if present
-- Coverage: which rooms / levels / facades are shown
+ESTABLISHING SCALE
+- A printed scale bar is the best reference: measure a known feature against it.
+- Dimensions labelled on the drawing beat a scale bar.
+- Measurements supplied by the estimator beat everything. They are ground truth; where they conflict with your reading of the drawing, the estimator is right and your reading is wrong.
+- Imperial drawings convert to metric: 1 foot = 0.305 m, 1 inch = 25.4 mm.
+- If there is no scale and nothing labelled, say so in scopeNotes and fall back to conservative room sizes (bedroom 3.0 x 3.5, living 4.0 x 5.0, bathroom 1.8 x 2.4). Mark every row you derived that way as low confidence.
 
-STEP 2 — ESTABLISH SCALE AND REFERENCE DIMENSIONS
-- If a scale bar is printed: measure a known feature against it to confirm the ratio
-- If dimensions are labelled directly on the drawing: use those as primary reference
-- If it is a photo of a hand sketch: read every written number and dimension note
-- If multiple drawings are uploaded: cross-reference room names between floor plan and elevations to validate dimensions
-- If drawings are in imperial: convert to metric (1 foot = 0.305m, 1 inch = 25.4mm)
-- If NTS with no labels: state "cannot determine scale — used industry average room size as fallback" and apply conservative estimates (bedroom 3x3.5m, living 4x5m, bathroom 1.8x2.4m)
-- Known measurements provided by the estimator override all other scale references — use them as absolute ground truth
+MEASURING
+Interior, room by room:
+- Walls: perimeter x height, less 1.89 m2 per door opening and the labelled area of each window (1.2 m2 if unlabelled). Do not deduct skirting or architrave.
+- Ceilings: length x width; a raked ceiling is the sloped surface, not the plan area.
+- Wet areas (bathroom, ensuite, laundry, WC) go in the wet area substrates INSTEAD OF the main wall and ceiling figures, never as well as.
+- Cornice and skirting: room perimeters in lineal metres.
 
-STEP 3 — ROOM-BY-ROOM INTERIOR QUANTITY TAKEOFF
-WALLS:
-  - Perimeter: (L*2 + W*2) * H = gross wall area
-  - Deduct standard door opening: 0.9m x 2.1m = 1.89m2 per door leaf
-  - Deduct window openings: use labelled dims or assume 1.2m x 1.0m = 1.2m2 per window
-  - Do NOT deduct architraves or skirtings from wall area — measured separately
-  - Round up to nearest 0.5m2
-CEILINGS:
-  - L x W = ceiling area; for raked/vaulted measure actual sloped surface area
-  - Wet area ceilings (bathrooms, laundry, ensuite) listed separately
-CORNICES: L+W*2 linear metres (room perimeter)
-SKIRTINGS: L+W*2 linear metres per room
-ARCHITRAVES: count door openings x 2 (each side) x typical 2.5 lm each (~5lm per door), or read schedule
-DOORS: count each painted face (interior doors typically painted both sides = 2 faces per door)
-WINDOWS: count total window units (interior frames only)
-BUILT-IN WARDROBES: count each unit, or measure internal surface area
-FEATURE WALLS: if called out in finishes schedule or notes, extract m2
+Exterior, facade by facade:
+- Cladding, weatherboard and render: facade width x wall height, less openings.
+- Eaves: overhang depth x the length it runs. Check the section drawing for the overhang.
+- Fascia and gutter: the roofline perimeter.
 
-STEP 4 — EXTERIOR QUANTITY TAKEOFF
-For each facade (front, rear, left side, right side):
-  - Weatherboards / cladding: facade width x wall height, deduct door/window openings
-  - Eaves: overhang depth x facade length (check eave width from section drawings)
-  - Fascia: perimeter of roofline in linear metres
-  - Gutters: perimeter of roofline in linear metres (same as fascia unless different on drawings)
-  - Downpipes: count each downpipe
-  - Windows (exterior frames): count each window unit
-  - Exterior doors: count each painted door face
-  - Balustrades / handrails: linear metres from drawings or stair schedule
-  - Posts and columns: count each
-  - Garage doors: count each (typically 2.4m x 2.1m = 5m2 per single panel)
-  - Roof: ridge-to-eave x length x both slopes if applicable
-  - Concrete / paving: L x W from site plan
+For every row, write the arithmetic into "basis" — the rooms or facades and their dimensions, ending in the total. "Bed1 3.6x3.2 + Bed2 3.0x3.4 + Living 4.2x5.0 = 44.5", not "measured from the floor plan". Put the full room-by-room working in extractionSummary.
 
-STEP 5 — SPECIALTY / FEATURE SURFACES
-  - Decks: L x W in m2; identify if timber, composite, or concrete
-  - Limewash or decorative finishes: extract area from finishes schedule or notes
-  - Timber staining (internal/external): doors, joinery, feature timbers — note product if specified
-  - Stone finishes, render, texture coatings: extract m2
+THE SUBSTRATE TABLE IS AUTHORITATIVE
+Use only these keys. Each row states the unit the number must be in and exactly what the number counts. A quantity in the wrong unit is worse than no quantity at all, because it looks usable. If a surface does not fit any key, describe it in scopeNotes rather than forcing it into the nearest one.
 
-STEP 6 — FINISHES SCHEDULE EXTRACTION
-If a finishes schedule is present, for each room/area extract surface, paint product and brand, colour reference or code, number of coats, and any special instructions.
+{SUBSTRATE_DOC}
 
-STEP 7 — CROSS-CHECKS AND SANITY
-- Total wall area / number of rooms should average 30-60m2 for typical rooms
-- Total ceiling area should approximately equal total floor area
-- Exterior wall area should make sense for the building footprint
-- If a value seems impossible, flag it in scopeNotes with your reasoning
-- List every surface you COULD NOT determine and why
+BEFORE YOU ANSWER, CHECK
+- Total ceiling area should be close to the total floor area.
+- Wall area is normally two to four times ceiling area at a 2.4-2.7 m stud.
+- Architrave and door counts should be in the same ballpark as each other.
+- Every count is a whole number.
+- Anything that fails these checks: fix it, or keep it and explain it in scopeNotes.
 
-STEP 8 — OUTPUT FORMAT
-Output ONLY a single valid JSON object — no markdown fences, no prose before or after.
-Put your detailed room-by-room breakdown in "extractionSummary" (newline-separated).
-Put product/colour/finish information in "finishes" array.
-Put uncertainties and exclusions in "scopeNotes".
-Set "confidence" to "high", "medium", or "low — [specific reason]".
+List what you could not determine, and why, in scopeNotes. Do not pad the takeoff with guesses to look complete.`
 
-JSON format:
-{"jobType":"detected type","interior":{"walls":0,"ceilings":0,"cornice":0,"skirtings":0,"architraves":0,"doors_i":0,"win_i":0,"wardrobes":0,"feature":0,"wet_walls":0,"wet_ceil":0},"exterior":{"weatherboards":0,"cladding":0,"render":0,"eaves":0,"fascia":0,"gutters":0,"downpipes":0,"fences":0,"balustrades":0,"posts":0,"doors_e":0,"win_e":0,"architraves_e":0,"garage_e":0,"roof":0,"concrete":0},"specialty":{"deck_oil":0,"deck_tinted":0,"deck_stain":0,"limewash":0,"stone":0,"timber":0},"finishes":[{"area":"room or surface","product":"paint product","colour":"colour name or code","coats":2,"notes":"any special instructions"}],"scopeNotes":"surfaces excluded, assumptions made, or unclear items","totalFloorArea":0,"extractionSummary":"detailed room-by-room breakdown with all dimensions and calculations","confidence":"high"}
+/** The system prompt with the generated substrate table spliced in. */
+const takeoffSystem = () => TAKEOFF_SYSTEM.replace('{SUBSTRATE_DOC}', SUBSTRATE_DOC)
 
-Only include keys with non-zero values. Use real extracted values — never invent numbers.
-
-Now analyse the following documents:`
 
 async function fileToB64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -441,71 +452,144 @@ function parseExtraction(raw: string): QuantityExtraction {
   return JSON.parse(text)
 }
 
+/** Drop rows we cannot use, and flag the ones that are suspect but keep them. */
+function cleanRows(raw: any): TakeoffRow[] {
+  const seen = new Map<string, TakeoffRow>()
+  for (const r of Array.isArray(raw) ? raw : []) {
+    const key = String(r?.key ?? '')
+    const sub = SUB_BY_KEY[key]
+    const qty = Number(r?.qty)
+    if (!sub || !Number.isFinite(qty) || qty <= 0) continue
+    const row: TakeoffRow = {
+      key,
+      qty,
+      // Keep the unit the model claimed rather than coercing it: a mismatch is
+      // the most expensive failure mode here and has to reach the estimator,
+      // not be quietly papered over.
+      unit: (r?.unit === 'sqm' || r?.unit === 'lm' || r?.unit === 'qty') ? r.unit : sub.unit,
+      basis: String(r?.basis ?? ''),
+      confidence: (r?.confidence === 'low' || r?.confidence === 'medium') ? r.confidence : 'high',
+      sheets: Array.isArray(r?.sheets) ? r.sheets.map(String) : [],
+    }
+    const prev = seen.get(key)
+    if (prev) {
+      // The model occasionally splits one substrate over two rows.
+      prev.qty += row.qty
+      prev.basis = [prev.basis, row.basis].filter(Boolean).join(' + ')
+      prev.sheets = [...new Set([...prev.sheets, ...row.sheets])]
+      if (row.confidence === 'low') prev.confidence = 'low'
+    } else {
+      seen.set(key, row)
+    }
+  }
+  return [...seen.values()]
+}
+
+function cleanFinishes(raw: any): FinishRow[] {
+  return (Array.isArray(raw) ? raw : []).map((f: any) => ({
+    area: String(f?.area ?? ''),
+    substrate_key: SUB_BY_KEY[f?.substrate_key] ? String(f.substrate_key) : '',
+    product: String(f?.product ?? ''),
+    colour: String(f?.colour ?? ''),
+    sheen: String(f?.sheen ?? ''),
+    coats: Number.isFinite(Number(f?.coats)) ? Number(f.coats) : null,
+    undercoat: String(f?.undercoat ?? ''),
+    notes: String(f?.notes ?? ''),
+  })).filter(f => f.area || f.product || f.colour)
+}
+
+/** Models to try, strongest first. */
+const TAKEOFF_MODELS = ['claude-opus-5', 'claude-sonnet-5', 'claude-sonnet-4-6']
+
 export async function extractQuantities(
   apiKey: string, docs: ExtractDoc[], scopeNotes = '',
 ): Promise<QuantityExtraction> {
-  const content: any[] = [{ type: 'text', text: TAKEOFF_PROMPT }]
+  const content: any[] = []
 
   if (scopeNotes.trim()) {
     content.push({
       type: 'text',
-      text: 'ESTIMATOR SCOPE NOTES (authoritative — these override or clarify the drawings):\n' + scopeNotes.trim(),
+      text: 'ESTIMATOR SCOPE NOTES (authoritative — these override or clarify the drawings):\n'
+        + scopeNotes.trim(),
     })
   }
 
   for (const d of docs) {
-    const b64 = await fileToB64(d.file)
     const meas = d.measurements?.trim()
     content.push({
       type: 'text',
-      text: `[${d.file.name}]${meas ? ` — KNOWN MEASUREMENTS: ${meas}` : ''}${meas ? '\nUse these measurements as absolute scale reference for this document.' : ''}`,
+      text: `[${d.file.name}]${meas ? ` — KNOWN MEASUREMENTS: ${meas}` : ''}`
+        + (meas ? '\nThese are measured on site. Use them as the absolute scale reference for this document.' : ''),
     })
     if (d.file.type === 'application/pdf') {
+      const b64 = await fileToB64(d.file)
       content.push({ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: b64 } })
     } else if (d.file.type.startsWith('image/')) {
-      content.push({ type: 'image', source: { type: 'base64', media_type: d.file.type, data: b64 } })
+      // A phone photo of a plan was being sent full size; the API caps the long
+      // edge at 1568px anyway, so this only saves upload and tokens.
+      const shrunk = await shrinkImage(d.file)
+      const { base64, mediaType } = await fileToBase64(
+        shrunk instanceof File ? shrunk : new File([shrunk], d.file.name, { type: 'image/jpeg' }),
+      )
+      content.push({ type: 'image', source: { type: 'base64', media_type: mediaType, data: base64 } })
     }
   }
 
-  const call = async (model: string) => {
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-        'anthropic-dangerous-direct-browser-access': 'true',
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify({
-        model,
-        max_tokens: 16000,
-        thinking: { type: 'enabled', budget_tokens: 10000 },
-        messages: [{ role: 'user', content }],
-      }),
+  if (!content.some(c => c.type === 'document' || c.type === 'image')) {
+    throw new Error('No readable drawings or photos. Upload a PDF or an image.')
+  }
+
+  content.push({
+    type: 'text',
+    text: 'Measure every paintable surface in these documents and record the takeoff with the record_takeoff tool.',
+  })
+
+  let usage: CallUsage | undefined
+  const call = (model: string) =>
+    callClaude(apiKey, [{ role: 'user', content }], takeoffSystem(), {
+      model,
+      maxTokens: 16000,
+      thinking: { budgetTokens: 10000 },
+      tool: TAKEOFF_TOOL,
+      toolOptional: true,
+      cacheSystem: true,
+      onUsage: u => { usage = u },
     })
-    const data = await res.json()
-    if (!res.ok) throw new Error(data?.error?.message ?? `API error ${res.status}`)
-    const text = (data.content ?? []).find((b: any) => b.type === 'text')?.text ?? '{}'
-    return text as string
-  }
 
-  // V16 tries the strongest model, then falls back if it is unavailable on the key
-  let raw: string
-  try {
-    raw = await call('claude-opus-4-5')
-  } catch (e: any) {
-    if (/model|not_found/i.test(e?.message ?? '')) raw = await call('claude-sonnet-4-6')
-    else throw e
+  let raw = ''
+  let lastErr: any
+  for (const model of TAKEOFF_MODELS) {
+    try { raw = await call(model); lastErr = undefined; break } catch (e: any) {
+      lastErr = e
+      if (!/model|not_found|404/i.test(e?.message ?? '')) throw e
+    }
   }
+  if (lastErr) throw lastErr
 
+  let parsed: any
   try {
-    return parseExtraction(raw)
+    parsed = JSON.parse(raw)
   } catch {
-    throw new Error('AI returned unexpected format. Raw response:\n' + raw.slice(0, 400))
+    // The tool was declared but not called — fall back to reading JSON out of
+    // the prose, which is how this worked before it was given a schema.
+    try { parsed = parseExtraction(raw) } catch {
+      throw new Error('AI returned unexpected format. Raw response:\n' + raw.slice(0, 400))
+    }
+  }
+
+  return {
+    jobType: parsed.jobType ? String(parsed.jobType) : undefined,
+    totalFloorArea: Number.isFinite(Number(parsed.totalFloorArea)) ? Number(parsed.totalFloorArea) : null,
+    quantities: cleanRows(parsed.quantities),
+    finishes: cleanFinishes(parsed.finishes),
+    extractionSummary: parsed.extractionSummary ? String(parsed.extractionSummary) : '',
+    scopeNotes: parsed.scopeNotes ? String(parsed.scopeNotes) : '',
+    confidence: parsed.confidence ? String(parsed.confidence) : '',
+    model: usage?.model,
+    usage: usage ? { inputTokens: usage.inputTokens, outputTokens: usage.outputTokens } : undefined,
   }
 }
 
-// ── Invoice / receipt OCR ─────────────────────────────────────
 const INVOICE_TOOL = {
   name: 'record_invoice',
   description: 'Record the fields read off a supplier invoice or receipt.',

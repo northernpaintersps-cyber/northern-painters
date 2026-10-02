@@ -192,16 +192,27 @@ export default function PaintCalc() {
     }
   }
 
-  // Rows the extraction matched against our substrate keys
+  // This calculator keeps its own row list, keyed by paint product rather than
+  // by substrate, and the two vocabularies do not quite line up. The extractor
+  // answers in substrate keys — the shared model the quote builder and site
+  // visits use — so translate the handful that differ.
+  const FROM_SUBSTRATE: Record<string, string> = {
+    driveway: 'concrete',        // Driveway / concrete floors -> Concrete & paving
+    decks: 'deck_oil',           // Hardwood deck, oiled
+    deck_paint: 'deck_stain',    // Painted deck -> the deck coating row
+    timber_stain: 'timber',      // Timber stain clear coat
+  }
+
+  // Rows the extraction matched against this calculator's rows. The extractor
+  // returns a flat list of {key, qty}.
   const extractedRows = useMemo(() => {
     if (!result) return []
     const out: { sec: Section; key: string; label: string; unit: string; val: number }[] = []
-    ;(['interior', 'exterior', 'specialty'] as Section[]).forEach(sec => {
-      const vals = (result as any)[sec] as Record<string, number> | undefined
-      if (!vals) return
-      rows[sec].forEach(r => {
-        const v = r.key ? vals[r.key] : undefined
-        if (typeof v === 'number' && v > 0) out.push({ sec, key: r.key!, label: r.label, unit: r.unit, val: v })
+    result.quantities.forEach(q => {
+      const key = FROM_SUBSTRATE[q.key] ?? q.key
+      ;(['interior', 'exterior', 'specialty'] as Section[]).forEach(sec => {
+        const r = rows[sec].find(x => x.key === key)
+        if (r && q.qty > 0) out.push({ sec, key, label: r.label, unit: r.unit, val: q.qty })
       })
     })
     return out
