@@ -5,6 +5,7 @@ import {
   TAKEOFF_TOOL, SUBSTRATE_DOC, type TakeoffRow, type FinishRow,
 } from './takeoffSchema'
 import { SUB_BY_KEY } from './substrates'
+import { shrinkImage } from './image'
 import { pdfPageCount, pdfSubset, pdfChunks, PdfReadError } from './pdfPages'
 import { normaliseLineItems, reconcileGst, type InvoiceLineItem } from './utils'
 
@@ -108,26 +109,6 @@ async function callClaude(
     throw new Error('AI did not return structured data. Try again.')
   }
   return text()
-}
-
-/** Shrink a large photo before sending. A phone shot can be 10MB+, which makes
- *  the request slow and can push it past the API's size limit; the service
- *  downscales past ~1568px anyway, so nothing legible is lost. */
-async function shrinkImage(file: File, maxEdge = 1568): Promise<Blob> {
-  if (!file.type.startsWith('image/')) return file
-  const bitmap = await createImageBitmap(file).catch(() => null)
-  if (!bitmap) return file
-  const scale = Math.min(1, maxEdge / Math.max(bitmap.width, bitmap.height))
-  if (scale === 1 && file.size < 4_000_000) { bitmap.close?.(); return file }
-  const canvas = document.createElement('canvas')
-  canvas.width = Math.round(bitmap.width * scale)
-  canvas.height = Math.round(bitmap.height * scale)
-  const ctx = canvas.getContext('2d')
-  if (!ctx) { bitmap.close?.(); return file }
-  ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height)
-  bitmap.close?.()
-  const blob = await new Promise<Blob | null>(r => canvas.toBlob(r, 'image/jpeg', 0.92))
-  return blob && blob.size < file.size ? blob : file
 }
 
 // Convert a File (image or PDF first-page) to base64 data URL parts

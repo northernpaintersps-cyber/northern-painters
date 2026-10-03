@@ -130,7 +130,9 @@ export default function SiteVisits() {
         areas: d.areas.map(a => ({
           area_name: a.name,
           sqm: a.l && a.w ? a.l * a.w : 0,
-          length: a.l, height: a.h,
+          // Width travels too. Without it the quoting tool seeded every room
+          // at w = 0, so a prefilled room contributed no ceiling at all.
+          length: a.l, width: a.w, height: a.h,
           prep_level: a.condition === 'Poor' ? 'heavy' : a.condition === 'Fair' ? 'moderate' : 'light',
           notes: [a.prep, a.notes].filter(Boolean).join(' · '),
         })),

@@ -46,6 +46,19 @@ export const SPEC_SUBS: Sub[] = [
 ]
 
 export const APP_OPTS = ['Brush', 'Cut & Roll', 'Spray', 'Spray + Backroll', 'Roll', 'Deck Applicator']
+
+/**
+ * Spraying loses paint to overspray and atomisation, so a litre covers less
+ * ground than the tin claims. The product coverage figures in the library are
+ * brush and roll figures.
+ */
+export const SPRAY_COVERAGE_FACTOR = 0.7
+
+/** What one litre actually covers, given how it is being applied. */
+export const coverageFor = (baseCoverage: number, app: string) =>
+  (app === 'Spray' || app === 'Spray + Backroll')
+    ? baseCoverage * SPRAY_COVERAGE_FACTOR
+    : baseCoverage
 export const FINISH_OPTS = [
   'Flat', 'Low Sheen', 'Semi-Gloss', 'Gloss', 'Low Sheen (Wet Areas)',
   'Weathershield Low Sheen', 'Weathershield Semi-Gloss', 'Decking Oil',

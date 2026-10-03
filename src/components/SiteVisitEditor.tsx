@@ -8,6 +8,7 @@ import {
   ArrowLeft, Save, Check, Plus, Trash2, Mic, Camera, Upload, Copy,
   Pencil, Eraser, Undo2, Sparkles, Loader2,
 } from 'lucide-react'
+import { shrinkToDataUrl } from '@/lib/image'
 
 type Row = Record<string, any>
 
@@ -189,10 +190,15 @@ export default function SiteVisitEditor({ initial, jobs, isNew, onClose, onSave,
     const files = Array.from(e.target.files ?? [])
     e.target.value = ''
     for (const file of files) {
-      const data = await new Promise<string>(res => {
-        const r = new FileReader(); r.onload = () => res(r.result as string); r.readAsDataURL(file)
-      })
-      setSv(s => ({ ...s, photos: [...s.photos, { id: genId('ph'), data, tag, label: '' }] }))
+      try {
+        // Shrink before storing. These were kept at full resolution as base64
+        // text in the row, so ten phone photos made a visit that could not be
+        // saved at all. A 4MB shot comes out around 180KB.
+        const data = await shrinkToDataUrl(file)
+        setSv(s => ({ ...s, photos: [...s.photos, { id: genId('ph'), data, tag, label: '' }] }))
+      } catch {
+        alert(`Could not read ${file.name}.`)
+      }
     }
   }
 

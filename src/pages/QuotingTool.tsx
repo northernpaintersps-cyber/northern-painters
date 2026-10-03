@@ -13,7 +13,7 @@ import {
   PROD_RATES, JOB_TYPES, QUOTE_TERMS,
   PREP_OPTS, HEIGHT_OPTS, ACCESS_OPTS, METHOD_OPTS, CONS_PREP,
   JOB_WORKFLOWS, PREP_LEVELS, workflowStepNames, defaultPrepLevels,
-  BENCHMARKS,
+  BENCHMARKS, coverageFor,
 } from '@/lib/quoteData'
 import {
   SUBSTRATES, SUB_BY_KEY, emptySubstrates, normaliseSubstrates,
@@ -21,6 +21,7 @@ import {
   coatOf, unitLabel, type SubEntry, type FinishSpec,
 } from '@/lib/substrates'
 import SubstratePicker from '@/components/SubstratePicker'
+import { roomTotals, roomsTotal, roomQuantities, type Room } from '@/lib/roomCalc'
 import { checkTakeoff, hasError, type Warning } from '@/lib/takeoffChecks'
 import { applyFinishRows, finishScheduleText } from '@/lib/finishes'
 import {
@@ -50,7 +51,6 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 /** np = painters on this step. V16 defaults it to the crew size but lets each
  *  step differ, so a two-painter job can still have one painter on touch-ups. */
 type Process = { id: string; name: string; hours: number; np: number }
-type Room = { id: string; name: string; w: number; l: number; h: number }
 type Equip = { id: string; name: string; cost: number }
 type ExtraMat = { id: string; name: string; cost: number }
 type Painter = { id: string; name: string; role: string; rate: number }
@@ -301,7 +301,10 @@ export default function QuotingTool() {
             .filter((l: string) => l.trim().length > 2).join('\n'))
         }
         setRooms(p.areas.filter((a: any) => a.length || a.height).map((a: any) => ({
-          id: genId('rm'), name: a.area_name ?? '', w: 0, l: a.length ?? 0, h: a.height ?? 2.4,
+          id: genId('rm'), name: a.area_name ?? '',
+          // Older payloads carried only the area, so derive the width from it.
+          w: a.width ?? (a.length > 0 && a.sqm > 0 ? a.sqm / a.length : 0),
+          l: a.length ?? 0, h: a.height ?? 2.4, doors: 0, wins: 0,
         })))
       }
     } catch {}
@@ -341,9 +344,16 @@ export default function QuotingTool() {
       const coverage = hit?.coverage ?? 12
       // linear metres and counts convert to an approximate painted area
       const m2 = sub.unit === 'sqm' ? q : sub.unit === 'lm' ? q * 0.3 : q * 2
-      // Coats now come from the substrate's own settings, undercoats included
+      // Coats now come from the substrate's own settings, undercoats included.
+      // Top coats and undercoat are counted separately because they can be
+      // applied differently — a sprayed undercoat under brushed top coats is
+      // the normal new-build sequence — and spraying covers less per litre.
       const c = coatOf(substrates, sub.key)
-      const litres = (m2 * (c.topCoats + (c.uc !== 'None' ? c.ucCoats : 0))) / coverage
+      const topLitres = (m2 * c.topCoats) / coverageFor(coverage, c.app)
+      const ucLitres = c.uc !== 'None' && c.ucCoats > 0
+        ? (m2 * c.ucCoats) / coverageFor(coverage, c.ucApp)
+        : 0
+      const litres = topLitres + ucLitres
       const key = hit?.product ?? want
       if (!products[key]) products[key] = { product: key, size: hit?.size ?? '4L', litres: 0, coverage, price: hit?.yours ?? 0 }
       products[key].litres += litres
@@ -491,9 +501,7 @@ export default function QuotingTool() {
     setReview(rs => rs?.map(r => (r.key === key ? { ...r, ...patch } : r)) ?? null)
 
   function applyRooms() {
-    const ceil = rooms.reduce((s, r) => s + r.w * r.l, 0)
-    const wall = rooms.reduce((s, r) => s + 2 * (r.w + r.l) * (r.h || 2.4), 0)
-    applyQuantities({ ceilings: Math.round(ceil), walls: Math.round(wall) })
+    applyQuantities(roomQuantities(rooms))
   }
 
   const newStep = (name: string): Process => ({ id: genId('pr'), name, hours: 0, np: painters.length })
@@ -1139,24 +1147,25 @@ export default function QuotingTool() {
           <Card>
             <div className="flex justify-between items-center mb-2">
               <div className={`${CT} m-0`}>1c. Room Calculator</div>
-              <button onClick={() => setRooms(r => [...r, { id: genId('rm'), name: '', w: 0, l: 0, h: 2.4 }])} className={BTN}>
+              <button onClick={() => setRooms(r => [...r, { id: genId('rm'), name: '', w: 0, l: 0, h: 2.4, doors: 0, wins: 0 }])} className={BTN}>
                 <Plus size={12} /> Add room
               </button>
             </div>
             <div className="text-[11px] text-[#666] mb-2">
-              Enter dimensions to auto-calculate ceiling and wall areas (height defaults to 2.4m).
+              Ceilings and walls in m², cornice and skirting in lineal metres (height defaults
+              to 2.4&nbsp;m). Door and window counts are optional — each door deducts 1.89&nbsp;m²
+              from the walls and 0.9&nbsp;m from the skirting, each window 1.2&nbsp;m².
             </div>
             {rooms.length > 0 && (
               <table className="w-full border-collapse text-xs mb-2">
                 <thead>
-                  <tr>{['Room', 'W m', 'L m', 'H m', 'Ceil m²', 'Wall m²', ''].map(h => (
+                  <tr>{['Room', 'W m', 'L m', 'H m', 'Drs', 'Win', 'Ceil m²', 'Wall m²', 'Corn lm', 'Skirt lm', ''].map(h => (
                     <th key={h} className="text-left px-1.5 py-1 text-[#666] border-b border-black/[0.12] font-medium">{h}</th>
                   ))}</tr>
                 </thead>
                 <tbody>
                   {rooms.map(r => {
-                    const ceil = r.w * r.l
-                    const wall = 2 * (r.w + r.l) * (r.h || 2.4)
+                    const t = roomTotals(r)
                     const upd = (patch: Partial<Room>) => setRooms(x => x.map(y => y.id === r.id ? { ...y, ...patch } : y))
                     return (
                       <tr key={r.id}>
@@ -1167,8 +1176,17 @@ export default function QuotingTool() {
                               className="w-14 px-1 py-0.5 border border-black/15 rounded text-xs text-right font-mono" />
                           </td>
                         ))}
-                        <td className="px-1.5 py-1 font-mono">{ceil.toFixed(1)}</td>
-                        <td className="px-1.5 py-1 font-mono">{wall.toFixed(1)}</td>
+                        {(['doors', 'wins'] as const).map(k => (
+                          <td key={k} className="px-1.5 py-1">
+                            <input type="number" min={0} step="1" value={r[k] || ''} placeholder="0"
+                              onChange={e => upd({ [k]: parseInt(e.target.value) || 0 } as Partial<Room>)}
+                              className="w-11 px-1 py-0.5 border border-black/15 rounded text-xs text-right font-mono" />
+                          </td>
+                        ))}
+                        <td className="px-1.5 py-1 font-mono">{t.ceilings.toFixed(1)}</td>
+                        <td className="px-1.5 py-1 font-mono">{t.walls.toFixed(1)}</td>
+                        <td className="px-1.5 py-1 font-mono">{t.cornice.toFixed(1)}</td>
+                        <td className="px-1.5 py-1 font-mono">{t.skirtings.toFixed(1)}</td>
                         <td className="px-1.5 py-1"><button onClick={() => setRooms(x => x.filter(y => y.id !== r.id))} className="text-[#c0392b]"><Trash2 size={12} /></button></td>
                       </tr>
                     )
@@ -1178,7 +1196,12 @@ export default function QuotingTool() {
             )}
             <div className="flex justify-between items-center gap-2 flex-wrap">
               <div className="text-xs text-[#666]">
-                {rooms.length > 0 && `Total ceiling ${rooms.reduce((s, r) => s + r.w * r.l, 0).toFixed(1)} m² · wall ${rooms.reduce((s, r) => s + 2 * (r.w + r.l) * (r.h || 2.4), 0).toFixed(1)} m²`}
+                {rooms.length > 0 && (() => {
+                  const t = roomsTotal(rooms)
+                  return `Ceilings ${t.ceilings.toFixed(1)} m² · walls ${t.walls.toFixed(1)} m²`
+                    + ` · cornice ${t.cornice.toFixed(1)} lm · skirting ${t.skirtings.toFixed(1)} lm`
+                    + (t.deductedM2 > 0 ? ` (${t.deductedM2.toFixed(1)} m² of openings deducted)` : '')
+                })()}
               </div>
               <button onClick={applyRooms} disabled={!rooms.length} className={`${BTN_P} disabled:opacity-50`}>
                 <Check size={12} /> Apply to substrates
