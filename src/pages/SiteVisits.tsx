@@ -15,10 +15,18 @@ type Row = Record<string, any>
 
 const BADGE = 'inline-block px-2 py-0.5 rounded-full text-[11px] font-medium whitespace-nowrap'
 
-// Site visit detail rides in the notes column as JSON — no migration needed
+// Site visit detail rides in the notes column as JSON — no migration needed.
+// Photos are the exception: they live in their own `photos` column and are
+// written out of the blob, so they are put back here. Visits saved before
+// that split still carry them inside the blob, hence the fallback.
 const readSV = (v: Row): SVState => {
-  try { return normaliseSV(JSON.parse(v.notes || '{}')) }
-  catch { return normaliseSV({ notes: v.notes || '' } as Partial<SVState>) }
+  const photos = Array.isArray(v.photos) ? v.photos : []
+  try {
+    const parsed = JSON.parse(v.notes || '{}')
+    return normaliseSV({ ...parsed, photos: photos.length ? photos : (parsed.photos ?? []) })
+  } catch {
+    return normaliseSV({ notes: v.notes || '', photos } as Partial<SVState>)
+  }
 }
 
 function useTable(table: string) {
@@ -59,6 +67,7 @@ function useDel() {
 
 export default function SiteVisits() {
   const nav = useNavigate()
+  const { user } = useAuth()
   const { data: visits = [], isLoading } = useTable('np_site_visits')
   const { data: jobs = [] } = useTable('np_jobs')
   const upsert = useUpsert()
@@ -67,7 +76,7 @@ export default function SiteVisits() {
   const [q, setQ] = useState('')
   const [status, setStatus] = useState('')
   const [asc, setAsc] = useState(false)
-  const [editing, setEditing] = useState<{ id: string | null; state: SVState } | null>(null)
+  const [editing, setEditing] = useState<{ id: string; isNew: boolean; state: SVState } | null>(null)
 
   const anyFilter = !!(q || status)
 
@@ -84,12 +93,15 @@ export default function SiteVisits() {
     })
   }, [visits, q, status, asc])
 
+  // The visit id is minted when the editor opens, not at save: a photo is
+  // uploaded to <user>/<visit>/<photo>.jpg the moment it is taken, so the
+  // visit has to have an identity before then.
   function openNew(prefill?: Partial<SVState>) {
-    setEditing({ id: null, state: { ...emptySVState(), ...(prefill ?? {}) } })
+    setEditing({ id: genId('sv'), isNew: true, state: { ...emptySVState(), ...(prefill ?? {}) } })
   }
   function openEdit(v: Row) {
     const state = readSV(v)
-    setEditing({ id: v.id, state: { ...state, jobId: v.job_id ?? state.jobId, date: v.date ?? state.date } })
+    setEditing({ id: v.id, isNew: false, state: { ...state, jobId: v.job_id ?? state.jobId, date: v.date ?? state.date } })
   }
 
   // Arriving from an enquiry, or from a job's site-visit button
@@ -110,7 +122,10 @@ export default function SiteVisits() {
       job_id: next.jobId || null,
       date: next.date || today(),
       photos: next.photos,
-      notes: JSON.stringify(next),
+      // Photos live in the `photos` column. Leaving them in the state blob too
+      // wrote every image into the row twice, which is what made a visit with
+      // ten photos impossible to save.
+      notes: JSON.stringify({ ...next, photos: [] }),
       created_at: new Date().toISOString(),
     })
     setEditing(null)
@@ -137,6 +152,10 @@ export default function SiteVisits() {
           notes: [a.prep, a.notes].filter(Boolean).join(' · '),
         })),
         siteNotes: [d.notes, ...d.voiceNotes.map(v => v.text)].filter(Boolean).join('\n'),
+        // The id, not the images. Photos in sessionStorage would blow the
+        // quota, and the setItem below is wrapped in a bare catch — an
+        // overflow would silently lose the whole prefill, client and all.
+        visitId: editing?.id ?? null,
       }))
     } catch {}
     nav('/quotes/build')
@@ -152,7 +171,9 @@ export default function SiteVisits() {
         <SiteVisitEditor
           initial={editing.state}
           jobs={jobs}
-          isNew={!editing.id}
+          visitId={editing.id}
+          userId={user?.id ?? ''}
+          isNew={editing.isNew}
           onClose={() => setEditing(null)}
           onSave={save}
         />

@@ -19,8 +19,10 @@ import type { Warning } from './takeoffChecks'
 
 export interface ScopePhoto {
   id: string
-  /** A data URL or a storage URL — the renderer takes either. */
+  /** Something an <img> can show: a signed bucket link or an inline data URL. */
   data: string
+  /** The bucket path, so the link can be signed again when the quote reopens. */
+  path?: string
   tag?: string
   label?: string
   source: 'visit' | 'upload'

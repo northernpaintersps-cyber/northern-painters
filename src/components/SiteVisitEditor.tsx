@@ -9,11 +9,17 @@ import {
   Pencil, Eraser, Undo2, Sparkles, Loader2,
 } from 'lucide-react'
 import { shrinkToDataUrl } from '@/lib/image'
+import { uploadPhoto, signPhotos } from '@/lib/photoStore'
 
 type Row = Record<string, any>
 
 export type SVArea = { id: string; name: string; condition: string; prep: string; l: number; w: number; h: number; notes: string }
-export type SVPhoto = { id: string; data: string; tag: string; label: string }
+/**
+ * `path` is the bucket path for anything taken since photos moved to storage.
+ * `data` is the inline data URL older visits still carry, and the local
+ * preview shown while an upload is in flight — the renderer takes either.
+ */
+export type SVPhoto = { id: string; data?: string; path?: string; tag: string; label: string }
 export type SVVoice = { id: string; text: string }
 
 export type SVState = {
@@ -161,9 +167,12 @@ function Sketch({ value, onChange }: { value: string | null; onChange: (v: strin
   )
 }
 
-export default function SiteVisitEditor({ initial, jobs, isNew, onClose, onSave, onAIParse, aiBusy }: {
+export default function SiteVisitEditor({ initial, jobs, visitId, userId, isNew, onClose, onSave, onAIParse, aiBusy }: {
   initial: SVState
   jobs: Row[]
+  /** Minted before the editor opens — a photo uploads under it immediately. */
+  visitId: string
+  userId: string
   isNew: boolean
   onClose: () => void
   onSave: (state: SVState, complete: boolean) => void
@@ -172,6 +181,10 @@ export default function SiteVisitEditor({ initial, jobs, isNew, onClose, onSave,
 }) {
   const [sv, setSv] = useState<SVState>(initial)
   const [listening, setListening] = useState(false)
+  // Photo id -> something an <img> can show: a signed bucket link, or the
+  // inline data URL an older visit carries.
+  const [photoSrc, setPhotoSrc] = useState<Record<string, string>>({})
+  const [uploading, setUploading] = useState(0)
   const camRef = useRef<HTMLInputElement>(null)
   const upRef = useRef<HTMLInputElement>(null)
 
@@ -189,18 +202,42 @@ export default function SiteVisitEditor({ initial, jobs, isNew, onClose, onSave,
   async function addPhotos(e: React.ChangeEvent<HTMLInputElement>, tag = 'reference') {
     const files = Array.from(e.target.files ?? [])
     e.target.value = ''
+    if (!files.length) return
+    setUploading(n => n + files.length)
+
     for (const file of files) {
+      const id = genId('ph')
       try {
-        // Shrink before storing. These were kept at full resolution as base64
-        // text in the row, so ten phone photos made a visit that could not be
-        // saved at all. A 4MB shot comes out around 180KB.
-        const data = await shrinkToDataUrl(file)
-        setSv(s => ({ ...s, photos: [...s.photos, { id: genId('ph'), data, tag, label: '' }] }))
-      } catch {
-        alert(`Could not read ${file.name}.`)
+        // Show it immediately from a local preview, then upload. Standing on a
+        // site with one bar of signal, waiting on a round trip before the photo
+        // appears makes the app feel broken.
+        const preview = await shrinkToDataUrl(file)
+        setSv(s => ({ ...s, photos: [...s.photos, { id, data: preview, tag, label: '' }] }))
+        setPhotoSrc(prev => ({ ...prev, [id]: preview }))
+
+        const path = await uploadPhoto(file, userId, visitId, id)
+        // Drop the inline copy once it is in the bucket: keeping both is what
+        // made these rows too big to save. The preview stays in photoSrc so
+        // the image does not blink.
+        setSv(s => ({ ...s, photos: s.photos.map(x => x.id === id ? { ...x, path, data: undefined } : x) }))
+      } catch (err: any) {
+        // Keep the inline copy so the photo is not lost — an oversized row is
+        // better than a photo the estimator thinks they took and did not.
+        alert(err?.message ?? `Could not add ${file.name}.`)
+      } finally {
+        setUploading(n => Math.max(0, n - 1))
       }
     }
   }
+
+  // Bucket paths are not URLs, so they have to be signed before they render.
+  useEffect(() => {
+    let live = true
+    signPhotos(sv.photos).then(map => { if (live) setPhotoSrc(prev => ({ ...prev, ...map })) })
+    return () => { live = false }
+  }, [sv.photos])
+
+  const srcOf = (p: SVPhoto) => photoSrc[p.id] ?? p.data ?? ''
 
   // Voice
   function record() {
@@ -383,7 +420,7 @@ export default function SiteVisitEditor({ initial, jobs, isNew, onClose, onSave,
             <div className="grid gap-2.5" style={{ gridTemplateColumns: 'repeat(auto-fill,minmax(160px,1fr))' }}>
               {sv.photos.map(p => (
                 <div key={p.id} className="border border-black/[0.12] rounded-[10px] overflow-hidden relative">
-                  <img src={p.data} alt={p.label} className="w-full h-[130px] object-cover block" />
+                  <img src={srcOf(p)} alt={p.label} className="w-full h-[130px] object-cover block" />
                   <div className="px-2 py-1.5">
                     <select value={p.tag}
                       onChange={e => setSv(s => ({ ...s, photos: s.photos.map(x => x.id === p.id ? { ...x, tag: e.target.value } : x) }))}

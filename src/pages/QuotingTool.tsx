@@ -26,6 +26,7 @@ import ScopePanel from '@/components/ScopePanel'
 import { Modal } from '@/components/ui/Modal'
 import { buildScope, scopeStats, pruneLinks, scopeSummary, type ScopePhoto } from '@/lib/scopeModel'
 import { shrinkToDataUrl } from '@/lib/image'
+import { uploadPhoto, signPhotos, type StoredPhoto } from '@/lib/photoStore'
 import { checkTakeoff, hasError, type Warning } from '@/lib/takeoffChecks'
 import { applyFinishRows, finishScheduleText } from '@/lib/finishes'
 import {
@@ -312,6 +313,7 @@ export default function QuotingTool() {
           setSiteNotes(p.areas.map((a: any) => `${a.area_name}: ${a.notes || ''}`)
             .filter((l: string) => l.trim().length > 2).join('\n'))
         }
+        if (p.visitId) loadVisitPhotos(p.visitId)
         setRooms(p.areas.filter((a: any) => a.length || a.height).map((a: any) => ({
           id: genId('rm'), name: a.area_name ?? '',
           // Older payloads carried only the area, so derive the width from it.
@@ -505,12 +507,46 @@ export default function QuotingTool() {
     })
   }
 
+  /**
+   * Photos from the site visit this quote came from. Fetched by id rather
+   * than carried through sessionStorage, which has neither the room nor a
+   * failure mode better than losing the whole prefill in silence.
+   */
+  async function loadVisitPhotos(visitId: string) {
+    try {
+      const { data } = await (supabase.from('np_site_visits') as any)
+        .select('photos').eq('id', visitId).maybeSingle()
+      const stored: StoredPhoto[] = data?.photos ?? []
+      if (!stored.length) return
+      const urls = await signPhotos(stored)
+      setScopePhotos(stored
+        .filter(ph => urls[ph.id])
+        .map(ph => ({ id: ph.id, data: urls[ph.id], path: ph.path, tag: ph.tag, label: ph.label, source: 'visit' as const })))
+    } catch { /* a quote without its photos still works */ }
+  }
+
+  /** Re-sign the stored paths so the photos render again. */
+  async function restorePhotos(saved: any[]) {
+    if (!saved.length) { setScopePhotos([]); return }
+    const urls = await signPhotos(saved)
+    setScopePhotos(saved
+      .filter(ph => urls[ph.id] || ph.data)
+      .map(ph => ({ ...ph, data: urls[ph.id] ?? ph.data })))
+  }
+
   async function addScopePhotos(files: FileList | null) {
     for (const file of Array.from(files ?? [])) {
+      const id = genId('ph')
       try {
+        // Shown from a local preview straight away, then uploaded so it
+        // survives a reload.
         const data = await shrinkToDataUrl(file)
-        setScopePhotos(prev => [...prev, { id: genId('ph'), data, label: file.name, source: 'upload' }])
-      } catch { alert(`Could not read ${file.name}.`) }
+        setScopePhotos(prev => [...prev, { id, data, label: file.name, source: 'upload' }])
+        if (user?.id) {
+          const path = await uploadPhoto(file, user.id, quoteId || 'quote', id)
+          setScopePhotos(prev => prev.map(ph => ph.id === id ? { ...ph, path } : ph))
+        }
+      } catch (e: any) { alert(e?.message ?? `Could not read ${file.name}.`) }
     }
   }
 
@@ -847,6 +883,12 @@ export default function QuotingTool() {
         confidence: extractRes.confidence,
       },
       photoLinks: pruneLinks(photoLinks, scopeItems),
+      // Paths, not links: a signed URL expires in hours, the path does not.
+      scopePhotos: scopePhotos.map(ph => ({
+        id: ph.id, path: ph.path, tag: ph.tag, label: ph.label, source: ph.source,
+        // Only an upload that never reached the bucket keeps its bytes.
+        data: ph.path ? undefined : ph.data,
+      })),
       adjLab, adjMat, waste, contingency, overheadPct, bufDays, bufHrs, travelCost,
       paintRows, laHpd, laPrep, laTop, laBufD, laBufH, laRates,
     }
@@ -859,6 +901,7 @@ export default function QuotingTool() {
     setFinishSpecs(d.finishSpecs ?? {})
     setExtractRes(d.takeoff ?? null)
     setPhotoLinks(d.photoLinks ?? {})
+    restorePhotos(d.scopePhotos ?? [])
     setReview(null)
     setPrep(d.prep ?? PREP_OPTS[1]); setCeilingHeight(d.ceilingHeight ?? HEIGHT_OPTS[0]); setAccess(d.access ?? ACCESS_OPTS[0])
     setMethod(d.method ?? 'roll'); setCoats(d.coats ?? '2'); setProcesses(d.processes ?? [])
