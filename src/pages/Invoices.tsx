@@ -22,6 +22,7 @@ import {
 } from '@/lib/jobBilling'
 import { invalidateTable } from '../lib/queryKeys'
 import { takeHandoff } from '@/lib/handoff'
+import { SyncedInput } from '@/components/ui/SyncedInput'
 
 type Invoice = Record<string, any>
 
@@ -590,7 +591,7 @@ export default function Invoices() {
                           <td className="px-2.5 py-[7px] text-xs text-[#666] max-w-[130px] truncate">{inv.notes || ''}</td>
                           <td className="px-2.5 py-[7px] font-medium">{fmtCurrency(inv.total_inc_gst)}</td>
                           <td className="px-2.5 py-[7px]">
-                            <input type="number" step="0.01" defaultValue={inv.received || ''} placeholder="0" className={II} style={{ width: 80 }}
+                            <SyncedInput type="number" step="0.01" value={inv.received || ''} placeholder="0" className={II} style={{ width: 80 }}
                               onBlur={e => { if ((parseFloat(e.target.value) || 0) !== (inv.received || 0)) setReceived(inv, e.target.value) }} />
                           </td>
                           <td className="px-2.5 py-[7px] text-[11px] text-center">

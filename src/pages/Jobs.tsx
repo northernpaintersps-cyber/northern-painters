@@ -16,6 +16,7 @@ import {
   Receipt, BookmarkCheck,
 } from 'lucide-react'
 import { invalidateTable } from '../lib/queryKeys'
+import { SyncedInput } from '@/components/ui/SyncedInput'
 
 
 // ── Types ────────────────────────────────────────────────────
@@ -333,15 +334,15 @@ export default function Jobs() {
                       <tr key={j.id} className="border-b border-black/[0.06] hover:bg-[#fafaf8]">
                         <td className="px-2.5 py-[7px] text-[#2563eb] font-medium whitespace-nowrap">{j.id}</td>
                         <td className="px-2.5 py-[7px]">
-                          <input defaultValue={j.client ?? ''} className={II}
+                          <SyncedInput value={j.client ?? ''} className={II}
                             onBlur={e => { if (e.target.value !== (j.client ?? '')) quickEdit.mutate({ job: j, field: 'client', value: e.target.value }) }} />
                         </td>
                         <td className="px-2.5 py-[7px]">
-                          <input defaultValue={j.address ?? ''} className={II} style={{ maxWidth: 130 }}
+                          <SyncedInput value={j.address ?? ''} className={II} style={{ maxWidth: 130 }}
                             onBlur={e => { if (e.target.value !== (j.address ?? '')) quickEdit.mutate({ job: j, field: 'address', value: e.target.value }) }} />
                         </td>
                         <td className="px-2.5 py-[7px]">
-                          <input type="number" defaultValue={j.agreed_ex_gst ?? ''} placeholder="—" className={II} style={{ width: 90 }}
+                          <SyncedInput type="number" value={j.agreed_ex_gst ?? ''} placeholder="—" className={II} style={{ width: 90 }}
                             onBlur={e => {
                               const v = e.target.value === '' ? null : parseFloat(e.target.value)
                               if (v !== (j.agreed_ex_gst ?? null)) quickEdit.mutate({ job: j, field: 'agreed_ex_gst', value: v })
@@ -365,11 +366,11 @@ export default function Jobs() {
                           </select>
                         </td>
                         <td className="px-2.5 py-[7px]">
-                          <input type="date" defaultValue={normaliseDate(j.sched_start) ?? ''} className={II} style={{ width: 118 }}
+                          <SyncedInput type="date" value={normaliseDate(j.sched_start) ?? ''} className={II} style={{ width: 118 }}
                             onBlur={e => { if (e.target.value !== (normaliseDate(j.sched_start) ?? '')) quickEdit.mutate({ job: j, field: 'sched_start', value: e.target.value || null }) }} />
                         </td>
                         <td className="px-2.5 py-[7px]">
-                          <input type="number" defaultValue={j.est_days ?? ''} placeholder="—" className={II} style={{ width: 44 }}
+                          <SyncedInput type="number" value={j.est_days ?? ''} placeholder="—" className={II} style={{ width: 44 }}
                             onBlur={e => {
                               const v = e.target.value === '' ? null : parseFloat(e.target.value)
                               if (v !== (j.est_days ?? null)) quickEdit.mutate({ job: j, field: 'est_days', value: v })

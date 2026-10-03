@@ -16,6 +16,7 @@ import {
   Camera, ScanLine, ArrowUpDown, X, Info, AlertTriangle, MapPin, ChevronDown,
 } from 'lucide-react'
 import { invalidateTable } from '../lib/queryKeys'
+import { SyncedInput } from '@/components/ui/SyncedInput'
 
 const CATEGORIES = ['Paint', 'Primer/Undercoat', 'Filler/Putty', 'Tape/Masking', 'Brushes/Rollers', 'Sandpaper/Prep', 'Caulk/Sealant', 'Solvent/Cleaner', 'Hardware', 'Other']
 const BILLING_TYPES = ['Fixed Quote', 'Hourly', 'Hourly/Estimate']
@@ -369,7 +370,7 @@ export default function Materials() {
                   <Fragment key={m.id}>
                   <tr className="border-b border-black/[0.06] hover:bg-[#fafaf8]">
                     <td className="px-2.5 py-[7px]">
-                      <input type="date" defaultValue={m.date ?? ''} className={II} style={{ width: 118 }}
+                      <SyncedInput type="date" value={m.date ?? ''} className={II} style={{ width: 118 }}
                         onBlur={e => { if (e.target.value !== (m.date ?? '')) quickEdit(m, { date: e.target.value || null }) }} />
                     </td>
                     <td className="px-2.5 py-[7px]" style={{ minWidth: 150 }}>
@@ -387,11 +388,11 @@ export default function Materials() {
                       </select>
                     </td>
                     <td className="px-2.5 py-[7px]">
-                      <input defaultValue={m.supplier ?? ''} className={II} style={{ width: 90 }}
+                      <SyncedInput value={m.supplier ?? ''} className={II} style={{ width: 90 }}
                         onBlur={e => { if (e.target.value !== (m.supplier ?? '')) quickEdit(m, { supplier: e.target.value }) }} />
                     </td>
                     <td className="px-2.5 py-[7px]" style={{ maxWidth: 180 }}>
-                      <input defaultValue={m.mat_desc ?? ''} className={II}
+                      <SyncedInput value={m.mat_desc ?? ''} className={II}
                         onBlur={e => { if (e.target.value !== (m.mat_desc ?? '')) quickEdit(m, { mat_desc: e.target.value }) }} />
                       {items.length > 0 && (
                         <button onClick={() => setOpenRows(s => {
@@ -404,7 +405,7 @@ export default function Materials() {
                       )}
                     </td>
                     <td className="px-2.5 py-[7px]">
-                      <input type="number" step="0.01" defaultValue={(m.cost_ex_gst ?? 0).toFixed(2)} className={II} style={{ width: 76 }}
+                      <SyncedInput type="number" step="0.01" value={(m.cost_ex_gst ?? 0).toFixed(2)} className={II} style={{ width: 76 }}
                         onBlur={e => {
                           const ex = parseFloat(e.target.value) || 0
                           if (ex === (m.cost_ex_gst ?? 0)) return
@@ -430,7 +431,7 @@ export default function Materials() {
                       </select>
                     </td>
                     <td className="px-2.5 py-[7px]">
-                      <input defaultValue={m.notes ?? ''} placeholder="Notes…" className={II} style={{ width: 90 }}
+                      <SyncedInput value={m.notes ?? ''} placeholder="Notes…" className={II} style={{ width: 90 }}
                         onBlur={e => { if (e.target.value !== (m.notes ?? '')) quickEdit(m, { notes: e.target.value }) }} />
                     </td>
                     <td className="px-2.5 py-[7px] whitespace-nowrap">

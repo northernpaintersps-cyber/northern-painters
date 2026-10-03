@@ -6,6 +6,7 @@ import { useAuth } from '@/lib/auth'
 import { fmtCurrency } from '@/lib/utils'
 import { Loader2, X, BarChart3, Edit2, Info } from 'lucide-react'
 import { invalidateTable } from '../lib/queryKeys'
+import { SyncedInput } from '@/components/ui/SyncedInput'
 
 const JS_OPTS = ['Not Started','Scheduled','In Progress','Hourly Rate Accepted','Finished','Closed']
 const QS_OPTS = ['Info Collected','Site Visit','Quote Created','Sent','Negotiating','Accepted','Booked','Not Accepted','Lost']
@@ -300,7 +301,7 @@ export default function Costs() {
                     <div className="flex items-center justify-center gap-0.5 bg-white border border-black/[0.12] rounded-[7px] px-2 py-1"
                       title="Edit rate — recalculates hours">
                       <span className="text-[11px] font-semibold text-[#666]">$</span>
-                      <input type="number" min={1} step={1} defaultValue={rate}
+                      <SyncedInput type="number" min={1} step={1} value={rate}
                         onBlur={e => {
                           const v = parseFloat(e.target.value) || 0
                           if (v !== rate) setRate.mutate({ jobId: j.id, rate: v })

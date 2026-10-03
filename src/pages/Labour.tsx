@@ -11,6 +11,7 @@ import {
 } from '@/lib/utils'
 import { Plus, Loader2, Trash2, ArrowUpDown, X, Clock, AlertTriangle } from 'lucide-react'
 import { invalidateTable } from '../lib/queryKeys'
+import { SyncedInput } from '@/components/ui/SyncedInput'
 
 type Row = Record<string, any>
 
@@ -270,7 +271,7 @@ export default function Labour() {
                 return (
                   <tr key={l.id} className="border-b border-black/[0.06] hover:bg-[#fafaf8]">
                     <td className="px-2.5 py-[7px]">
-                      <input type="date" defaultValue={l.date ?? ''} className={II} style={{ width: 110 }}
+                      <SyncedInput type="date" value={l.date ?? ''} className={II} style={{ width: 110 }}
                         onBlur={e => { if (e.target.value !== (l.date ?? '')) upsert.mutate({ ...l, date: e.target.value || null }) }} />
                     </td>
                     <td className="px-2.5 py-[7px]" style={{ minWidth: 110 }}>
@@ -285,18 +286,18 @@ export default function Labour() {
                       <div className="text-[10px] text-[#666] mt-0.5 truncate max-w-[120px]">{job?.client || l.client || ''}</div>
                     </td>
                     <td className="px-2.5 py-[7px]">
-                      <input defaultValue={l.sub ?? ''} className={II} style={{ width: 90 }}
+                      <SyncedInput value={l.sub ?? ''} className={II} style={{ width: 90 }}
                         onBlur={e => { if (e.target.value !== (l.sub ?? '')) upsert.mutate({ ...l, sub: e.target.value }) }} />
                     </td>
                     <td className="px-2.5 py-[7px]">
-                      <input type="number" step="0.5" defaultValue={l.hours ?? 0} className={II} style={{ width: 44 }}
+                      <SyncedInput type="number" step="0.5" value={l.hours ?? 0} className={II} style={{ width: 44 }}
                         onBlur={e => {
                           const v = parseFloat(e.target.value) || 0
                           if (v !== (l.hours ?? 0)) quick(l, { hours: v })
                         }} />
                     </td>
                     <td className="px-2.5 py-[7px]" style={{ color: '#64748b' }}>
-                      <input type="number" defaultValue={l.rate ?? 0} className={II} style={{ width: 52 }}
+                      <SyncedInput type="number" value={l.rate ?? 0} className={II} style={{ width: 52 }}
                         onBlur={e => {
                           const v = parseFloat(e.target.value) || 0
                           if (v !== (l.rate ?? 0)) quick(l, { rate: v })
@@ -304,7 +305,7 @@ export default function Labour() {
                     </td>
                     <td className="px-2.5 py-[7px] font-semibold" style={{ color: '#64748b' }}>{fmtCurrency(cost)}</td>
                     <td className="px-2.5 py-[7px]" style={{ color: '#2563eb' }}>
-                      <input type="number" defaultValue={cr} className={II} style={{ width: 52, color: '#2563eb' }}
+                      <SyncedInput type="number" value={cr} className={II} style={{ width: 52, color: '#2563eb' }}
                         onBlur={e => {
                           const v = parseFloat(e.target.value) || 0
                           if (v !== cr) quick(l, { charge_rate: v })
@@ -336,7 +337,7 @@ export default function Labour() {
                       </select>
                     </td>
                     <td className="px-2.5 py-[7px]">
-                      <input defaultValue={l.notes ?? ''} placeholder="Notes…" className={II} style={{ width: 80 }}
+                      <SyncedInput value={l.notes ?? ''} placeholder="Notes…" className={II} style={{ width: 80 }}
                         onBlur={e => { if (e.target.value !== (l.notes ?? '')) upsert.mutate({ ...l, notes: e.target.value }) }} />
                     </td>
                     <td className="px-2.5 py-[7px]">

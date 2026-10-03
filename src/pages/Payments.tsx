@@ -13,6 +13,7 @@ import { billingBasis } from '@/lib/jobBilling'
 import { Plus, Loader2, Trash2, Copy, Check, Banknote } from 'lucide-react'
 import { useBusinessSettings } from '@/pages/SettingsPage'
 import { invalidateTable } from '../lib/queryKeys'
+import { SyncedInput } from '@/components/ui/SyncedInput'
 
 type Milestone = { label: string; pct: number; amount: number; dueDate: string; received: boolean; receivedDate: string }
 type Row = Record<string, any>
@@ -358,12 +359,12 @@ export default function Payments() {
                   return (
                     <tr key={mi} style={od ? { background: '#fff5f5' } : undefined}>
                       <td className="px-2 py-1.5 border-b border-black/[0.06]">
-                        <input defaultValue={m.label} placeholder="Payment"
+                        <SyncedInput value={m.label} placeholder="Payment"
                           onBlur={e => { if (e.target.value !== m.label) patchMilestone(s, mi, { label: e.target.value }) }}
                           className={INL} />
                       </td>
                       <td className="px-2 py-1.5 border-b border-black/[0.06] font-medium">
-                        <input type="number" min={0} step="0.01" defaultValue={m.amount || ''} placeholder="0"
+                        <SyncedInput type="number" min={0} step="0.01" value={m.amount || ''} placeholder="0"
                           onBlur={e => {
                             const v = parseFloat(e.target.value) || 0
                             if (v !== m.amount) patchMilestone(s, mi, { amount: v })
@@ -371,7 +372,7 @@ export default function Payments() {
                           className={`${INL} w-24 text-right font-mono`} />
                       </td>
                       <td className="px-2 py-1.5 border-b border-black/[0.06]" style={od ? { color: '#c0392b' } : undefined}>
-                        <input type="date" defaultValue={m.dueDate || ''}
+                        <SyncedInput type="date" value={m.dueDate || ''}
                           onBlur={e => { if (e.target.value !== m.dueDate) patchMilestone(s, mi, { dueDate: e.target.value }) }}
                           className={`${INL} w-32`} />
                       </td>
