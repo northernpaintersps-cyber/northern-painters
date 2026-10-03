@@ -18,10 +18,14 @@ import {
 import {
   SUBSTRATES, SUB_BY_KEY, emptySubstrates, normaliseSubstrates,
   substrateLines as buildSubLines, substrateTotals, subTotal, newSubLine,
-  coatOf, unitLabel, type SubEntry, type FinishSpec,
+  coatOf, unitLabel, type SubEntry, type SubLine, type FinishSpec,
 } from '@/lib/substrates'
 import SubstratePicker from '@/components/SubstratePicker'
 import { roomTotals, roomsTotal, roomQuantities, type Room } from '@/lib/roomCalc'
+import ScopePanel from '@/components/ScopePanel'
+import { Modal } from '@/components/ui/Modal'
+import { buildScope, scopeStats, pruneLinks, scopeSummary, type ScopePhoto } from '@/lib/scopeModel'
+import { shrinkToDataUrl } from '@/lib/image'
 import { checkTakeoff, hasError, type Warning } from '@/lib/takeoffChecks'
 import { applyFinishRows, finishScheduleText } from '@/lib/finishes'
 import {
@@ -192,6 +196,14 @@ export default function QuotingTool() {
   // settings rather than inside them: CoatSettings.colour is the magnitude of
   // colour change, which drives coat counts, not the colour itself.
   const [finishSpecs, setFinishSpecs] = useState<Record<string, FinishSpec>>({})
+  // The scope panel. `rightTab` auto-switches to the estimate once, via a ref,
+  // so it does not fight you flipping back to check the scope against it.
+  const [rightTab, setRightTab] = useState<'scope' | 'estimate'>('scope')
+  const autoSwitched = useRef(false)
+  const [scopePhotos, setScopePhotos] = useState<ScopePhoto[]>([])
+  const [photoLinks, setPhotoLinks] = useState<Record<string, string[]>>({})
+  const [highlightKey, setHighlightKey] = useState('')
+  const [scopeOpen, setScopeOpen] = useState(false)   // the phone sheet
   const imgRef = useRef<HTMLInputElement>(null)
   const pdfRef = useRef<HTMLInputElement>(null)
 
@@ -312,6 +324,22 @@ export default function QuotingTool() {
 
   const substrateLines = useMemo(
     () => buildSubLines(substrates, finishSpecs).join('\n'), [substrates, finishSpecs])
+
+  // Warnings outlive the review table, which is cleared the moment quantities
+  // are applied — the panel needs them for as long as the scope exists.
+  const takeoffWarnings = useMemo(
+    () => extractRes
+      ? checkTakeoff(extractRes.quantities, { totalFloorArea: extractRes.totalFloorArea })
+      : {},
+    [extractRes])
+  const scopeItems = useMemo(
+    () => buildScope({ substrates, takeoff: extractRes, warnings: takeoffWarnings, finishSpecs, photoLinks }),
+    [substrates, extractRes, takeoffWarnings, finishSpecs, photoLinks])
+  const scopeStat = useMemo(() => scopeStats(scopeItems), [scopeItems])
+
+  useEffect(() => {
+    if (estimate && !autoSwitched.current) { autoSwitched.current = true; setRightTab('estimate') }
+  }, [estimate])
   const totals = useMemo(() => substrateTotals(substrates), [substrates])
 
   // V16 PROD_RATES baseline — a sanity figure next to the AI's hours
@@ -431,6 +459,59 @@ export default function QuotingTool() {
       })
       return out
     })
+  }
+
+  /** Change one line of one substrate, leaving the coating and the rest alone. */
+  function patchSubLine(key: string, lineId: string, patch: Partial<SubLine>) {
+    setSubstrates(prev => {
+      const entry = prev[key]
+      if (!entry) return prev
+      return { ...prev, [key]: { ...entry, lines: entry.lines.map(l => l.id === lineId ? { ...l, ...patch } : l) } }
+    })
+  }
+
+  function deleteSubLine(key: string, lineId: string) {
+    setSubstrates(prev => {
+      const entry = prev[key]
+      if (!entry) return prev
+      const lines = entry.lines.filter(l => l.id !== lineId)
+      // A substrate always keeps one line; emptying the last one unticks it.
+      return lines.length
+        ? { ...prev, [key]: { ...entry, lines } }
+        : { ...prev, [key]: { ...entry, inc: false, lines: [newSubLine()] } }
+    })
+  }
+
+  /** `inc` lives on the entry, so excluding is per substrate, not per line. */
+  function excludeSubstrate(key: string) {
+    setSubstrates(prev => (prev[key] ? { ...prev, [key]: { ...prev[key], inc: false } } : prev))
+  }
+
+  /** Scroll the substrate list to a row and flash it. */
+  function revealSubstrate(key: string) {
+    setScopeOpen(false)
+    setHighlightKey(key)
+    setTimeout(() => {
+      document.getElementById(`subrow-${key}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }, 0)
+    setTimeout(() => setHighlightKey(''), 1600)
+  }
+
+  function togglePhotoLink(itemId: string, photoId: string) {
+    setPhotoLinks(prev => {
+      const have = prev[itemId] ?? []
+      const next = have.includes(photoId) ? have.filter(x => x !== photoId) : [...have, photoId]
+      return { ...prev, [itemId]: next }
+    })
+  }
+
+  async function addScopePhotos(files: FileList | null) {
+    for (const file of Array.from(files ?? [])) {
+      try {
+        const data = await shrinkToDataUrl(file)
+        setScopePhotos(prev => [...prev, { id: genId('ph'), data, label: file.name, source: 'upload' }])
+      } catch { alert(`Could not read ${file.name}.`) }
+    }
   }
 
   async function runExtract() {
@@ -754,6 +835,18 @@ export default function QuotingTool() {
       method, coats, processes, prepLevels, consPrep, consTotal, consNotes, extraMats,
       painters, travelKm, equip, siteNotes, logisticsNotes, estimate, lockedPrice, rooms,
       finishSpecs,
+      // The scope panel is mostly evidence. Without this a reopened quote
+      // shows a bare list of numbers with nothing behind them.
+      takeoff: extractRes && {
+        quantities: extractRes.quantities,
+        finishes: extractRes.finishes,
+        totalFloorArea: extractRes.totalFloorArea,
+        scopeNotes: extractRes.scopeNotes,
+        extractionSummary: extractRes.extractionSummary,
+        sheetIndex: extractRes.sheetIndex,
+        confidence: extractRes.confidence,
+      },
+      photoLinks: pruneLinks(photoLinks, scopeItems),
       adjLab, adjMat, waste, contingency, overheadPct, bufDays, bufHrs, travelCost,
       paintRows, laHpd, laPrep, laTop, laBufD, laBufH, laRates,
     }
@@ -764,6 +857,9 @@ export default function QuotingTool() {
     setTerms(d.terms ?? QUOTE_TERMS[0])
     setSubstrates(normaliseSubstrates(d.substrates ?? d.qty))
     setFinishSpecs(d.finishSpecs ?? {})
+    setExtractRes(d.takeoff ?? null)
+    setPhotoLinks(d.photoLinks ?? {})
+    setReview(null)
     setPrep(d.prep ?? PREP_OPTS[1]); setCeilingHeight(d.ceilingHeight ?? HEIGHT_OPTS[0]); setAccess(d.access ?? ACCESS_OPTS[0])
     setMethod(d.method ?? 'roll'); setCoats(d.coats ?? '2'); setProcesses(d.processes ?? [])
     // Drafts saved before per-item prep levels existed fall back to the type's defaults.
@@ -1216,7 +1312,7 @@ export default function QuotingTool() {
               so French, solid and panel doors can be priced separately. This is the same list the
               site visit uses, so a visit's takeoff lands here unchanged.
             </div>
-            <SubstratePicker value={substrates} onChange={setSubstrates} showCoating />
+            <SubstratePicker value={substrates} onChange={setSubstrates} showCoating highlight={highlightKey} />
             {Object.keys(totals).length > 0 && (
               <div className="mt-3 pt-2.5 border-t border-black/[0.12] text-[11px] text-[#666]">
                 {Object.keys(totals).length} substrate{Object.keys(totals).length !== 1 ? 's' : ''} in scope ·
@@ -1506,258 +1602,290 @@ export default function QuotingTool() {
 
         {/* RIGHT */}
         <div>
-          <Card className="min-h-[300px]">
-            <div className={CT}>Quote Estimate</div>
-            {genErr && <div className="text-xs text-[#c0392b] bg-[#fef2f2] rounded-lg px-3 py-2 mb-2.5">{genErr}</div>}
-            {estimate ? (
-              <div className="text-[13px] leading-relaxed" dangerouslySetInnerHTML={{ __html: renderEstimate(estimate) }} />
-            ) : !genErr && (
-              <div className="text-center py-10 text-[#666]">
-                <Sparkles size={36} className="mx-auto mb-3 opacity-25" />
-                Fill in the substrates and details, then click Generate
-              </div>
-            )}
-          </Card>
+          <div className="flex gap-1 p-1 mb-3.5 bg-[#f5f4f0] rounded-xl">
+            {([['scope', `Scope${scopeStat.items ? ` (${scopeStat.items})` : ''}`],
+               ['estimate', 'Estimate']] as const).map(([id, label]) => (
+              <button key={id} onClick={() => setRightTab(id)}
+                className={`flex-1 py-2 text-[13px] font-semibold rounded-lg transition-colors ${
+                  rightTab === id ? 'bg-white shadow-sm text-gray-900' : 'text-[#666]'}`}>
+                {label}
+                {id === 'scope' && scopeStat.errors > 0 && <span className="ml-1.5 text-[#c0392b]">●</span>}
+              </button>
+            ))}
+          </div>
 
-          {estimate && (
+          {rightTab === 'scope' ? (
+            <div className="hidden lg:block">
+              <ScopePanel
+                items={scopeItems}
+                photos={scopePhotos}
+                sheetIndex={extractRes?.sheetIndex}
+                scopeNotes={extractRes?.scopeNotes}
+                onQty={(k, id, qty) => patchSubLine(k, id, { qty })}
+                onExclude={excludeSubstrate}
+                onDeleteLine={deleteSubLine}
+                onReveal={revealSubstrate}
+                onTogglePhoto={togglePhotoLink}
+                onAddPhotos={addScopePhotos}
+              />
+            </div>
+          ) : (
             <>
-              <Card>
-                <div className={CT}>Cost Adjustments</div>
-                <div className="text-xs text-[#666] mb-3">
-                  Base costs come from the estimate above. Adjustments apply live and set the quoted price.
+            <Card className="min-h-[300px]">
+              <div className={CT}>Quote Estimate</div>
+              {genErr && <div className="text-xs text-[#c0392b] bg-[#fef2f2] rounded-lg px-3 py-2 mb-2.5">{genErr}</div>}
+              {estimate ? (
+                <div className="text-[13px] leading-relaxed" dangerouslySetInnerHTML={{ __html: renderEstimate(estimate) }} />
+              ) : !genErr && (
+                <div className="text-center py-10 text-[#666]">
+                  <Sparkles size={36} className="mx-auto mb-3 opacity-25" />
+                  Fill in the substrates and details, then click Generate
                 </div>
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 mb-3">
-                  {([
-                    ['Labour ex GST ($)', adjLab, setAdjLab, ''],
-                    ['Materials ex GST ($)', adjMat, setAdjMat, ''],
-                    ['Waste %', waste, setWaste, 'on materials'],
-                    ['Contingency %', contingency, setContingency, 'on labour'],
-                    ['Overhead %', overheadPct, setOverheadPct, 'on subtotal'],
-                    ['Buffer days', bufDays, setBufDays, ''],
-                    ['Buffer hours', bufHrs, setBufHrs, ''],
-                    ['Travel expenses ($)', travelCost, setTravelCost, 'ex GST'],
-                  ] as [string, number, (n: number) => void, string][]).map(([label, val, set, hint]) => (
-                    <div key={label}>
-                      <label className="block text-[10px] uppercase font-bold text-[#666] mb-1">
-                        {label} {hint && <span className="font-normal normal-case">({hint})</span>}
-                      </label>
-                      <input type="number" min={0} value={val || ''} placeholder="0"
-                        onChange={e => set(parseFloat(e.target.value) || 0)} className={INP} />
-                    </div>
-                  ))}
-                </div>
-                <div className="bg-[#f5f4f0] rounded-lg px-3.5 py-3">
-                  <div className="grid grid-cols-3 gap-2.5">
-                    {([['Labour (adj)', labAdj], ['Materials+cons (adj)', matAdj],
-                       ['Overhead', adjSub * (overheadPct / 100)]] as [string, number][]).map(([l, v]) => (
-                      <div key={l}>
-                        <div className="text-[10px] text-[#666] font-semibold uppercase mb-0.5">{l}</div>
-                        <div className="text-[15px] font-bold">{fmtCurrency(v)}</div>
-                      </div>
-                    ))}
-                  </div>
-                  {consTotal > 0 && (
-                    <div className="flex justify-between items-center py-1 mt-2 border-t border-black/[0.06]">
-                      <span className="text-[10px] text-[#666] font-semibold uppercase">↳ Consumables (incl. in materials)</span>
-                      <span className="text-xs text-[#666]">{fmtCurrency(consTotal)}</span>
-                    </div>
-                  )}
-                  {travelCost > 0 && (
-                    <div className="flex justify-between items-center py-1 border-t border-black/[0.06]">
-                      <span className="text-[10px] text-[#666] font-semibold uppercase">Travel expenses</span>
-                      <span className="text-sm font-bold">{fmtCurrency(travelCost)}</span>
-                    </div>
-                  )}
-                  <div className="grid grid-cols-3 gap-2.5 mt-2">
-                    {([['Total ex GST', adjTotalEx, true], ['GST (10%)', adjGst, false],
-                       ['Total inc GST', adjTotalEx + adjGst, false]] as [string, number, boolean][]).map(([l, v, hl]) => (
-                      <div key={l}>
-                        <div className="text-[10px] text-[#666] font-semibold uppercase mb-0.5">{l}</div>
-                        <div className="text-base font-bold" style={hl ? { color: '#2563eb' } : undefined}>{fmtCurrency(v)}</div>
-                      </div>
-                    ))}
-                  </div>
-                  {(bufDays > 0 || bufHrs > 0) && (
-                    <div className="text-xs text-[#666] border-t border-black/[0.08] pt-1.5 mt-1.5">
-                      Buffer: {bufDays > 0 && `${bufDays} day${bufDays !== 1 ? 's' : ''} `}
-                      {bufHrs > 0 && `${bufHrs} hr${bufHrs !== 1 ? 's' : ''}`} added to schedule
-                    </div>
-                  )}
-                </div>
-              </Card>
+              )}
+            </Card>
 
-              <Card>
-                <div className="flex justify-between items-center mb-2.5">
-                  <div className={`${CT} m-0`}>Paint Quantity Adjuster</div>
-                  <button onClick={() => setPaintRows(r => [...r, newPaintRow('', 0)])} className={BTN}>
-                    <Plus size={12} /> Add product
-                  </button>
-                </div>
-                <div className="text-[11px] text-[#666] mb-2.5">
-                  Enter litres needed per product. Choose tin sizes, set prices — materials cost recalculates live.
-                </div>
-                {paintRows.map(r => {
-                  const t = rowTins(r)
-                  return (
-                    <div key={r.id} className="border border-black/10 rounded-lg px-3 py-2.5 mb-2">
-                      <div className="flex gap-2 items-center mb-2 flex-wrap">
-                        <input value={r.product} placeholder="Product name (e.g. Wash and Wear Low Sheen)"
-                          onChange={e => patchPaint(r.id, { product: e.target.value })}
-                          className="flex-1 min-w-[180px] px-2 py-1.5 text-xs bg-white border border-black/20 rounded-lg focus:outline-none" />
-                        <div className="flex items-center gap-1">
-                          <input type="number" min={0} step="0.5" value={r.litres || ''}
-                            onChange={e => {
-                              const l = parseFloat(e.target.value) || 0
-                              patchPaint(r.id, { litres: l, qty: suggestTins(l) })
-                            }}
-                            className="w-16 px-1.5 py-1.5 text-center text-xs bg-white border border-black/20 rounded-lg focus:outline-none" />
-                          <span className="text-[11px] text-[#666]">L needed</span>
-                        </div>
-                        <button onClick={() => patchPaint(r.id, { qty: suggestTins(r.litres) })} className={BTN} title="Auto-suggest tins">
-                          <Sparkles size={11} /> Suggest tins
-                        </button>
-                        <button onClick={() => setPaintRows(x => x.filter(y => y.id !== r.id))} className="text-[#c0392b]"><Trash2 size={12} /></button>
-                      </div>
-                      <div className="overflow-x-auto">
-                        <table className="w-full text-xs border-collapse min-w-[420px]">
-                          <thead>
-                            <tr className="bg-[#f5f4f0]">
-                              {TIN_SIZES.map(s => <th key={s} className="px-2 py-1.5 text-center font-semibold">{TIN_LABEL[s]}</th>)}
-                              <th className="px-2 py-1.5 text-right font-semibold">Total L</th>
-                              <th className="px-2 py-1.5 text-right font-semibold">Cost ex GST</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            <tr>
-                              {TIN_SIZES.map(s => (
-                                <td key={s} className="px-1 py-1.5 text-center">
-                                  <div className="flex flex-col gap-1 items-center">
-                                    <input type="number" min={0} value={r.qty[s] || 0}
-                                      onChange={e => patchPaint(r.id, { qty: { ...r.qty, [s]: parseInt(e.target.value) || 0 } })}
-                                      className="w-11 px-1 py-1 text-center text-xs bg-white border border-black/20 rounded focus:outline-none" />
-                                    <input type="number" min={0} step="0.01" value={r.price[s] || ''} placeholder="$"
-                                      onChange={e => patchPaint(r.id, { price: { ...r.price, [s]: parseFloat(e.target.value) || 0 } })}
-                                      className="w-14 px-1 py-1 text-center text-[11px] text-[#666] bg-white border border-black/20 rounded focus:outline-none" />
-                                  </div>
-                                </td>
-                              ))}
-                              <td className="px-2 py-1.5 text-right font-semibold whitespace-nowrap">{t.litres.toFixed(1)} L</td>
-                              <td className="px-2 py-1.5 text-right font-bold text-[#2563eb]">{fmtCurrency(t.cost)}</td>
-                            </tr>
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-                  )
-                })}
-                {paintRows.length > 0 && (
-                  <div className="flex justify-between items-center mt-2.5 px-3 py-2.5 bg-[#f5f4f0] rounded-lg">
-                    <span className="text-xs text-[#666]">Total materials ex GST</span>
-                    <span className="font-bold text-base text-[#2563eb]">{fmtCurrency(paintTotal)}</span>
-                  </div>
-                )}
-              </Card>
-
-              <Card>
-                <div className={CT}>Labour Calculator</div>
-                <div className="text-[11px] text-[#666] mb-2.5">
-                  Break down labour days by phase. Rates auto-fill from your painters above.
-                </div>
-                <div className="grid grid-cols-3 sm:grid-cols-5 gap-2.5 mb-2.5">
-                  {([['Hrs per day', laHpd, setLaHpd], ['Days — Prep', laPrep, setLaPrep],
-                     ['Days — Top coats', laTop, setLaTop], ['Buffer days', laBufD, setLaBufD],
-                     ['Buffer hours', laBufH, setLaBufH]] as [string, number, (n: number) => void][]).map(([l, v, set]) => (
-                    <div key={l}>
-                      <label className="block text-[10px] uppercase font-bold text-[#666] mb-1">{l}</label>
-                      <input type="number" min={0} step="0.5" value={v || ''} placeholder="0"
-                        onChange={e => set(parseFloat(e.target.value) || 0)} className={INP} />
-                    </div>
-                  ))}
-                </div>
-                <div className="mb-2.5">
-                  {painters.map((p, i) => (
-                    <div key={p.id} className="flex items-center gap-2 mb-1.5 text-xs">
-                      <span className="w-24 text-[#666] truncate">{p.name || `Painter ${i + 1}`}</span>
-                      <span className="text-[#666]">$</span>
-                      <input type="number" min={0} value={laRates[i] ?? p.rate}
-                        onChange={e => setLaRates(r => {
-                          const n = painters.map((q, j) => r[j] ?? q.rate)
-                          n[i] = parseFloat(e.target.value) || 0
-                          return n
-                        })}
-                        className="w-16 px-1.5 py-1 text-xs bg-white border border-black/20 rounded-lg focus:outline-none" />
-                      <span className="text-[10px] text-[#999]">/hr</span>
-                    </div>
-                  ))}
-                </div>
-                <div className="bg-[#f5f4f0] rounded-lg px-3 py-2.5">
-                  <div className="grid grid-cols-3 gap-2">
-                    {([['Total days', (laPrep + laTop).toFixed(1)],
-                       ['Buffer', laBufD > 0 || laBufH > 0 ? `${laBufD > 0 ? laBufD + 'd ' : ''}${laBufH > 0 ? laBufH + 'h' : ''}` : '—'],
-                       ['Total hours', laTotalHrs.toFixed(1)]] as [string, string][]).map(([l, v]) => (
-                      <div key={l}>
-                        <div className="text-[10px] text-[#666] font-semibold uppercase mb-0.5">{l}</div>
-                        <div className="text-[15px] font-bold">{v}</div>
-                      </div>
-                    ))}
-                  </div>
-                  <div className="flex justify-between items-center pt-2 mt-2 border-t border-black/[0.08]">
-                    <span className="text-xs text-[#666]">Labour cost ex GST</span>
-                    <span className="text-lg font-bold text-[#2563eb]">{fmtCurrency(laCost)}</span>
-                  </div>
-                </div>
-              </Card>
-
-              {compJobs.length > 0 && (
+            {estimate && (
+              <>
                 <Card>
-                  <div className={CT}>Comparable Past Jobs</div>
-                  <div className="text-xs text-[#666] mb-2.5">
-                    Found {compJobs.length} comparable finished job{compJobs.length !== 1 ? 's' : ''} — sorted by
-                    relevance. Margins calculated from logged materials &amp; labour.
+                  <div className={CT}>Cost Adjustments</div>
+                  <div className="text-xs text-[#666] mb-3">
+                    Base costs come from the estimate above. Adjustments apply live and set the quoted price.
                   </div>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-xs border-collapse">
-                      <thead>
-                        <tr className="bg-[#f5f4f0]">
-                          <th className="px-2 py-1.5 text-left font-semibold">Job</th>
-                          <th className="px-2 py-1.5 text-right font-semibold">Agreed</th>
-                          <th className="px-2 py-1.5 text-right font-semibold">Real Cost</th>
-                          <th className="px-2 py-1.5 text-right font-semibold">Margin</th>
-                          <th className="px-2 py-1.5 text-center font-semibold">Sub Match</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {compJobs.map(c => (
-                          <tr key={c.job.id} className="border-b border-black/[0.06]">
-                            <td className="px-2 py-1.5">
-                              <div className="font-medium">{c.job.client || '—'}</div>
-                              <div className="text-[10px] text-[#666]">
-                                {c.job.type || ''} · {(c.job.address || '').split(',')[0]}
-                              </div>
-                            </td>
-                            <td className="px-2 py-1.5 text-right font-semibold">{fmtCurrency(c.job.agreed_ex_gst)}</td>
-                            <td className="px-2 py-1.5 text-right text-[#666]">{c.realCost > 0 ? fmtCurrency(c.realCost) : '—'}</td>
-                            <td className="px-2 py-1.5 text-right font-semibold"
-                              style={{ color: c.margin === null ? '#666' : c.margin >= 30 ? '#27ae60' : c.margin >= 15 ? '#e67e22' : '#c0392b' }}>
-                              {c.margin !== null ? `${c.margin.toFixed(1)}%` : '—'}
-                            </td>
-                            <td className="px-2 py-1.5 text-center">
-                              <span className="text-[10px] bg-[#2563eb]/[0.13] text-[#2563eb] rounded-full px-1.5 py-0.5 font-semibold">
-                                {c.matchPct > 0 ? `${c.matchPct}%` : 'type only'}
-                              </span>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 mb-3">
+                    {([
+                      ['Labour ex GST ($)', adjLab, setAdjLab, ''],
+                      ['Materials ex GST ($)', adjMat, setAdjMat, ''],
+                      ['Waste %', waste, setWaste, 'on materials'],
+                      ['Contingency %', contingency, setContingency, 'on labour'],
+                      ['Overhead %', overheadPct, setOverheadPct, 'on subtotal'],
+                      ['Buffer days', bufDays, setBufDays, ''],
+                      ['Buffer hours', bufHrs, setBufHrs, ''],
+                      ['Travel expenses ($)', travelCost, setTravelCost, 'ex GST'],
+                    ] as [string, number, (n: number) => void, string][]).map(([label, val, set, hint]) => (
+                      <div key={label}>
+                        <label className="block text-[10px] uppercase font-bold text-[#666] mb-1">
+                          {label} {hint && <span className="font-normal normal-case">({hint})</span>}
+                        </label>
+                        <input type="number" min={0} value={val || ''} placeholder="0"
+                          onChange={e => set(parseFloat(e.target.value) || 0)} className={INP} />
+                      </div>
+                    ))}
                   </div>
-                  {compJobs.some(c => c.realCost === 0) && (
-                    <div className="text-[11px] text-[#666] mt-2 pt-1.5 border-t border-black/[0.06] flex items-center gap-1">
-                      <Info size={11} /> Log materials &amp; labour against a job to see real cost and margin.
+                  <div className="bg-[#f5f4f0] rounded-lg px-3.5 py-3">
+                    <div className="grid grid-cols-3 gap-2.5">
+                      {([['Labour (adj)', labAdj], ['Materials+cons (adj)', matAdj],
+                         ['Overhead', adjSub * (overheadPct / 100)]] as [string, number][]).map(([l, v]) => (
+                        <div key={l}>
+                          <div className="text-[10px] text-[#666] font-semibold uppercase mb-0.5">{l}</div>
+                          <div className="text-[15px] font-bold">{fmtCurrency(v)}</div>
+                        </div>
+                      ))}
+                    </div>
+                    {consTotal > 0 && (
+                      <div className="flex justify-between items-center py-1 mt-2 border-t border-black/[0.06]">
+                        <span className="text-[10px] text-[#666] font-semibold uppercase">↳ Consumables (incl. in materials)</span>
+                        <span className="text-xs text-[#666]">{fmtCurrency(consTotal)}</span>
+                      </div>
+                    )}
+                    {travelCost > 0 && (
+                      <div className="flex justify-between items-center py-1 border-t border-black/[0.06]">
+                        <span className="text-[10px] text-[#666] font-semibold uppercase">Travel expenses</span>
+                        <span className="text-sm font-bold">{fmtCurrency(travelCost)}</span>
+                      </div>
+                    )}
+                    <div className="grid grid-cols-3 gap-2.5 mt-2">
+                      {([['Total ex GST', adjTotalEx, true], ['GST (10%)', adjGst, false],
+                         ['Total inc GST', adjTotalEx + adjGst, false]] as [string, number, boolean][]).map(([l, v, hl]) => (
+                        <div key={l}>
+                          <div className="text-[10px] text-[#666] font-semibold uppercase mb-0.5">{l}</div>
+                          <div className="text-base font-bold" style={hl ? { color: '#2563eb' } : undefined}>{fmtCurrency(v)}</div>
+                        </div>
+                      ))}
+                    </div>
+                    {(bufDays > 0 || bufHrs > 0) && (
+                      <div className="text-xs text-[#666] border-t border-black/[0.08] pt-1.5 mt-1.5">
+                        Buffer: {bufDays > 0 && `${bufDays} day${bufDays !== 1 ? 's' : ''} `}
+                        {bufHrs > 0 && `${bufHrs} hr${bufHrs !== 1 ? 's' : ''}`} added to schedule
+                      </div>
+                    )}
+                  </div>
+                </Card>
+
+                <Card>
+                  <div className="flex justify-between items-center mb-2.5">
+                    <div className={`${CT} m-0`}>Paint Quantity Adjuster</div>
+                    <button onClick={() => setPaintRows(r => [...r, newPaintRow('', 0)])} className={BTN}>
+                      <Plus size={12} /> Add product
+                    </button>
+                  </div>
+                  <div className="text-[11px] text-[#666] mb-2.5">
+                    Enter litres needed per product. Choose tin sizes, set prices — materials cost recalculates live.
+                  </div>
+                  {paintRows.map(r => {
+                    const t = rowTins(r)
+                    return (
+                      <div key={r.id} className="border border-black/10 rounded-lg px-3 py-2.5 mb-2">
+                        <div className="flex gap-2 items-center mb-2 flex-wrap">
+                          <input value={r.product} placeholder="Product name (e.g. Wash and Wear Low Sheen)"
+                            onChange={e => patchPaint(r.id, { product: e.target.value })}
+                            className="flex-1 min-w-[180px] px-2 py-1.5 text-xs bg-white border border-black/20 rounded-lg focus:outline-none" />
+                          <div className="flex items-center gap-1">
+                            <input type="number" min={0} step="0.5" value={r.litres || ''}
+                              onChange={e => {
+                                const l = parseFloat(e.target.value) || 0
+                                patchPaint(r.id, { litres: l, qty: suggestTins(l) })
+                              }}
+                              className="w-16 px-1.5 py-1.5 text-center text-xs bg-white border border-black/20 rounded-lg focus:outline-none" />
+                            <span className="text-[11px] text-[#666]">L needed</span>
+                          </div>
+                          <button onClick={() => patchPaint(r.id, { qty: suggestTins(r.litres) })} className={BTN} title="Auto-suggest tins">
+                            <Sparkles size={11} /> Suggest tins
+                          </button>
+                          <button onClick={() => setPaintRows(x => x.filter(y => y.id !== r.id))} className="text-[#c0392b]"><Trash2 size={12} /></button>
+                        </div>
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-xs border-collapse min-w-[420px]">
+                            <thead>
+                              <tr className="bg-[#f5f4f0]">
+                                {TIN_SIZES.map(s => <th key={s} className="px-2 py-1.5 text-center font-semibold">{TIN_LABEL[s]}</th>)}
+                                <th className="px-2 py-1.5 text-right font-semibold">Total L</th>
+                                <th className="px-2 py-1.5 text-right font-semibold">Cost ex GST</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              <tr>
+                                {TIN_SIZES.map(s => (
+                                  <td key={s} className="px-1 py-1.5 text-center">
+                                    <div className="flex flex-col gap-1 items-center">
+                                      <input type="number" min={0} value={r.qty[s] || 0}
+                                        onChange={e => patchPaint(r.id, { qty: { ...r.qty, [s]: parseInt(e.target.value) || 0 } })}
+                                        className="w-11 px-1 py-1 text-center text-xs bg-white border border-black/20 rounded focus:outline-none" />
+                                      <input type="number" min={0} step="0.01" value={r.price[s] || ''} placeholder="$"
+                                        onChange={e => patchPaint(r.id, { price: { ...r.price, [s]: parseFloat(e.target.value) || 0 } })}
+                                        className="w-14 px-1 py-1 text-center text-[11px] text-[#666] bg-white border border-black/20 rounded focus:outline-none" />
+                                    </div>
+                                  </td>
+                                ))}
+                                <td className="px-2 py-1.5 text-right font-semibold whitespace-nowrap">{t.litres.toFixed(1)} L</td>
+                                <td className="px-2 py-1.5 text-right font-bold text-[#2563eb]">{fmtCurrency(t.cost)}</td>
+                              </tr>
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )
+                  })}
+                  {paintRows.length > 0 && (
+                    <div className="flex justify-between items-center mt-2.5 px-3 py-2.5 bg-[#f5f4f0] rounded-lg">
+                      <span className="text-xs text-[#666]">Total materials ex GST</span>
+                      <span className="font-bold text-base text-[#2563eb]">{fmtCurrency(paintTotal)}</span>
                     </div>
                   )}
                 </Card>
-              )}
+
+                <Card>
+                  <div className={CT}>Labour Calculator</div>
+                  <div className="text-[11px] text-[#666] mb-2.5">
+                    Break down labour days by phase. Rates auto-fill from your painters above.
+                  </div>
+                  <div className="grid grid-cols-3 sm:grid-cols-5 gap-2.5 mb-2.5">
+                    {([['Hrs per day', laHpd, setLaHpd], ['Days — Prep', laPrep, setLaPrep],
+                       ['Days — Top coats', laTop, setLaTop], ['Buffer days', laBufD, setLaBufD],
+                       ['Buffer hours', laBufH, setLaBufH]] as [string, number, (n: number) => void][]).map(([l, v, set]) => (
+                      <div key={l}>
+                        <label className="block text-[10px] uppercase font-bold text-[#666] mb-1">{l}</label>
+                        <input type="number" min={0} step="0.5" value={v || ''} placeholder="0"
+                          onChange={e => set(parseFloat(e.target.value) || 0)} className={INP} />
+                      </div>
+                    ))}
+                  </div>
+                  <div className="mb-2.5">
+                    {painters.map((p, i) => (
+                      <div key={p.id} className="flex items-center gap-2 mb-1.5 text-xs">
+                        <span className="w-24 text-[#666] truncate">{p.name || `Painter ${i + 1}`}</span>
+                        <span className="text-[#666]">$</span>
+                        <input type="number" min={0} value={laRates[i] ?? p.rate}
+                          onChange={e => setLaRates(r => {
+                            const n = painters.map((q, j) => r[j] ?? q.rate)
+                            n[i] = parseFloat(e.target.value) || 0
+                            return n
+                          })}
+                          className="w-16 px-1.5 py-1 text-xs bg-white border border-black/20 rounded-lg focus:outline-none" />
+                        <span className="text-[10px] text-[#999]">/hr</span>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="bg-[#f5f4f0] rounded-lg px-3 py-2.5">
+                    <div className="grid grid-cols-3 gap-2">
+                      {([['Total days', (laPrep + laTop).toFixed(1)],
+                         ['Buffer', laBufD > 0 || laBufH > 0 ? `${laBufD > 0 ? laBufD + 'd ' : ''}${laBufH > 0 ? laBufH + 'h' : ''}` : '—'],
+                         ['Total hours', laTotalHrs.toFixed(1)]] as [string, string][]).map(([l, v]) => (
+                        <div key={l}>
+                          <div className="text-[10px] text-[#666] font-semibold uppercase mb-0.5">{l}</div>
+                          <div className="text-[15px] font-bold">{v}</div>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="flex justify-between items-center pt-2 mt-2 border-t border-black/[0.08]">
+                      <span className="text-xs text-[#666]">Labour cost ex GST</span>
+                      <span className="text-lg font-bold text-[#2563eb]">{fmtCurrency(laCost)}</span>
+                    </div>
+                  </div>
+                </Card>
+
+                {compJobs.length > 0 && (
+                  <Card>
+                    <div className={CT}>Comparable Past Jobs</div>
+                    <div className="text-xs text-[#666] mb-2.5">
+                      Found {compJobs.length} comparable finished job{compJobs.length !== 1 ? 's' : ''} — sorted by
+                      relevance. Margins calculated from logged materials &amp; labour.
+                    </div>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-xs border-collapse">
+                        <thead>
+                          <tr className="bg-[#f5f4f0]">
+                            <th className="px-2 py-1.5 text-left font-semibold">Job</th>
+                            <th className="px-2 py-1.5 text-right font-semibold">Agreed</th>
+                            <th className="px-2 py-1.5 text-right font-semibold">Real Cost</th>
+                            <th className="px-2 py-1.5 text-right font-semibold">Margin</th>
+                            <th className="px-2 py-1.5 text-center font-semibold">Sub Match</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {compJobs.map(c => (
+                            <tr key={c.job.id} className="border-b border-black/[0.06]">
+                              <td className="px-2 py-1.5">
+                                <div className="font-medium">{c.job.client || '—'}</div>
+                                <div className="text-[10px] text-[#666]">
+                                  {c.job.type || ''} · {(c.job.address || '').split(',')[0]}
+                                </div>
+                              </td>
+                              <td className="px-2 py-1.5 text-right font-semibold">{fmtCurrency(c.job.agreed_ex_gst)}</td>
+                              <td className="px-2 py-1.5 text-right text-[#666]">{c.realCost > 0 ? fmtCurrency(c.realCost) : '—'}</td>
+                              <td className="px-2 py-1.5 text-right font-semibold"
+                                style={{ color: c.margin === null ? '#666' : c.margin >= 30 ? '#27ae60' : c.margin >= 15 ? '#e67e22' : '#c0392b' }}>
+                                {c.margin !== null ? `${c.margin.toFixed(1)}%` : '—'}
+                              </td>
+                              <td className="px-2 py-1.5 text-center">
+                                <span className="text-[10px] bg-[#2563eb]/[0.13] text-[#2563eb] rounded-full px-1.5 py-0.5 font-semibold">
+                                  {c.matchPct > 0 ? `${c.matchPct}%` : 'type only'}
+                                </span>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    {compJobs.some(c => c.realCost === 0) && (
+                      <div className="text-[11px] text-[#666] mt-2 pt-1.5 border-t border-black/[0.06] flex items-center gap-1">
+                        <Info size={11} /> Log materials &amp; labour against a job to see real cost and margin.
+                      </div>
+                    )}
+                  </Card>
+                )}
+              </>
+            )}
+
             </>
           )}
 
@@ -1843,6 +1971,33 @@ export default function QuotingTool() {
           </Card>
         </div>
       </div>
+
+      {/* On a phone the right column lands after nine cards, so the panel gets
+          its own bar and opens as a sheet rather than being scrolled to. */}
+      {scopeItems.length > 0 && (
+        <button onClick={() => setScopeOpen(true)}
+          className="lg:hidden fixed bottom-0 inset-x-0 z-30 flex items-center gap-2 px-4 py-3
+                     bg-[#166534] text-white text-[13px] font-semibold shadow-lg">
+          <ClipboardList size={15} />
+          <span className="flex-1 text-left">{scopeSummary(scopeStat)}</span>
+          <span className="text-[11px] opacity-80">View scope</span>
+        </button>
+      )}
+
+      <Modal open={scopeOpen} onClose={() => setScopeOpen(false)} size="xl" title="Painting scope">
+        <ScopePanel
+          items={scopeItems}
+          photos={scopePhotos}
+          sheetIndex={extractRes?.sheetIndex}
+          scopeNotes={extractRes?.scopeNotes}
+          onQty={(k, id, qty) => patchSubLine(k, id, { qty })}
+          onExclude={excludeSubstrate}
+          onDeleteLine={deleteSubLine}
+          onReveal={revealSubstrate}
+          onTogglePhoto={togglePhotoLink}
+          onAddPhotos={addScopePhotos}
+        />
+      </Modal>
     </div>
   )
 }
