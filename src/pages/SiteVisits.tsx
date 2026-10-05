@@ -10,6 +10,10 @@ import {
   Plus, Loader2, Trash2, Edit2, Calculator, ArrowUpDown, X, Camera, MapPin,
 } from 'lucide-react'
 import { takeHandoff } from '@/lib/handoff'
+import { photoDataUrls } from '@/lib/photoStore'
+import { photosToScope } from '@/lib/ai'
+import { useBusinessSettings } from '@/pages/SettingsPage'
+import { SUB_BY_KEY, newSubLine } from '@/lib/substrates'
 
 type Row = Record<string, any>
 
@@ -77,6 +81,8 @@ export default function SiteVisits() {
   const [status, setStatus] = useState('')
   const [asc, setAsc] = useState(false)
   const [editing, setEditing] = useState<{ id: string; isNew: boolean; state: SVState } | null>(null)
+  const [aiBusy, setAiBusy] = useState(false)
+  const { data: biz } = useBusinessSettings()
 
   const anyFilter = !!(q || status)
 
@@ -114,6 +120,71 @@ export default function SiteVisits() {
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  /**
+   * Read the photos and the spoken notes into a scope.
+   *
+   * Quantities only land where the model had something to count or was told a
+   * measurement — it is instructed not to estimate area from perspective, and
+   * a surface it can see but not measure still arrives, ticked, with its
+   * condition and prep, waiting for a number.
+   */
+  async function aiParse(state: SVState): Promise<Partial<SVState> | null> {
+    const key = biz?.ai_api_key
+    if (!key) { alert('No API key set. Add your Anthropic API key in Settings.'); return null }
+    if (!state.photos.length) { alert('Take some photos first — there is nothing to read.'); return null }
+
+    setAiBusy(true)
+    try {
+      const urls = await photoDataUrls(state.photos)
+      const photos = state.photos
+        .filter(ph => urls[ph.id])
+        .map(ph => ({ dataUrl: urls[ph.id], note: ph.label, tag: ph.tag }))
+      if (!photos.length) throw new Error('None of the photos could be loaded.')
+
+      const notes = [state.notes, ...state.voiceNotes.map(v => v.text)].filter(Boolean).join('\n')
+      const scope = await photosToScope(key, photos, notes)
+
+      const withQty = scope.observations.filter(o => o.qty != null).length
+      const toMeasure = scope.observations.filter(o => o.qty == null)
+
+      // Returned rather than pushed: the editor keeps its own copy of the
+      // state, so a parent setState here would never reach it.
+      const subs = { ...state.substrates }
+      scope.observations.forEach(o => {
+        const entry = subs[o.key] ?? { inc: false, lines: [newSubLine()] }
+        const lines = entry.lines.length ? [...entry.lines] : [newSubLine()]
+        lines[0] = {
+          ...lines[0],
+          qty: o.qty ?? lines[0].qty,
+          notes: [o.condition, o.prep].filter(Boolean).join(' · ') || lines[0].notes,
+        }
+        subs[o.key] = { ...entry, inc: true, lines }
+      })
+      const added = [scope.summary, scope.scopeNotes && `To check: ${scope.scopeNotes}`]
+        .filter(Boolean).join('\n')
+      const patch: Partial<SVState> = {
+        substrates: subs,
+        jobType: state.jobType || scope.jobType,
+        notes: [state.notes, added].filter(Boolean).join('\n\n'),
+      }
+
+      alert(
+        `${scope.observations.length} surface${scope.observations.length === 1 ? '' : 's'} found, `
+        + `${withQty} with a quantity.`
+        + (toMeasure.length
+          ? `\n\nStill need measuring: ${toMeasure.map(o => SUB_BY_KEY[o.key]?.label ?? o.key).join(', ')}.`
+            + '\nA photograph cannot be measured, so these were left for you.'
+          : ''),
+      )
+      return patch
+    } catch (err: any) {
+      alert(err?.message ?? 'Could not read the photos.')
+      return null
+    } finally {
+      setAiBusy(false)
+    }
+  }
 
   async function save(state: SVState, complete: boolean) {
     const next: SVState = { ...state, status: complete ? 'Complete' : 'Draft' }
@@ -176,6 +247,8 @@ export default function SiteVisits() {
           isNew={editing.isNew}
           onClose={() => setEditing(null)}
           onSave={save}
+          onAIParse={aiParse}
+          aiBusy={aiBusy}
         />
       )}
 

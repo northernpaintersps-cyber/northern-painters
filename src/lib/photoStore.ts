@@ -89,3 +89,31 @@ export async function photoStoreReady(): Promise<boolean> {
   const { error } = await supabase.storage.from(PHOTO_BUCKET).list('', { limit: 1 })
   return !error
 }
+
+/**
+ * Photos as base64 data URLs, for sending to the API.
+ *
+ * A signed link is a URL the browser can render, but the Messages API needs
+ * the bytes, so stored photos are fetched back. One that cannot be fetched is
+ * skipped rather than failing the batch — a scope read from nine photos beats
+ * no scope because the tenth would not load.
+ */
+export async function photoDataUrls(photos: StoredPhoto[]): Promise<Record<string, string>> {
+  const signed = await signPhotos(photos)
+  const out: Record<string, string> = {}
+  await Promise.all(Object.entries(signed).map(async ([id, url]) => {
+    if (url.startsWith('data:')) { out[id] = url; return }
+    try {
+      const res = await fetch(url)
+      if (!res.ok) return
+      const blob = await res.blob()
+      out[id] = await new Promise<string>((resolve, reject) => {
+        const r = new FileReader()
+        r.onload = () => resolve(r.result as string)
+        r.onerror = () => reject(r.error)
+        r.readAsDataURL(blob)
+      })
+    } catch { /* skipped */ }
+  }))
+  return out
+}

@@ -2,9 +2,10 @@
 // using the key stored in business settings (np_settings key='business')
 
 import {
-  TAKEOFF_TOOL, SUBSTRATE_DOC, type TakeoffRow, type FinishRow,
+  TAKEOFF_TOOL, SUBSTRATE_DOC, SUB_KEYS,
+  type TakeoffRow, type FinishRow, type RowConfidence,
 } from './takeoffSchema'
-import { SUB_BY_KEY } from './substrates'
+import { SUB_BY_KEY, type SubUnit } from './substrates'
 import { shrinkImage } from './image'
 import { pdfPageCount, pdfSubset, pdfChunks, PdfReadError } from './pdfPages'
 import { normaliseLineItems, reconcileGst, type InvoiceLineItem } from './utils'
@@ -519,6 +520,187 @@ Mark relevant = false for: structural, hydraulic, drainage, electrical, mechanic
 
 Record every page, including the ones you mark false. Do not skip pages. If a title block is unreadable, record what you can and mark it relevant with why = "title block unreadable".`
 
+/** Models to try, strongest first. */
+const TAKEOFF_MODELS = ['claude-opus-5', 'claude-sonnet-5', 'claude-sonnet-4-6']
+
+// ── Photos and a spoken note become a scope ──────────────────
+// The repaint path. There are no drawings to measure, so the model is asked
+// for what it can actually tell from a photograph — the surfaces present and
+// the state they are in — and is told to leave the quantity out rather than
+// guess at one from perspective.
+
+export interface PhotoInput {
+  /** A data URL or any URL the API can be handed as base64. */
+  dataUrl: string
+  /** What the estimator said about this photo. */
+  note?: string
+  tag?: string
+}
+
+export interface ScopeObservation {
+  key: string
+  qty: number | null
+  unit: SubUnit
+  /** Where the number came from, or why there is none. */
+  basis: string
+  condition: string
+  prep: string
+  confidence: RowConfidence
+  /** Indexes into the photos passed in, 1-based as the prompt numbers them. */
+  photos: number[]
+}
+
+export interface PhotoScope {
+  jobType: string
+  observations: ScopeObservation[]
+  scopeNotes: string
+  summary: string
+  model?: string
+}
+
+const PHOTO_SCOPE_SYSTEM = `You are a senior Australian painting estimator looking at photographs of a property that needs repainting, with the estimator's own spoken notes against them.
+
+Your job is to say what has to be painted and what state it is in. Record it with the record_scope tool.
+
+WHAT A PHOTOGRAPH CAN AND CANNOT TELL YOU
+- You can identify surfaces, their material, and their condition: chalking, peeling, water damage, mould, previous coating failing, bare timber, new plasterboard.
+- You can judge prep: a wall that needs a wash and a light sand is not the same job as one needing stripping and full filling. Say which.
+- You CANNOT measure from a photograph. Perspective makes a guess worse than no number at all, and the quote is built on these figures.
+- So: give a quantity ONLY when the estimator's note states one, or when the photo contains something of known size you can count — doors, windows, cabinet doors, posts, downpipes. Counting is reliable; estimating area is not.
+- When you have no quantity, set qty to null and say in basis what is needed to get one, for example "measure the run" or "count from the floor plan".
+
+THE ESTIMATOR'S NOTES ARE AUTHORITATIVE
+A note saying "hallway is about forty square metres" is a measurement; use it and say so in basis. A note contradicting what you think you see is right and you are wrong — these were taken standing in the room.
+
+THE SUBSTRATE TABLE IS AUTHORITATIVE
+Use only these keys, with the unit each states. A surface that fits no key goes in scopeNotes rather than being forced into the nearest one.
+
+{SUBSTRATE_DOC}
+
+Also: say what kind of job this looks like, flag anything that will not be obvious from a photograph but will cost money — access, height, lead paint on pre-1970 timber, asbestos-era sheeting, rot needing a carpenter — and list what you could not see and would need before quoting.`
+
+const PHOTO_SCOPE_TOOL = {
+  name: 'record_scope',
+  description: 'Record the paintable surfaces visible in these photographs and their condition.',
+  input_schema: {
+    type: 'object' as const,
+    additionalProperties: false,
+    required: ['jobType', 'observations', 'scopeNotes', 'summary'],
+    properties: {
+      jobType: { type: 'string', description: 'e.g. "Interior repaint", "Kitchen cabinets".' },
+      observations: {
+        type: 'array',
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['key', 'qty', 'unit', 'basis', 'condition', 'prep', 'confidence', 'photos'],
+          properties: {
+            key: { type: 'string', enum: SUB_KEYS },
+            qty: {
+              type: ['number', 'null'],
+              description: 'Only from a stated measurement or a reliable count. null otherwise — never estimated from perspective.',
+            },
+            unit: { type: 'string', enum: ['sqm', 'lm', 'qty'] },
+            basis: { type: 'string', description: 'Where the number came from, or what is needed to get one.' },
+            condition: { type: 'string', description: 'What the surface looks like now.' },
+            prep: { type: 'string', description: 'The preparation this surface needs before coating.' },
+            confidence: { type: 'string', enum: ['high', 'medium', 'low'] },
+            photos: {
+              type: 'array', items: { type: 'number' },
+              description: 'Which photo numbers show this surface.',
+            },
+          },
+        },
+      },
+      scopeNotes: { type: 'string', description: 'Access, hazards, anything not visible, anything needing a measure.' },
+      summary: { type: 'string', description: 'The walkthrough in a few lines, as the estimator would describe it.' },
+    },
+  },
+}
+
+/** Read a set of site photos and their notes into a painting scope. */
+export async function photosToScope(
+  apiKey: string, photos: PhotoInput[], visitNotes = '',
+): Promise<PhotoScope> {
+  if (!photos.length) throw new Error('No photos to read.')
+
+  const content: any[] = []
+  if (visitNotes.trim()) {
+    content.push({
+      type: 'text',
+      text: 'ESTIMATOR NOTES FROM THE VISIT (authoritative):\n' + visitNotes.trim(),
+    })
+  }
+
+  photos.forEach((p, i) => {
+    content.push({
+      type: 'text',
+      text: `Photo ${i + 1}${p.tag ? ` [${p.tag}]` : ''}${p.note ? ` — ${p.note}` : ''}:`,
+    })
+    const mime = p.dataUrl.match(/^data:([^;]+);/)?.[1] ?? 'image/jpeg'
+    content.push({
+      type: 'image',
+      source: { type: 'base64', media_type: mime, data: p.dataUrl.replace(/^data:[^;]+;base64,/, '') },
+    })
+  })
+
+  content.push({
+    type: 'text',
+    text: 'Record what has to be painted and the state it is in, with the record_scope tool.',
+  })
+
+  let usage: CallUsage | undefined
+  const call = (model: string) =>
+    callClaude(apiKey, [{ role: 'user', content }],
+      PHOTO_SCOPE_SYSTEM.replace('{SUBSTRATE_DOC}', SUBSTRATE_DOC), {
+        model,
+        maxTokens: 8000,
+        thinking: { budgetTokens: 4000 },
+        tool: PHOTO_SCOPE_TOOL,
+        toolOptional: true,
+        cacheSystem: true,
+        onUsage: u => { usage = u },
+      })
+
+  let raw = ''
+  let lastErr: any
+  for (const model of TAKEOFF_MODELS) {
+    try { raw = await call(model); lastErr = undefined; break } catch (e: any) {
+      lastErr = e
+      if (!/model|not_found|404/i.test(e?.message ?? '')) throw e
+    }
+  }
+  if (lastErr) throw lastErr
+
+  let parsed: any
+  try { parsed = JSON.parse(raw) } catch {
+    try { parsed = parseExtraction(raw) } catch {
+      throw new Error('AI returned unexpected format. Raw response:\n' + raw.slice(0, 400))
+    }
+  }
+
+  const observations: ScopeObservation[] = (Array.isArray(parsed.observations) ? parsed.observations : [])
+    .filter((o: any) => SUB_BY_KEY[o?.key])
+    .map((o: any) => ({
+      key: String(o.key),
+      qty: Number.isFinite(Number(o.qty)) && Number(o.qty) > 0 ? Number(o.qty) : null,
+      unit: (o.unit === 'sqm' || o.unit === 'lm' || o.unit === 'qty') ? o.unit : SUB_BY_KEY[o.key].unit,
+      basis: String(o.basis ?? ''),
+      condition: String(o.condition ?? ''),
+      prep: String(o.prep ?? ''),
+      confidence: (o.confidence === 'low' || o.confidence === 'medium') ? o.confidence : 'high',
+      photos: Array.isArray(o.photos) ? o.photos.map(Number).filter(Number.isFinite) : [],
+    }))
+
+  return {
+    jobType: String(parsed.jobType ?? ''),
+    observations,
+    scopeNotes: String(parsed.scopeNotes ?? ''),
+    summary: String(parsed.summary ?? ''),
+    model: usage?.model,
+  }
+}
+
 /** Drop rows we cannot use, and flag the ones that are suspect but keep them. */
 function cleanRows(raw: any): TakeoffRow[] {
   const seen = new Map<string, TakeoffRow>()
@@ -639,8 +821,6 @@ export function chooseSheets(index: SheetIndexEntry[]): { pages: number[]; dropp
 const sheetLine = (e: SheetIndexEntry) =>
   `  p${e.page} ${e.sheetNo || '—'} ${e.title}${e.kind ? ` (${e.kind})` : ''}`
 
-/** Models to try, strongest first. */
-const TAKEOFF_MODELS = ['claude-opus-5', 'claude-sonnet-5', 'claude-sonnet-4-6']
 
 export async function extractQuantities(
   apiKey: string, docs: ExtractDoc[], scopeNotes = '',
