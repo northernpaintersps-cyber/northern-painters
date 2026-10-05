@@ -208,6 +208,15 @@ export default function QuotingTool() {
   // Show every substrate, or only the groups this service touches. Narrowed
   // by default: a kitchen cabinet quote does not want 34 rows of roofing.
   const [allSubs, setAllSubs] = useState(false)
+  /**
+   * How labour is priced. 'process' is hours against named steps, which is
+   * how the tool has always worked. 'quantity' is a rate per unit against the
+   * measured substrates — faster on a job shaped like one you have done
+   * before, and the only mode history rates can feed.
+   */
+  const [priceMode, setPriceMode] = useState<'process' | 'quantity'>('process')
+  /** Substrate key -> dollars per unit, ex GST. Blank means use the default. */
+  const [unitRates, setUnitRates] = useState<Record<string, number>>({})
   const imgRef = useRef<HTMLInputElement>(null)
   const pdfRef = useRef<HTMLInputElement>(null)
 
@@ -357,8 +366,37 @@ export default function QuotingTool() {
   // hrs × the average painter rate × however many painters are on that step.
   const avgRate = painters.length ? rateSum / painters.length : rates.standard
   const stepCost = (p: Process) => (p.hours || 0) * avgRate * Math.max(1, p.np || painters.length)
-  const totalHours = processes.reduce((s, p) => s + (p.hours || 0), 0)
-  const labourCost = processes.reduce((s, p) => s + stepCost(p), 0)
+  const procHours = processes.reduce((s, p) => s + (p.hours || 0), 0)
+  const procCost = processes.reduce((s, p) => s + stepCost(p), 0)
+
+  /**
+   * The rate per unit for a substrate: whatever has been typed, else the
+   * production rate turned into money at the crew's average rate. Stage 4
+   * will offer a third source — what this actually cost on past jobs.
+   */
+  const defaultUnitRate = (key: string) =>
+    Math.round((PROD_RATES[key] ?? 0) * avgRate * 100) / 100
+  const unitRateFor = (key: string) =>
+    unitRates[key] != null ? unitRates[key] : defaultUnitRate(key)
+
+  const qtyLines = useMemo(() => Object.entries(totals)
+    .filter(([, q]) => q > 0)
+    .map(([key, qty]) => {
+      const sub = SUB_BY_KEY[key]
+      const rate = unitRateFor(key)
+      return {
+        key, qty, label: sub?.label ?? key, unit: unitLabel(sub?.unit ?? 'sqm'),
+        rate, cost: Math.round(qty * rate * 100) / 100,
+        hours: qty * (PROD_RATES[key] ?? 0),
+      }
+    }), [totals, unitRates, avgRate])
+
+  const qtyCost = qtyLines.reduce((s, l) => s + l.cost, 0)
+  const qtyHours = qtyLines.reduce((s, l) => s + l.hours, 0)
+
+  const byQty = priceMode === 'quantity'
+  const totalHours = byQty ? qtyHours : procHours
+  const labourCost = byQty ? qtyCost : procCost
   const days = rates.hpd > 0 ? totalHours / rates.hpd : 0
   const equipTotal = equip.reduce((s, e) => s + (e.cost || 0), 0)
   const extraMatTotal = extraMats.reduce((s, m) => s + (m.cost || 0), 0)
@@ -876,7 +914,7 @@ export default function QuotingTool() {
       client, address, jobType, terms, substrates, prep, ceilingHeight, access,
       method, coats, processes, prepLevels, consPrep, consTotal, consNotes, extraMats,
       painters, travelKm, equip, siteNotes, logisticsNotes, estimate, lockedPrice, rooms,
-      finishSpecs,
+      finishSpecs, priceMode, unitRates,
       // The scope panel is mostly evidence. Without this a reopened quote
       // shows a bare list of numbers with nothing behind them.
       takeoff: extractRes && {
@@ -905,6 +943,8 @@ export default function QuotingTool() {
     setTerms(d.terms ?? QUOTE_TERMS[0])
     setSubstrates(normaliseSubstrates(d.substrates ?? d.qty))
     setFinishSpecs(d.finishSpecs ?? {})
+    setPriceMode(d.priceMode === 'quantity' ? 'quantity' : 'process')
+    setUnitRates(d.unitRates ?? {})
     setExtractRes(d.takeoff ?? null)
     setPhotoLinks(d.photoLinks ?? {})
     restorePhotos(d.scopePhotos ?? [])
@@ -1096,8 +1136,16 @@ export default function QuotingTool() {
           <Card>
             <div className={CT}>1b. Documents, Drawings &amp; Scope</div>
             <div className="text-[11px] text-[#666] mb-2.5">
-              Upload floor plans, drawings, finishes schedules, scope of works, or site photos.
-              AI reads all documents and auto-fills substrate quantities below.
+              {serviceFor(jobType).input === 'drawings'
+                ? <>A {jobType.toLowerCase()} usually arrives as drawings. Upload the set, any
+                    finishes schedule and the scope of works — a large set is indexed first so
+                    only the sheets carrying surfaces are measured.</>
+                : serviceFor(jobType).input === 'photos'
+                  ? <>A {jobType.toLowerCase()} is usually quoted from photos. Add them here, or
+                      take them on a site visit where you can describe each one out loud.
+                      Drawings and schedules work too.</>
+                  : <>This one is usually measured by hand. Upload whatever you have, or enter
+                      the quantities below directly.</>}
             </div>
             <div className="flex gap-2 flex-wrap mb-2.5">
               <button onClick={() => imgRef.current?.click()} className={BTN}><ImageIcon size={13} /> Add Images</button>
@@ -1387,25 +1435,106 @@ export default function QuotingTool() {
 
           <Card>
             <div className="flex justify-between items-center mb-1 flex-wrap gap-2">
-              <div className={`${CT} m-0`}>4. Labour — Processes &amp; Hours</div>
+              <div className={`${CT} m-0`}>
+                4. Labour — {byQty ? 'Rates per Unit' : 'Processes & Hours'}
+              </div>
               <div className="flex gap-1.5 items-center flex-wrap">
                 <div className="flex border border-black/[0.18] rounded-md overflow-hidden text-[11px]">
-                  {(['hrs', 'days'] as const).map(u => (
-                    <button key={u} onClick={() => setProcUnit(u)}
-                      className={`px-2.5 py-1 font-semibold ${procUnit === u ? 'bg-blue-600 text-white' : 'bg-[#f5f4f0] text-[#666]'}`}>{u}</button>
+                  {([['process', 'By process'], ['quantity', 'By quantity']] as const).map(([m, l]) => (
+                    <button key={m} onClick={() => setPriceMode(m)}
+                      className={`px-2.5 py-1 font-semibold ${priceMode === m ? 'bg-blue-600 text-white' : 'bg-[#f5f4f0] text-[#666]'}`}>{l}</button>
                   ))}
                 </div>
-                <button onClick={loadWorkflow} className={BTN}><ClipboardList size={12} /> Template</button>
-                <button onClick={aiSuggestHours} disabled={suggesting} className={`${BTN} disabled:opacity-50`}>
-                  {suggesting ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />} AI Suggest
-                </button>
-                <button onClick={() => setProcesses(p => [...p, newStep('')])} className={BTN}><Plus size={12} /></button>
+                {!byQty && (
+                  <div className="flex border border-black/[0.18] rounded-md overflow-hidden text-[11px]">
+                    {(['hrs', 'days'] as const).map(u => (
+                      <button key={u} onClick={() => setProcUnit(u)}
+                        className={`px-2.5 py-1 font-semibold ${procUnit === u ? 'bg-blue-600 text-white' : 'bg-[#f5f4f0] text-[#666]'}`}>{u}</button>
+                    ))}
+                  </div>
+                )}
+                {!byQty && <>
+                  <button onClick={loadWorkflow} className={BTN}><ClipboardList size={12} /> Template</button>
+                  <button onClick={aiSuggestHours} disabled={suggesting} className={`${BTN} disabled:opacity-50`}>
+                    {suggesting ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />} AI Suggest
+                  </button>
+                  <button onClick={() => setProcesses(p => [...p, newStep('')])} className={BTN}><Plus size={12} /></button>
+                </>}
               </div>
             </div>
             <div className="text-[11px] text-[#666] mb-2.5">
-              Enter time per process step. These exact totals go into the quote — AI does not recalculate them.
-              {baselineHours > 0 && <> Production-rate baseline for your quantities: <strong>{baselineHours.toFixed(1)} hrs</strong>.</>}
+              {byQty
+                ? <>A rate per unit against each measured substrate. Rates start from the
+                    production rates at your crew&apos;s average of {fmtCurrency(avgRate)}/hr — type over any of them.</>
+                : <>Enter time per process step. These exact totals go into the quote — AI does not recalculate them.
+                    {baselineHours > 0 && <> Production-rate baseline for your quantities: <strong>{baselineHours.toFixed(1)} hrs</strong>.</>}</>}
             </div>
+
+            {/* What is actually being painted, beside the time being put on it.
+                Pricing a step called "Second coat" means nothing without the
+                area it covers. */}
+            {qtyLines.length > 0 && !byQty && (
+              <div className="flex flex-wrap gap-1 mb-2.5">
+                {qtyLines.map(l => (
+                  <span key={l.key} className="text-[10px] px-1.5 py-0.5 rounded bg-[#eef5ff] text-[#1e40af]">
+                    {l.label} <b>{l.qty}</b> {l.unit}
+                  </span>
+                ))}
+              </div>
+            )}
+            {byQty && (
+              qtyLines.length === 0 ? (
+                <div className="text-[11px] text-[#666] bg-[#fffbeb] border border-[#fbbf24] rounded-lg px-3 py-2 mb-2.5">
+                  Nothing measured yet. Pricing by quantity needs quantities — tick substrates above,
+                  use the room calculator, or extract them from drawings.
+                </div>
+              ) : (
+                <div className="border border-black/[0.12] rounded-lg overflow-hidden mb-2.5">
+                  <table className="w-full border-collapse text-xs">
+                    <thead>
+                      <tr>{['Substrate', 'Qty', '', 'Rate $/unit', 'Cost', 'Hrs'].map(h => (
+                        <th key={h} className="text-left px-2 py-1 text-[#666] border-b border-black/[0.12] font-medium">{h}</th>
+                      ))}</tr>
+                    </thead>
+                    <tbody>
+                      {qtyLines.map(l => (
+                        <tr key={l.key} className="border-b border-black/[0.06]">
+                          <td className="px-2 py-1">{l.label}</td>
+                          <td className="px-2 py-1 font-mono text-right">{l.qty}</td>
+                          <td className="px-2 py-1 text-[10px] text-[#666]">{l.unit}</td>
+                          <td className="px-2 py-1">
+                            <input type="number" min={0} step="0.01" value={unitRates[l.key] ?? ''}
+                              placeholder={String(defaultUnitRate(l.key))}
+                              onChange={e => {
+                                const v = e.target.value
+                                setUnitRates(r => {
+                                  const n = { ...r }
+                                  if (v === '') delete n[l.key]; else n[l.key] = parseFloat(v) || 0
+                                  return n
+                                })
+                              }}
+                              className="w-20 px-1 py-0.5 border border-black/15 rounded text-xs text-right font-mono" />
+                          </td>
+                          <td className="px-2 py-1 font-mono text-right">{fmtCurrency(l.cost)}</td>
+                          <td className="px-2 py-1 font-mono text-right text-[#666]">{l.hours.toFixed(1)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  <div className="flex justify-between items-center px-2 py-1.5 bg-[#f5f4f0] text-xs font-bold">
+                    <span>{qtyLines.length} substrate{qtyLines.length === 1 ? '' : 's'}</span>
+                    <span>{qtyHours.toFixed(1)} hrs · {fmtCurrency(qtyCost)} ex GST</span>
+                  </div>
+                  {Object.keys(unitRates).length > 0 && (
+                    <button onClick={() => setUnitRates({})}
+                      className="w-full text-[10px] text-[#2563eb] py-1 border-t border-black/[0.08]">
+                      Reset {Object.keys(unitRates).length} edited rate{Object.keys(unitRates).length === 1 ? '' : 's'}
+                    </button>
+                  )}
+                </div>
+              )
+            )}
+
             <div className="flex gap-2 mb-2.5 flex-wrap">
               <div className="flex-1 min-w-[140px]">
                 <label className="block text-[10px] uppercase font-bold text-[#666] mb-1">Application method</label>
@@ -1477,7 +1606,7 @@ export default function QuotingTool() {
               </div>
             )}
 
-            {processes.length === 0 ? (
+            {!byQty && (processes.length === 0 ? (
               <div className="text-[#666] text-xs py-1.5">
                 Use <b>Template</b> to load the steps for this job type, then <b>AI Suggest</b> to estimate times.
               </div>
@@ -1514,7 +1643,7 @@ export default function QuotingTool() {
                   </div>
                 ))}
               </div>
-            )}
+            ))}
 
             {totalHours > 0 && (
               <div className="grid grid-cols-3 gap-2 px-3 py-2.5 bg-[#f5f4f0] rounded-lg">
