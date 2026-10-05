@@ -6,7 +6,7 @@ import { Modal } from '@/components/ui/Modal'
 import JobDayPanel from '@/components/JobDayPanel'
 import JobPicker from '@/components/JobPicker'
 import { Input, Select, TextArea } from '@/components/ui/Field'
-import { fmtDate, genId, today, addDays, getJobScheduledDates } from '@/lib/utils'
+import { fmtDate, genId, today, addDays, getJobScheduledDates, localDate, parseLocal } from '@/lib/utils'
 import { ChevronLeft, ChevronRight, Plus, Loader2, Trash2, X } from 'lucide-react'
 import { invalidateTable } from '@/lib/queryKeys'
 
@@ -127,16 +127,16 @@ export default function CalendarPage() {
     const cells: Array<{ date: string; isCurrentMonth: boolean }> = []
     for (let i = firstDay - 1; i >= 0; i--) {
       const d = new Date(year, month - 1, daysInPrev - i)
-      cells.push({ date: d.toISOString().slice(0, 10), isCurrentMonth: false })
+      cells.push({ date: localDate(d), isCurrentMonth: false })
     }
     for (let d = 1; d <= daysInMonth; d++) {
       const dt = new Date(year, month, d)
-      cells.push({ date: dt.toISOString().slice(0, 10), isCurrentMonth: true })
+      cells.push({ date: localDate(dt), isCurrentMonth: true })
     }
     const remaining = 42 - cells.length
     for (let d = 1; d <= remaining; d++) {
       const dt = new Date(year, month + 1, d)
-      cells.push({ date: dt.toISOString().slice(0, 10), isCurrentMonth: false })
+      cells.push({ date: localDate(dt), isCurrentMonth: false })
     }
     return { cells }
   }, [year, month])
@@ -274,7 +274,7 @@ export default function CalendarPage() {
                     ${isCurrentMonth ? 'bg-white hover:bg-gray-50' : 'bg-white/40 opacity-50 hover:opacity-70'}
                     ${isToday ? 'ring-2 ring-blue-500' : 'border border-gray-200'}`}>
                   <div className={`text-xs font-medium mb-1 ${isToday ? 'text-blue-600' : isCurrentMonth ? 'text-gray-600' : 'text-gray-600'}`}>
-                    {new Date(date + 'T12:00:00').getDate()}
+                    {parseLocal(date).getDate()}
                   </div>
                   {/* Every item shows: a day with a job and two quote visits was
                       being cut off at three with no way to reach the rest. The

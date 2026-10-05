@@ -8,7 +8,7 @@ import JobPicker from '@/components/JobPicker'
 import { Input, TextArea } from '@/components/ui/Field'
 import {
   fmtCurrency, fmtDate, calcOwed, invStatus, genId, today,
-  normaliseDate, parseMilestones, exOf, matchesJob, nextInvoiceNo, jobGstRate,
+  normaliseDate, parseMilestones, exOf, matchesJob, nextInvoiceNo, jobGstRate, addDays,
 } from '@/lib/utils'
 import {
   Plus, Loader2, Trash2, Check, Banknote, Edit2, FileText, Receipt,
@@ -527,7 +527,7 @@ export default function Invoices() {
                 : Math.round(Math.max(0, b.billableToDateExGST - b.invoicedExGST) * 100) / 100
             // Pick up where the last claim stopped, through to today.
             const from = b.invoicedUpTo
-              ? new Date(new Date(b.invoicedUpTo).getTime() + 86400000).toISOString().slice(0, 10)
+              ? addDays(b.invoicedUpTo, 1)
               : (b.unbilled.fromDate || '')
             openNew({
               job_id: j.id, client: j.client,

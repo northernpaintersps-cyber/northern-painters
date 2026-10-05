@@ -60,8 +60,27 @@ export const incOf = (ex: number) => ex * (1 + GST)
 export const exOf = (inc: number) => inc / (1 + GST)
 
 // ── Dates ───────────────────────────────────────────────────
+/**
+ * A calendar date as YYYY-MM-DD, in the local zone.
+ *
+ * `toISOString()` converts to UTC first. In Australia that is ten or eleven
+ * hours behind local, so before mid-morning it returns yesterday, and a
+ * calendar grid built from it is labelled a day out. Every date in this app
+ * is a calendar date — the day the work happened — not an instant, so none of
+ * them should pass through UTC.
+ */
+export function localDate(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+/** Parse YYYY-MM-DD as local midnight. `new Date('2026-10-05')` is UTC midnight. */
+export function parseLocal(dateStr: string): Date {
+  const [y, m, d] = String(dateStr).slice(0, 10).split('-').map(Number)
+  return (y && m && d) ? new Date(y, m - 1, d) : new Date(NaN)
+}
+
 export function today() {
-  return new Date().toISOString().slice(0, 10)
+  return localDate(new Date())
 }
 
 export function fmtDate(d: string | null | undefined) {
@@ -79,13 +98,14 @@ export function fmtDateShort(d: string | null | undefined) {
 }
 
 export function addDays(dateStr: string, days: number): string {
-  const d = new Date(dateStr)
+  const d = parseLocal(dateStr)
+  if (isNaN(d.getTime())) return dateStr
   d.setDate(d.getDate() + days)
-  return d.toISOString().slice(0, 10)
+  return localDate(d)
 }
 
 export function isWorkDay(dateStr: string, workWeekends = false): boolean {
-  const day = new Date(dateStr).getDay()
+  const day = parseLocal(dateStr).getDay()
   if (workWeekends) return true
   return day !== 0 && day !== 6
 }
