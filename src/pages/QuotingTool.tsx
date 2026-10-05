@@ -1,5 +1,5 @@
 import { useState, useMemo, useRef, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase, selectAll } from '@/lib/supabase'
 import { useAuth } from '@/lib/auth'
@@ -22,6 +22,7 @@ import {
 } from '@/lib/substrates'
 import SubstratePicker from '@/components/SubstratePicker'
 import { roomTotals, roomsTotal, roomQuantities, type Room } from '@/lib/roomCalc'
+import { buildJobRates, serviceRates } from '@/lib/jobRates'
 import ScopePanel from '@/components/ScopePanel'
 import { Modal } from '@/components/ui/Modal'
 import { buildScope, scopeStats, pruneLinks, scopeSummary, type ScopePhoto } from '@/lib/scopeModel'
@@ -217,6 +218,8 @@ export default function QuotingTool() {
   const [priceMode, setPriceMode] = useState<'process' | 'quantity'>('process')
   /** Substrate key -> dollars per unit, ex GST. Blank means use the default. */
   const [unitRates, setUnitRates] = useState<Record<string, number>>({})
+  /** Scale the standard rates by what this kind of job actually took. */
+  const [useHistory, setUseHistory] = useState(false)
   const imgRef = useRef<HTMLInputElement>(null)
   const pdfRef = useRef<HTMLInputElement>(null)
 
@@ -374,8 +377,20 @@ export default function QuotingTool() {
    * production rate turned into money at the crew's average rate. Stage 4
    * will offer a third source — what this actually cost on past jobs.
    */
+  /**
+   * What your crew really does against the standard production rates on this
+   * kind of job — actual hours over book hours, median across finished jobs.
+   * It is the one history figure that applies to every substrate, because a
+   * labour entry records hours against the job and not against a surface.
+   */
+  const history = useMemo(
+    () => serviceRates(buildJobRates({ jobs, labour: pastLabour, materials: pastMaterials })),
+    [jobs, pastLabour, pastMaterials])
+  const serviceHistory = history.find(h => h.type === jobType)
+  const calibration = serviceHistory?.calibration ?? null
+
   const defaultUnitRate = (key: string) =>
-    Math.round((PROD_RATES[key] ?? 0) * avgRate * 100) / 100
+    Math.round((PROD_RATES[key] ?? 0) * avgRate * (useHistory && calibration ? calibration : 1) * 100) / 100
   const unitRateFor = (key: string) =>
     unitRates[key] != null ? unitRates[key] : defaultUnitRate(key)
 
@@ -914,7 +929,7 @@ export default function QuotingTool() {
       client, address, jobType, terms, substrates, prep, ceilingHeight, access,
       method, coats, processes, prepLevels, consPrep, consTotal, consNotes, extraMats,
       painters, travelKm, equip, siteNotes, logisticsNotes, estimate, lockedPrice, rooms,
-      finishSpecs, priceMode, unitRates,
+      finishSpecs, priceMode, unitRates, useHistory,
       // The scope panel is mostly evidence. Without this a reopened quote
       // shows a bare list of numbers with nothing behind them.
       takeoff: extractRes && {
@@ -944,6 +959,7 @@ export default function QuotingTool() {
     setSubstrates(normaliseSubstrates(d.substrates ?? d.qty))
     setFinishSpecs(d.finishSpecs ?? {})
     setPriceMode(d.priceMode === 'quantity' ? 'quantity' : 'process')
+    setUseHistory(!!d.useHistory)
     setUnitRates(d.unitRates ?? {})
     setExtractRes(d.takeoff ?? null)
     setPhotoLinks(d.photoLinks ?? {})
@@ -1482,6 +1498,22 @@ export default function QuotingTool() {
                 ))}
               </div>
             )}
+            {byQty && calibration != null && (
+              <label className="flex items-start gap-2 mb-2.5 px-3 py-2 bg-[#f0fdf4] border border-[#86efac] rounded-lg cursor-pointer">
+                <input type="checkbox" checked={useHistory} onChange={e => setUseHistory(e.target.checked)}
+                  className="w-4 h-4 accent-green-700 mt-0.5 shrink-0" />
+                <span className="text-[11px] text-[#166534]">
+                  Scale by what {jobType.toLowerCase()} actually takes you:{' '}
+                  <b>{calibration.toFixed(2)}×</b> the standard rates
+                  {serviceHistory && <> — from {serviceHistory.samples} finished job{serviceHistory.samples === 1 ? '' : 's'}</>}.
+                  {serviceHistory && serviceHistory.samples < 3 && (
+                    <span className="text-[#92400e]"> Too few jobs to lean on yet.</span>
+                  )}
+                  {' '}<Link to="/rates" className="underline">See the numbers</Link>
+                </span>
+              </label>
+            )}
+
             {byQty && (
               qtyLines.length === 0 ? (
                 <div className="text-[11px] text-[#666] bg-[#fffbeb] border border-[#fbbf24] rounded-lg px-3 py-2 mb-2.5">
