@@ -13,7 +13,7 @@ import {
   PROD_RATES, JOB_TYPES, QUOTE_TERMS,
   PREP_OPTS, HEIGHT_OPTS, ACCESS_OPTS, METHOD_OPTS, CONS_PREP,
   JOB_WORKFLOWS, PREP_LEVELS, workflowStepNames, defaultPrepLevels,
-  BENCHMARKS, coverageFor,
+  BENCHMARKS, coverageFor, serviceFor, serviceGroups,
 } from '@/lib/quoteData'
 import {
   SUBSTRATES, SUB_BY_KEY, emptySubstrates, normaliseSubstrates,
@@ -205,6 +205,9 @@ export default function QuotingTool() {
   const [photoLinks, setPhotoLinks] = useState<Record<string, string[]>>({})
   const [highlightKey, setHighlightKey] = useState('')
   const [scopeOpen, setScopeOpen] = useState(false)   // the phone sheet
+  // Show every substrate, or only the groups this service touches. Narrowed
+  // by default: a kitchen cabinet quote does not want 34 rows of roofing.
+  const [allSubs, setAllSubs] = useState(false)
   const imgRef = useRef<HTMLInputElement>(null)
   const pdfRef = useRef<HTMLInputElement>(null)
 
@@ -636,15 +639,18 @@ export default function QuotingTool() {
   function changeJobType(next: string) {
     setJobType(next)
     setPrepLevels(defaultPrepLevels(next))
-    if (/new build/i.test(next)) { setMethod('spray'); applyNewBuildCoats(next) }
+    if (serviceFor(next).newBuild) { setMethod('spray'); applyNewBuildCoats(next) }
   }
 
   /** V16 autoApplyNewBuildSettings(): a new build gets 1 coat of Acrylic
    *  undercoat sprayed onto every substrate, and interior work is sprayed
    *  rather than rolled. Oil-finish substrates (decking) are left alone. */
   function applyNewBuildCoats(type: string) {
-    const isInt = /interior/i.test(type) || /full/i.test(type)
-    const isExt = /exterior/i.test(type) || /full/i.test(type)
+    // Was `/interior/i.test(type)` over the job-type string, which read seven
+    // of the thirteen services as neither interior nor exterior.
+    const svc = serviceFor(type)
+    const isInt = svc.interior
+    const isExt = svc.exterior
     setSubstrates(prev => {
       const next = { ...prev }
       SUBSTRATES.forEach(sub => {
@@ -1349,13 +1355,19 @@ export default function QuotingTool() {
           </Card>
 
           <Card>
-            <div className={CT}>2. Substrates</div>
+            <div className="flex justify-between items-center gap-2 flex-wrap mb-1">
+              <div className={`${CT} m-0`}>2. Substrates</div>
+              <button onClick={() => setAllSubs(v => !v)} className="text-[11px] text-[#2563eb]">
+                {allSubs ? `Only what ${jobType.toLowerCase()} involves` : 'Show every substrate'}
+              </button>
+            </div>
             <div className="text-[11px] text-[#666] mb-2.5">
               Tick what's in scope, then add a line per type — pick a preset or enter your own,
               so French, solid and panel doors can be priced separately. This is the same list the
               site visit uses, so a visit's takeoff lands here unchanged.
             </div>
-            <SubstratePicker value={substrates} onChange={setSubstrates} showCoating highlight={highlightKey} />
+            <SubstratePicker value={substrates} onChange={setSubstrates} showCoating highlight={highlightKey}
+              groups={allSubs ? undefined : serviceGroups(jobType)} />
             {Object.keys(totals).length > 0 && (
               <div className="mt-3 pt-2.5 border-t border-black/[0.12] text-[11px] text-[#666]">
                 {Object.keys(totals).length} substrate{Object.keys(totals).length !== 1 ? 's' : ''} in scope ·
