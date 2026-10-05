@@ -7,7 +7,7 @@ import JobPicker from '@/components/JobPicker'
 import { Input } from '@/components/ui/Field'
 import {
   fmtCurrency, genId, parseMilestones, today,
-  isCashJob, jobTotal, gstLabel,
+  isCashJob, jobTotal, gstLabel, localDate,
 } from '@/lib/utils'
 import { billingBasis } from '@/lib/jobBilling'
 import { Plus, Loader2, Trash2, Copy, Check, Banknote } from 'lucide-react'
@@ -33,7 +33,7 @@ function buildMS(agreed: number, struct: string, dep: number, start: string, gst
   const addD = (d: string, n: number) => {
     if (!d) return ''
     const dt = new Date(d); dt.setDate(dt.getDate() + n)
-    return dt.toISOString().split('T')[0]
+    return localDate(dt)
   }
   const mk = (label: string, pct: number, dueDate: string): Milestone =>
     ({ label, pct, amount: Math.round((inc * pct) / 100), dueDate, received: false, receivedDate: '',

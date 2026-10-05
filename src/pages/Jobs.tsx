@@ -8,7 +8,7 @@ import JobModal, { useDeleteJob, JOB_STATUSES, QUOTE_STATUSES } from '@/componen
 import JobDayPanel from '@/components/JobDayPanel'
 import { handOff } from '@/lib/handoff'
 import {
-  fmtCurrency, fmtDate, normaliseDate, deriveScheduledDates, today
+  fmtCurrency, fmtDate, normaliseDate, deriveScheduledDates, today, addDays,
 } from '@/lib/utils'
 import {
   Plus, Loader2, Trash2, Edit2,
@@ -165,7 +165,7 @@ export default function Jobs() {
   }
 
   async function markFollowedUp(j: any) {
-    const until = new Date(Date.now() + 7 * 864e5).toISOString().slice(0, 10)
+    const until = addDays(today(), 7)
     await quickEdit.mutateAsync({
       job: j, field: 'extra',
       value: { ...(j.extra ?? {}), follow_up_snoozed_until: until, last_follow_up: todayStr },
