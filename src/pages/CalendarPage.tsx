@@ -4,9 +4,11 @@ import { supabase, selectAll } from '@/lib/supabase'
 import { useAuth } from '@/lib/auth'
 import { Modal } from '@/components/ui/Modal'
 import JobDayPanel from '@/components/JobDayPanel'
+import JobPicker from '@/components/JobPicker'
 import { Input, Select, TextArea } from '@/components/ui/Field'
 import { fmtDate, genId, today, addDays, getJobScheduledDates } from '@/lib/utils'
-import { ChevronLeft, ChevronRight, Plus, Loader2, Trash2 } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Plus, Loader2, Trash2, X } from 'lucide-react'
+import { invalidateTable } from '@/lib/queryKeys'
 
 const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December']
 const DAYS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat']
@@ -70,11 +72,39 @@ function useDeleteEvent() {
   })
 }
 
+/**
+ * Set the days a job is on site.
+ *
+ * scheduled_dates is the stored list getJobScheduledDates prefers, so writing
+ * it is what makes a hand-picked set of days stick. sched_start and est_days
+ * are kept in step so the Jobs page agrees with the calendar — and cleared
+ * outright when the last day goes, because an empty list falls back to
+ * deriving from start + days, which would bring the day straight back.
+ */
+function useSetJobDates() {
+  const qc = useQueryClient()
+  const { user } = useAuth()
+  return useMutation({
+    mutationFn: async ({ jobId, dates }: { jobId: string; dates: string[] }) => {
+      const sorted = [...new Set(dates)].filter(Boolean).sort()
+      const { error } = await (supabase.from('np_jobs') as any).update({
+        scheduled_dates: sorted,
+        sched_start: sorted[0] ?? null,
+        est_days: sorted.length || null,
+        updated_at: new Date().toISOString(),
+      }).eq('id', jobId).eq('user_id', user!.id)
+      if (error) throw error
+    },
+    onSuccess: () => invalidateTable(qc, 'np_jobs'),
+  })
+}
+
 export default function CalendarPage() {
   const { data: events = [] } = useCalendarEvents()
   const { data: jobs = [], isLoading } = useJobs()
   const upsertEvent = useUpsertEvent()
   const deleteEvent = useDeleteEvent()
+  const setJobDates = useSetJobDates()
 
   const now = new Date()
   const [year, setYear] = useState(now.getFullYear())
@@ -85,6 +115,7 @@ export default function CalendarPage() {
   const [form, setForm] = useState<any>({})
   const [saving, setSaving] = useState(false)
   const [panel, setPanel] = useState<{ jobId: string; date: string } | null>(null)
+  const [addJobId, setAddJobId] = useState('')
 
   const todayStr = today()
 
@@ -141,7 +172,28 @@ export default function CalendarPage() {
   function goToday() { setYear(now.getFullYear()); setMonth(now.getMonth()) }
 
   // ── Modal ─────────────────────────────────────────────────────
+  function addJobDay(jobId: string, date: string) {
+    const job = jobs.find(j => j.id === jobId)
+    if (!job) return
+    const dates = getJobScheduledDates(job)
+    if (dates.includes(date)) return
+    setJobDates.mutate({ jobId, dates: [...dates, date] })
+  }
+
+  function removeJobDay(jobId: string, date: string) {
+    const job = jobs.find(j => j.id === jobId)
+    if (!job) return
+    const dates = getJobScheduledDates(job).filter(d => d !== date)
+    const label = `${job.id}${job.client ? ` — ${job.client}` : ''}`
+    const ask = dates.length
+      ? `Take ${label} off ${fmtDate(date)}?`
+      : `${fmtDate(date)} is the only day ${label} is scheduled. Remove it and leave the job unscheduled?`
+    if (!confirm(ask)) return
+    setJobDates.mutate({ jobId, dates })
+  }
+
   function openCell(date: string) {
+    setAddJobId('')
     setSelectedDate(date)
     setSelectedEvent(null)
     setForm({ date, color: 'Other' })
@@ -230,12 +282,22 @@ export default function CalendarPage() {
                   <div className="space-y-0.5 max-h-44 overflow-y-auto">
                     {items.map((item, i) => (
                       <div key={i}
-                        onClick={item.type === 'event'
-                          ? (e) => openEvent(item.data, e)
-                          : (e) => { e.stopPropagation(); setPanel({ jobId: item.data.id, date }) }}
-                        title={item.type === 'event' ? undefined : 'Assign crew for this day'}
-                        className={`text-[10px] px-1 py-0.5 rounded truncate leading-tight ${item.color}`}>
-                        {item.label}
+                        className={`group flex items-center gap-1 text-[10px] px-1 py-0.5 rounded leading-tight ${item.color}`}>
+                        <span className="flex-1 truncate cursor-pointer"
+                          onClick={item.type === 'event'
+                            ? (e) => openEvent(item.data, e)
+                            : (e) => { e.stopPropagation(); setPanel({ jobId: item.data.id, date }) }}
+                          title={item.type === 'event' ? undefined : 'Assign crew for this day'}>
+                          {item.label}
+                        </span>
+                        {item.type === 'job' && (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); removeJobDay(item.data.id, date) }}
+                            title="Take this job off this day"
+                            className="shrink-0 opacity-0 group-hover:opacity-70 hover:!opacity-100 focus:opacity-100">
+                            <X size={10} />
+                          </button>
+                        )}
                       </div>
                     ))}
                   </div>
@@ -265,6 +327,37 @@ export default function CalendarPage() {
           <Input label="End date (optional)" type="date" value={form.end_date || ''} onChange={ef('end_date')} />
           <TextArea label="Notes" value={form.notes || ''} onChange={ef('notes')} />
         </div>
+
+        {/* Scheduling a job on this day is a different thing from booking an
+            event on it, so it sits below the event fields rather than among
+            them. Only when adding, not when editing an existing event. */}
+        {!selectedEvent && selectedDate && (
+          <div className="mt-4 pt-4 border-t border-gray-200">
+            <div className="text-[13px] font-bold mb-2">Jobs on this day</div>
+            {(itemsByDate[selectedDate] ?? []).filter(i => i.type === 'job').length === 0 ? (
+              <div className="text-[11px] text-[#666] mb-2">None scheduled.</div>
+            ) : (
+              <div className="flex flex-col gap-1 mb-2">
+                {(itemsByDate[selectedDate] ?? []).filter(i => i.type === 'job').map(i => (
+                  <div key={i.id} className="flex items-center gap-2 bg-[#f5f4f0] rounded-lg px-2.5 py-1.5">
+                    <span className="flex-1 text-[12px] truncate">
+                      {i.data.id} — {i.data.client || ''}
+                    </span>
+                    <button onClick={() => removeJobDay(i.data.id, selectedDate)}
+                      className="text-[#c0392b] text-[11px] hover:underline">Remove</button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <JobPicker
+              jobs={jobs.filter(j => !getJobScheduledDates(j).includes(selectedDate))}
+              value={addJobId}
+              label="Add a job to this day"
+              allowNone={false}
+              onChange={id => { if (id) { addJobDay(id, selectedDate); setAddJobId('') } }}
+            />
+          </div>
+        )}
         <div className="flex justify-between mt-5 pt-4 border-t border-gray-200">
           <div>{selectedEvent && <button onClick={handleDeleteEvent} className="flex items-center gap-1.5 text-sm text-red-400 hover:text-red-300"><Trash2 size={14} /> Delete</button>}</div>
           <div className="flex gap-2">
