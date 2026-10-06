@@ -13,12 +13,12 @@ import {
   PROD_RATES, JOB_TYPES, QUOTE_TERMS,
   PREP_OPTS, HEIGHT_OPTS, ACCESS_OPTS, METHOD_OPTS, CONS_PREP,
   JOB_WORKFLOWS, PREP_LEVELS, workflowStepNames, defaultPrepLevels,
-  BENCHMARKS, coverageFor, serviceFor, serviceGroups,
+  BENCHMARKS, coverageFor, serviceFor, serviceGroups, UNDERCOAT_PRODUCTS, matchProduct,
 } from '@/lib/quoteData'
 import {
   SUBSTRATES, SUB_BY_KEY, emptySubstrates, normaliseSubstrates,
   substrateLines as buildSubLines, substrateTotals, subTotal, newSubLine,
-  coatOf, unitLabel, type SubEntry, type SubLine, type FinishSpec,
+  coatOf, unitLabel, paintedArea, type SubEntry, type SubLine, type FinishSpec,
 } from '@/lib/substrates'
 import SubstratePicker from '@/components/SubstratePicker'
 import { roomTotals, roomsTotal, roomQuantities, type Room } from '@/lib/roomCalc'
@@ -425,24 +425,38 @@ export default function QuotingTool() {
       if (q <= 0) return
       // A specified product is what gets bought, so it is what gets priced.
       const want = finishSpecs[sub.key]?.product || sub.paint
-      const first = want.toLowerCase().split(' ')[0]
-      const hit = lib.find(p => (p.product ?? '').toLowerCase().includes(first))
+      const hit = matchProduct(want, lib)
       const coverage = hit?.coverage ?? 12
-      // linear metres and counts convert to an approximate painted area
-      const m2 = sub.unit === 'sqm' ? q : sub.unit === 'lm' ? q * 0.3 : q * 2
+      // Lineal metres and counts become a painted area through each
+      // substrate's own girth, not one blanket figure for all of them.
+      const m2 = paintedArea(sub.key, q)
       // Coats now come from the substrate's own settings, undercoats included.
       // Top coats and undercoat are counted separately because they can be
       // applied differently — a sprayed undercoat under brushed top coats is
       // the normal new-build sequence — and spraying covers less per litre.
       const c = coatOf(substrates, sub.key)
-      const topLitres = (m2 * c.topCoats) / coverageFor(coverage, c.app)
-      const ucLitres = c.uc !== 'None' && c.ucCoats > 0
-        ? (m2 * c.ucCoats) / coverageFor(coverage, c.ucApp)
-        : 0
-      const litres = topLitres + ucLitres
-      const key = hit?.product ?? want
-      if (!products[key]) products[key] = { product: key, size: hit?.size ?? '4L', litres: 0, coverage, price: hit?.yours ?? 0 }
-      products[key].litres += litres
+
+      const add = (product: string, litres: number, cov: number) => {
+        if (litres <= 0) return
+        const h = matchProduct(product, lib)
+        const name = h?.product ?? product
+        if (!products[name]) {
+          products[name] = { product: name, size: h?.size ?? '4L', litres: 0, coverage: cov, price: h?.yours ?? 0 }
+        }
+        products[name].litres += litres
+      }
+
+      add(want, (m2 * c.topCoats) / coverageFor(coverage, c.app), coverage)
+
+      // Undercoat is its own product. Adding its litres to the top coat's
+      // bucket put a third of a new build's paint under the finish name, and
+      // bought it at the finish price.
+      if (c.uc !== 'None' && c.ucCoats > 0) {
+        const ucName = UNDERCOAT_PRODUCTS[c.uc] ?? 'Undercoat'
+        const ucHit = matchProduct(ucName, lib)
+        const ucCov = ucHit?.coverage ?? 12
+        add(ucName, (m2 * c.ucCoats) / coverageFor(ucCov, c.ucApp), ucCov)
+      }
     })
     const rows = Object.values(products).map(p => {
       const tinL = parseFloat(p.size) || 4

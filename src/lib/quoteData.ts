@@ -454,3 +454,73 @@ export const BENCHMARKS: [string, string][] = [
   ['Deck and timber', '$5,100 plus'],
   ['Hourly rate', '$70 to $75 per hr'],
 ]
+
+/**
+ * The product each undercoat type actually is.
+ *
+ * Undercoat litres used to be added to the top coat's bucket, so a new build —
+ * where every substrate gets one coat of acrylic undercoat under two top coats
+ * — had a third of its paint attributed to the finish. On the trim that meant
+ * a third of the semi-gloss figure was undercoat, bought at enamel prices.
+ */
+export const UNDERCOAT_PRODUCTS: Record<string, string> = {
+  'Acrylic': 'Dulux Acrylic Undercoat',
+  'Oil-based': 'Dulux Oil Based Undercoat',
+  'Shellac': 'Zinsser BIN Shellac Primer',
+  'Special': 'Specialty primer',
+}
+
+/**
+ * Find a paint product in the library by name.
+ *
+ * This used to compare the first word only: `want.toLowerCase().split(' ')[0]`.
+ * Nearly every product in the library begins "Dulux", so every Dulux-named
+ * substrate matched whichever Dulux product happened to be listed first —
+ * roof paint and fire-rated coating were both priced as ceiling white. The
+ * substrates whose names do not start with a brand matched nothing at all and
+ * were quoted at no price.
+ *
+ * Brand words are deliberately weak: "Dulux Weathershield Semi-Gloss" should
+ * be found by "Weathershield Semi-Gloss", and must not be found by "Dulux
+ * Ceiling White".
+ */
+const BRANDS = new Set([
+  'dulux', 'berger', 'taubmans', 'sikkens', 'acratex', 'cutek', 'bauwerk',
+  'resene', 'porters', 'zinsser', 'haymes', 'wattyl',
+])
+const FILLER = new Set(['and', 'the', 'of', 'with', 'all'])
+// Words that describe a coating rather than identify it. Two products sharing
+// only "primer" are not the same product.
+const GENERIC = new Set([
+  'primer', 'undercoat', 'paint', 'coat', 'coating', 'sheen', 'gloss', 'flat',
+  'matt', 'semi', 'low', 'white', 'clear', 'exterior', 'interior', 'based',
+])
+
+const tokens = (name: string) =>
+  String(name).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().split(' ').filter(Boolean)
+
+export function matchProduct<T extends { product?: string }>(
+  want: string, lib: T[],
+): T | undefined {
+  const wanted = tokens(want)
+  if (!wanted.length || !lib?.length) return undefined
+
+  let best: T | undefined
+  let bestScore = 0
+
+  for (const cand of lib) {
+    const have = new Set(tokens(cand.product ?? ''))
+    if (!have.size) continue
+    let score = 0
+    for (const w of wanted) {
+      if (FILLER.has(w)) continue
+      // A brand in common is worth something, but never enough on its own.
+      if (have.has(w)) score += BRANDS.has(w) ? 0.25 : GENERIC.has(w) ? 0.5 : 1
+    }
+    if (score > bestScore) { bestScore = score; best = cand }
+  }
+
+  // At least one distinctive word in common. A shared brand alone is not a
+  // match — that is exactly the mistake this replaces.
+  return bestScore >= 1 ? best : undefined
+}

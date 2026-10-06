@@ -7,14 +7,12 @@ import {
   Plus, Copy, Trash2, Settings2, Calculator, Sparkles, Upload,
   FileText, Image as ImageIcon, X, Loader2, Check, Ruler,
 } from 'lucide-react'
+import { paintedArea } from '@/lib/substrates'
 
 // ── V16 constants ────────────────────────────────────────────
-const UM2: Record<string, number> = {
-  cornice: 0.15, skirtings: 0.10, architraves: 0.08, architraves_e: 0.08,
-  fascia: 0.25, gutters: 0.18, balustrades: 0.35, fences: 1.8,
-  doors_i: 2.0, doors_e: 2.0, garage_e: 8.0, win_i: 0.75, win_e: 0.75,
-  wardrobes: 4.5, posts: 0.5, downpipes: 0.25,
-}
+// Was a second, disagreeing copy of the girth allowances — architraves at
+// 0.08 m2 per opening against the quote builder's 2.0, so the two pages
+// costed the same job differently. One table now, in substrates.ts.
 
 const UC_DEF: Record<string, { n: string; L: number; p: number; cov: number }> = {
   acrylic: { n: 'Dulux Acrylic Undercoat', L: 10, p: 99, cov: 12 },
@@ -271,7 +269,7 @@ export default function PaintCalc() {
 
     ;(Object.keys(rows) as Section[]).forEach(sec => rows[sec].forEach(r => {
       if (!r.qty || r.qty <= 0) return
-      const m2 = r.unit === 'm²' ? r.qty : r.qty * (UM2[r.key ?? ''] ?? 1.0)
+      const m2 = r.unit === 'm²' ? r.qty : paintedArea(r.key ?? '', r.qty)
       const litres = (m2 * (r.coats || 2)) / (r.cov || 12)
       if (litres > 0) {
         const k = `${r.product || 'Custom'}||${r.colour || ''}`

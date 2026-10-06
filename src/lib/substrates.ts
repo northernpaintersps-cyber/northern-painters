@@ -32,16 +32,16 @@ export const SUBSTRATES: Substrate[] = [
     paint: "Wash and Wear Low Sheen", defMethod: "Cut & Roll", defFinish: "Low Sheen",
     typeOpts: [] },
   { key: "architraves", label: "Architraves", unit: "qty", group: "Interior",
-    paint: "Aquaenamel Semi-Gloss", defMethod: "Brush", defFinish: "Semi-Gloss",
+    paint: "Dulux Aquanamel Semi-Gloss", defMethod: "Brush", defFinish: "Semi-Gloss",
     typeOpts: ["Timber", "MDF", "Colonial", "Bar", "Bullnose", "Pencil Round"] },
   { key: "skirtings", label: "Skirting boards", unit: "lm", group: "Interior",
-    paint: "Aquaenamel Semi-Gloss", defMethod: "Brush", defFinish: "Semi-Gloss",
+    paint: "Dulux Aquanamel Semi-Gloss", defMethod: "Brush", defFinish: "Semi-Gloss",
     typeOpts: [] },
   { key: "doors_i", label: "Doors interior", unit: "qty", group: "Interior",
-    paint: "Aquaenamel Semi-Gloss", defMethod: "Cut & Roll", defFinish: "Semi-Gloss",
+    paint: "Dulux Aquanamel Semi-Gloss", defMethod: "Cut & Roll", defFinish: "Semi-Gloss",
     typeOpts: ["Hollow core", "Solid timber", "Panel", "Glass", "French", "Bi-fold", "Sliding", "Louvre", "Barn", "Pocket"] },
   { key: "win_i", label: "Window frames interior", unit: "qty", group: "Interior",
-    paint: "Aquaenamel Semi-Gloss", defMethod: "Brush", defFinish: "Semi-Gloss",
+    paint: "Dulux Aquanamel Semi-Gloss", defMethod: "Brush", defFinish: "Semi-Gloss",
     typeOpts: ["Timber", "Aluminium", "uPVC", "Louvre", "Awning", "Casement", "Double-hung", "Sliding", "Fixed"] },
   { key: "wardrobes", label: "Built-in wardrobes", unit: "qty", group: "Interior",
     paint: "Wash and Wear Low Sheen", defMethod: "Cut & Roll", defFinish: "Low Sheen",
@@ -118,7 +118,7 @@ export const SUBSTRATES: Substrate[] = [
     paint: "Bauwerk Limewash", defMethod: "Brush", defFinish: "Special",
     typeOpts: [] },
   { key: "cabinets", label: "Kitchen cabinet doors", unit: "qty", group: "Specialty",
-    paint: "Aquaenamel Semi-Gloss", defMethod: "Spray", defFinish: "Semi-Gloss",
+    paint: "Dulux Aquanamel Semi-Gloss", defMethod: "Spray", defFinish: "Semi-Gloss",
     typeOpts: ["Kitchen", "Bathroom", "Laundry", "Built-ins", "All cabinets"] },
   { key: "timber_stain", label: "Timber stain clear coat", unit: "sqm", group: "Specialty",
     paint: "Sikkens Cetol TGL", defMethod: "Brush", defFinish: "Special",
@@ -257,3 +257,55 @@ export function substrateLines(
   })
   return out
 }
+
+/**
+ * Square metres of paintable surface per unit — the girth allowances a
+ * painter uses to turn a count or a length into an area for paint volume.
+ *
+ * The quote builder used one blanket rule for all of them: a lineal metre was
+ * 0.3 m2 and anything counted was 2 m2. Those are the trim substrates, and
+ * trim is what gets semi-gloss, so the error landed almost entirely on one
+ * product. A 90mm skirting is 0.11 m2 a metre, not 0.3, and an architraved
+ * opening is about half a square metre, not two — so a typical interior asked
+ * for roughly three times the semi-gloss it needed.
+ *
+ * An area substrate is 1.0 by definition and is listed so the guard below can
+ * check every key is accounted for.
+ */
+export const AREA_PER_UNIT: Record<string, number> = {
+  // ── Interior ──
+  ceilings: 1, walls: 1, feature: 1, wet_ceil: 1, wet_walls: 1, laundry: 1,
+  cornice: 0.15,        // 90mm cove, girth
+  skirtings: 0.11,      // 90mm board: face plus the top edge
+  architraves: 0.5,     // per opening — two legs and a head, roughly 5 lineal metres
+  doors_i: 3.8,         // per leaf, both faces and the edges
+  win_i: 1.3,           // per unit, frame and reveal
+  wardrobes: 4.5,       // per unit, doors and the visible frame
+
+  // ── Exterior ──
+  weatherboards: 1, cladding: 1, render: 1, eaves: 1, roof: 1,
+  decks: 1, deck_paint: 1, driveway: 1,
+  fascia: 0.25,
+  gutters: 0.2,         // the face only; the inside is not coated
+  downpipes: 0.9,       // per pipe, a 100mm round over a storey
+  posts: 1.0,           // per post, 90x90 over a storey
+  balustrades: 1.0,     // per lineal metre, rails and balusters both sides
+  doors_e: 4.0,
+  garage_e: 8.0,        // a double panel; halve it for a single
+  fences: 1.8,          // per lineal metre, one side of a 1.8m fence
+  win_e: 1.5,
+  architraves_e: 0.5,
+
+  // ── Specialty ──
+  limewash: 1, timber_stain: 1, firecoat: 1,
+  cabinets: 0.9,        // per door or drawer front, both faces
+}
+
+const AREA_MISSING = SUBSTRATES.filter(s => AREA_PER_UNIT[s.key] == null).map(s => s.key)
+if (AREA_MISSING.length) {
+  throw new Error(`substrates: AREA_PER_UNIT has no entry for ${AREA_MISSING.join(', ')}`)
+}
+
+/** The painted area a quantity represents, for working out paint volume. */
+export const paintedArea = (key: string, qty: number): number =>
+  (Number(qty) || 0) * (AREA_PER_UNIT[key] ?? 1)
