@@ -10,15 +10,27 @@ import {
   Plus, Loader2, Trash2, Edit2, Calculator, ArrowUpDown, X, Camera, MapPin,
 } from 'lucide-react'
 import { takeHandoff } from '@/lib/handoff'
+import { photoDataUrls } from '@/lib/photoStore'
+import { photosToScope } from '@/lib/ai'
+import { useBusinessSettings } from '@/pages/SettingsPage'
+import { SUB_BY_KEY, newSubLine } from '@/lib/substrates'
 
 type Row = Record<string, any>
 
 const BADGE = 'inline-block px-2 py-0.5 rounded-full text-[11px] font-medium whitespace-nowrap'
 
-// Site visit detail rides in the notes column as JSON — no migration needed
+// Site visit detail rides in the notes column as JSON — no migration needed.
+// Photos are the exception: they live in their own `photos` column and are
+// written out of the blob, so they are put back here. Visits saved before
+// that split still carry them inside the blob, hence the fallback.
 const readSV = (v: Row): SVState => {
-  try { return normaliseSV(JSON.parse(v.notes || '{}')) }
-  catch { return normaliseSV({ notes: v.notes || '' } as Partial<SVState>) }
+  const photos = Array.isArray(v.photos) ? v.photos : []
+  try {
+    const parsed = JSON.parse(v.notes || '{}')
+    return normaliseSV({ ...parsed, photos: photos.length ? photos : (parsed.photos ?? []) })
+  } catch {
+    return normaliseSV({ notes: v.notes || '', photos } as Partial<SVState>)
+  }
 }
 
 function useTable(table: string) {
@@ -59,6 +71,7 @@ function useDel() {
 
 export default function SiteVisits() {
   const nav = useNavigate()
+  const { user } = useAuth()
   const { data: visits = [], isLoading } = useTable('np_site_visits')
   const { data: jobs = [] } = useTable('np_jobs')
   const upsert = useUpsert()
@@ -67,7 +80,9 @@ export default function SiteVisits() {
   const [q, setQ] = useState('')
   const [status, setStatus] = useState('')
   const [asc, setAsc] = useState(false)
-  const [editing, setEditing] = useState<{ id: string | null; state: SVState } | null>(null)
+  const [editing, setEditing] = useState<{ id: string; isNew: boolean; state: SVState } | null>(null)
+  const [aiBusy, setAiBusy] = useState(false)
+  const { data: biz } = useBusinessSettings()
 
   const anyFilter = !!(q || status)
 
@@ -84,12 +99,15 @@ export default function SiteVisits() {
     })
   }, [visits, q, status, asc])
 
+  // The visit id is minted when the editor opens, not at save: a photo is
+  // uploaded to <user>/<visit>/<photo>.jpg the moment it is taken, so the
+  // visit has to have an identity before then.
   function openNew(prefill?: Partial<SVState>) {
-    setEditing({ id: null, state: { ...emptySVState(), ...(prefill ?? {}) } })
+    setEditing({ id: genId('sv'), isNew: true, state: { ...emptySVState(), ...(prefill ?? {}) } })
   }
   function openEdit(v: Row) {
     const state = readSV(v)
-    setEditing({ id: v.id, state: { ...state, jobId: v.job_id ?? state.jobId, date: v.date ?? state.date } })
+    setEditing({ id: v.id, isNew: false, state: { ...state, jobId: v.job_id ?? state.jobId, date: v.date ?? state.date } })
   }
 
   // Arriving from an enquiry, or from a job's site-visit button
@@ -103,6 +121,71 @@ export default function SiteVisits() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  /**
+   * Read the photos and the spoken notes into a scope.
+   *
+   * Quantities only land where the model had something to count or was told a
+   * measurement — it is instructed not to estimate area from perspective, and
+   * a surface it can see but not measure still arrives, ticked, with its
+   * condition and prep, waiting for a number.
+   */
+  async function aiParse(state: SVState): Promise<Partial<SVState> | null> {
+    const key = biz?.ai_api_key
+    if (!key) { alert('No API key set. Add your Anthropic API key in Settings.'); return null }
+    if (!state.photos.length) { alert('Take some photos first — there is nothing to read.'); return null }
+
+    setAiBusy(true)
+    try {
+      const urls = await photoDataUrls(state.photos)
+      const photos = state.photos
+        .filter(ph => urls[ph.id])
+        .map(ph => ({ dataUrl: urls[ph.id], note: ph.label, tag: ph.tag }))
+      if (!photos.length) throw new Error('None of the photos could be loaded.')
+
+      const notes = [state.notes, ...state.voiceNotes.map(v => v.text)].filter(Boolean).join('\n')
+      const scope = await photosToScope(key, photos, notes)
+
+      const withQty = scope.observations.filter(o => o.qty != null).length
+      const toMeasure = scope.observations.filter(o => o.qty == null)
+
+      // Returned rather than pushed: the editor keeps its own copy of the
+      // state, so a parent setState here would never reach it.
+      const subs = { ...state.substrates }
+      scope.observations.forEach(o => {
+        const entry = subs[o.key] ?? { inc: false, lines: [newSubLine()] }
+        const lines = entry.lines.length ? [...entry.lines] : [newSubLine()]
+        lines[0] = {
+          ...lines[0],
+          qty: o.qty ?? lines[0].qty,
+          notes: [o.condition, o.prep].filter(Boolean).join(' · ') || lines[0].notes,
+        }
+        subs[o.key] = { ...entry, inc: true, lines }
+      })
+      const added = [scope.summary, scope.scopeNotes && `To check: ${scope.scopeNotes}`]
+        .filter(Boolean).join('\n')
+      const patch: Partial<SVState> = {
+        substrates: subs,
+        jobType: state.jobType || scope.jobType,
+        notes: [state.notes, added].filter(Boolean).join('\n\n'),
+      }
+
+      alert(
+        `${scope.observations.length} surface${scope.observations.length === 1 ? '' : 's'} found, `
+        + `${withQty} with a quantity.`
+        + (toMeasure.length
+          ? `\n\nStill need measuring: ${toMeasure.map(o => SUB_BY_KEY[o.key]?.label ?? o.key).join(', ')}.`
+            + '\nA photograph cannot be measured, so these were left for you.'
+          : ''),
+      )
+      return patch
+    } catch (err: any) {
+      alert(err?.message ?? 'Could not read the photos.')
+      return null
+    } finally {
+      setAiBusy(false)
+    }
+  }
+
   async function save(state: SVState, complete: boolean) {
     const next: SVState = { ...state, status: complete ? 'Complete' : 'Draft' }
     await upsert.mutateAsync({
@@ -110,7 +193,10 @@ export default function SiteVisits() {
       job_id: next.jobId || null,
       date: next.date || today(),
       photos: next.photos,
-      notes: JSON.stringify(next),
+      // Photos live in the `photos` column. Leaving them in the state blob too
+      // wrote every image into the row twice, which is what made a visit with
+      // ten photos impossible to save.
+      notes: JSON.stringify({ ...next, photos: [] }),
       created_at: new Date().toISOString(),
     })
     setEditing(null)
@@ -130,11 +216,17 @@ export default function SiteVisits() {
         areas: d.areas.map(a => ({
           area_name: a.name,
           sqm: a.l && a.w ? a.l * a.w : 0,
-          length: a.l, height: a.h,
+          // Width travels too. Without it the quoting tool seeded every room
+          // at w = 0, so a prefilled room contributed no ceiling at all.
+          length: a.l, width: a.w, height: a.h,
           prep_level: a.condition === 'Poor' ? 'heavy' : a.condition === 'Fair' ? 'moderate' : 'light',
           notes: [a.prep, a.notes].filter(Boolean).join(' · '),
         })),
         siteNotes: [d.notes, ...d.voiceNotes.map(v => v.text)].filter(Boolean).join('\n'),
+        // The id, not the images. Photos in sessionStorage would blow the
+        // quota, and the setItem below is wrapped in a bare catch — an
+        // overflow would silently lose the whole prefill, client and all.
+        visitId: editing?.id ?? null,
       }))
     } catch {}
     nav('/quotes/build')
@@ -150,9 +242,13 @@ export default function SiteVisits() {
         <SiteVisitEditor
           initial={editing.state}
           jobs={jobs}
-          isNew={!editing.id}
+          visitId={editing.id}
+          userId={user?.id ?? ''}
+          isNew={editing.isNew}
           onClose={() => setEditing(null)}
           onSave={save}
+          onAIParse={aiParse}
+          aiBusy={aiBusy}
         />
       )}
 

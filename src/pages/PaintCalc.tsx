@@ -170,6 +170,7 @@ export default function PaintCalc() {
   const [scopeNotes, setScopeNotes] = useState('')
   const [extracting, setExtracting] = useState(false)
   const [extractErr, setExtractErr] = useState('')
+  const [extractStage, setExtractStage] = useState('')
   const [result, setResult] = useState<QuantityExtraction | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
 
@@ -184,11 +185,12 @@ export default function PaintCalc() {
     if (!apiKey) { setExtractErr('No API key set. Add your Anthropic API key in Settings.'); return }
     setExtracting(true); setExtractErr(''); setResult(null)
     try {
-      setResult(await extractQuantities(apiKey, docs, scopeNotes))
+      setResult(await extractQuantities(apiKey, docs, scopeNotes, setExtractStage))
     } catch (err: any) {
       setExtractErr(err?.message ?? 'Extraction failed')
     } finally {
       setExtracting(false)
+      setExtractStage('')
     }
   }
 
@@ -364,7 +366,7 @@ export default function PaintCalc() {
                   <button onClick={runExtract} disabled={extracting}
                     className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs bg-blue-600 hover:bg-blue-700 text-white rounded-lg disabled:opacity-50">
                     {extracting ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
-                    {extracting ? 'Reading drawings…' : 'Extract quantities'}
+                    {extracting ? (extractStage || 'Reading drawings…') : 'Extract quantities'}
                   </button>
                 )}
               </div>

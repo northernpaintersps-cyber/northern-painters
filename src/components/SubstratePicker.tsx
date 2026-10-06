@@ -13,12 +13,14 @@ import { Trash2, SlidersHorizontal } from 'lucide-react'
  * one line per type — the type field is a combo box: pick a preset or type
  * your own.
  */
-export default function SubstratePicker({ value, onChange, groups = GROUPS, showCoating = false }: {
+export default function SubstratePicker({ value, onChange, groups = GROUPS, showCoating = false, highlight = '' }: {
   value: Record<string, SubEntry>
   onChange: (next: Record<string, SubEntry>) => void
   groups?: SubGroup[]
   /** V16's per-substrate coating settings panel. On in the quote builder. */
   showCoating?: boolean
+  /** Ring this substrate's row — the scope panel flashes the row it points at. */
+  highlight?: string
 }) {
   const [openCoat, setOpenCoat] = useState<Set<string>>(new Set())
   const toggleCoat = (key: string) => setOpenCoat(o => {
@@ -52,7 +54,9 @@ export default function SubstratePicker({ value, onChange, groups = GROUPS, show
             const entry = value[s.key] ?? { inc: false, lines: [] }
             const total = subTotal(entry)
             return (
-              <div key={s.key} className="border border-black/[0.08] border-t-0 px-3 py-2.5 transition-opacity"
+              <div key={s.key} id={`subrow-${s.key}`}
+                className={`border border-black/[0.08] border-t-0 px-3 py-2.5 transition-all ${
+                  highlight === s.key ? 'ring-2 ring-blue-500 ring-inset' : ''}`}
                 style={{ background: entry.inc ? '#fff' : GROUP_BG[group], opacity: entry.inc ? 1 : 0.55 }}>
                 <div className="flex items-center gap-2 flex-wrap">
                   <input type="checkbox" id={`sub-${s.key}`} checked={entry.inc}

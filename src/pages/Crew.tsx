@@ -11,6 +11,7 @@ import {
   Plus, Loader2, Trash2, Edit2, ChevronLeft, ChevronRight,
   MessageSquare, CalendarDays,
 } from 'lucide-react'
+import { SyncedInput } from '@/components/ui/SyncedInput'
 
 type Row = Record<string, any>
 
@@ -246,21 +247,21 @@ export default function Crew() {
               {crew.map(c => (
                 <tr key={c.id} className="border-b border-black/[0.06] hover:bg-[#fafaf8]">
                   <td className="px-2.5 py-[7px]" style={{ minWidth: 130 }}>
-                    <input defaultValue={c.name ?? ''} className={II}
+                    <SyncedInput value={c.name ?? ''} className={II}
                       onBlur={e => { if (e.target.value !== (c.name ?? '')) quickCrew(c, { name: e.target.value }) }} />
                   </td>
                   <td className="px-2.5 py-[7px]" style={{ minWidth: 110 }}>
-                    <input defaultValue={c.role ?? ''} className={II}
+                    <SyncedInput value={c.role ?? ''} className={II}
                       onBlur={e => { if (e.target.value !== (c.role ?? '')) quickCrew(c, { role: e.target.value }) }} />
                   </td>
                   <td className="px-2.5 py-[7px]" style={{ minWidth: 110 }}>
-                    <input type="tel" defaultValue={c.phone ?? ''} placeholder="04xx xxx xxx" className={II}
+                    <SyncedInput type="tel" value={c.phone ?? ''} placeholder="04xx xxx xxx" className={II}
                       onBlur={e => { if (e.target.value !== (c.phone ?? '')) quickCrew(c, { phone: e.target.value }) }} />
                   </td>
                   <td className="px-2.5 py-[7px]">
                     <div className="flex items-center gap-1">
                       <span className="text-[#666]">$</span>
-                      <input type="number" step={1} defaultValue={c.rate ?? rate0} className={II} style={{ width: 70 }}
+                      <SyncedInput type="number" step={1} value={c.rate ?? rate0} className={II} style={{ width: 70 }}
                         onBlur={e => {
                           const v = parseFloat(e.target.value) || rate0
                           if (v !== (c.rate ?? rate0)) quickCrew(c, { rate: v })

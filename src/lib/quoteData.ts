@@ -46,6 +46,19 @@ export const SPEC_SUBS: Sub[] = [
 ]
 
 export const APP_OPTS = ['Brush', 'Cut & Roll', 'Spray', 'Spray + Backroll', 'Roll', 'Deck Applicator']
+
+/**
+ * Spraying loses paint to overspray and atomisation, so a litre covers less
+ * ground than the tin claims. The product coverage figures in the library are
+ * brush and roll figures.
+ */
+export const SPRAY_COVERAGE_FACTOR = 0.7
+
+/** What one litre actually covers, given how it is being applied. */
+export const coverageFor = (baseCoverage: number, app: string) =>
+  (app === 'Spray' || app === 'Spray + Backroll')
+    ? baseCoverage * SPRAY_COVERAGE_FACTOR
+    : baseCoverage
 export const FINISH_OPTS = [
   'Flat', 'Low Sheen', 'Semi-Gloss', 'Gloss', 'Low Sheen (Wet Areas)',
   'Weathershield Low Sheen', 'Weathershield Semi-Gloss', 'Decking Oil',
@@ -65,13 +78,85 @@ export const PROD_RATES: Record<string, number> = {
   limewash: 0.150, cabinets: 1.00, timber_stain: 0.100, firecoat: 0.080,
 }
 
-export const JOB_TYPES = [
-  'Interior repaint', 'Exterior repaint', 'Full repaint interior and exterior',
-  'New build interior', 'New build exterior', 'New build full',
-  'Deck and timber coating', 'Limewash and specialty', 'Kitchen cabinets',
-  'Roof coating', 'Concrete and driveway', 'Queenslander restoration',
-  'Multi-unit commercial',
+/**
+ * What each service actually involves.
+ *
+ * The job type used to be a bare string that other code interrogated with
+ * regular expressions — `/interior/i.test(type)` decided which substrates got
+ * a sprayed undercoat. That works until a service is named something the
+ * pattern does not catch, and it cannot be extended without editing the
+ * pattern. These are the same thirteen names, with the facts about them
+ * written down instead of inferred.
+ */
+export interface Service {
+  /** The stored job type. Unchanged, so existing jobs keep their type. */
+  id: string
+  /** Covers interior surfaces / exterior surfaces. */
+  interior: boolean
+  exterior: boolean
+  /** New work rather than a repaint: primer over bare substrate, spray. */
+  newBuild: boolean
+  /** How the job usually arrives, which decides what the upload card offers. */
+  input: 'drawings' | 'photos' | 'manual'
+  /** The substrates this service normally touches, to focus the picker. */
+  suggests: string[]
+}
+
+const INT_CORE = ['ceilings', 'walls', 'cornice', 'skirtings', 'architraves', 'doors_i', 'win_i']
+const INT_WET = ['wet_ceil', 'wet_walls', 'laundry']
+const EXT_CORE = ['weatherboards', 'cladding', 'render', 'eaves', 'fascia', 'gutters',
+                  'downpipes', 'doors_e', 'win_e', 'architraves_e']
+
+export const SERVICES: Service[] = [
+  { id: 'Interior repaint', interior: true, exterior: false, newBuild: false, input: 'photos',
+    suggests: [...INT_CORE, ...INT_WET, 'wardrobes', 'feature'] },
+  { id: 'Exterior repaint', interior: false, exterior: true, newBuild: false, input: 'photos',
+    suggests: [...EXT_CORE, 'posts', 'balustrades', 'garage_e', 'fences'] },
+  { id: 'Full repaint interior and exterior', interior: true, exterior: true, newBuild: false, input: 'photos',
+    suggests: [...INT_CORE, ...INT_WET, ...EXT_CORE, 'garage_e'] },
+  { id: 'New build interior', interior: true, exterior: false, newBuild: true, input: 'drawings',
+    suggests: [...INT_CORE, ...INT_WET, 'wardrobes'] },
+  { id: 'New build exterior', interior: false, exterior: true, newBuild: true, input: 'drawings',
+    suggests: [...EXT_CORE, 'posts', 'balustrades', 'garage_e'] },
+  { id: 'New build full', interior: true, exterior: true, newBuild: true, input: 'drawings',
+    suggests: [...INT_CORE, ...INT_WET, ...EXT_CORE, 'wardrobes', 'garage_e'] },
+  { id: 'Deck and timber coating', interior: false, exterior: true, newBuild: false, input: 'photos',
+    suggests: ['decks', 'deck_paint', 'balustrades', 'posts', 'timber_stain'] },
+  { id: 'Limewash and specialty', interior: true, exterior: true, newBuild: false, input: 'photos',
+    suggests: ['limewash', 'walls', 'feature', 'render'] },
+  { id: 'Kitchen cabinets', interior: true, exterior: false, newBuild: false, input: 'photos',
+    suggests: ['cabinets'] },
+  { id: 'Roof coating', interior: false, exterior: true, newBuild: false, input: 'photos',
+    suggests: ['roof', 'fascia', 'gutters', 'downpipes'] },
+  { id: 'Concrete and driveway', interior: false, exterior: true, newBuild: false, input: 'manual',
+    suggests: ['driveway'] },
+  { id: 'Queenslander restoration', interior: true, exterior: true, newBuild: false, input: 'photos',
+    suggests: [...EXT_CORE, ...INT_CORE, 'balustrades', 'posts', 'decks'] },
+  { id: 'Multi-unit commercial', interior: true, exterior: true, newBuild: true, input: 'drawings',
+    suggests: [...INT_CORE, ...EXT_CORE, 'firecoat'] },
 ]
+
+export const SERVICE_BY_ID: Record<string, Service> =
+  Object.fromEntries(SERVICES.map(s => [s.id, s]))
+
+/** The selectable job types. Derived, so the two lists cannot drift. */
+export const JOB_TYPES = SERVICES.map(s => s.id)
+
+/** The service for a stored job type, falling back to the first. */
+export const serviceFor = (jobType: string): Service =>
+  SERVICE_BY_ID[jobType] ?? SERVICES[0]
+
+/** Which substrate groups a service puts in play. */
+export function serviceGroups(jobType: string): Array<'Interior' | 'Exterior' | 'Specialty'> {
+  const s = serviceFor(jobType)
+  const out: Array<'Interior' | 'Exterior' | 'Specialty'> = []
+  if (s.interior) out.push('Interior')
+  if (s.exterior) out.push('Exterior')
+  // Specialty is never excluded: a limewash feature wall or a fire-rated
+  // soffit can turn up on any job, and hiding the group hides the quantity.
+  out.push('Specialty')
+  return out
+}
 
 export const QUOTE_TERMS = ['Labour and materials', 'Labour only', 'Hourly rate', 'Estimate']
 

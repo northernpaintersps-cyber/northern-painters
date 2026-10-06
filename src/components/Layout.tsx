@@ -35,6 +35,7 @@ const nav = [
     { to: '/expenses',      label: 'Expenses',      icon: Wallet },
     { to: '/costs',         label: 'Project Costs', icon: TrendingUp },
     { to: '/profitability', label: 'Profitability', icon: PieChart },
+    { to: '/rates', label: 'Rates', icon: TrendingUp },
     { to: '/tax',           label: 'Tax & BAS',     icon: ReceiptText },
     { to: '/reports',       label: 'Reports',       icon: BarChart2 },
   ]},

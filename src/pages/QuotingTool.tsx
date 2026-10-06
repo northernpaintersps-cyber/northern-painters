@@ -1,5 +1,5 @@
 import { useState, useMemo, useRef, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase, selectAll } from '@/lib/supabase'
 import { useAuth } from '@/lib/auth'
@@ -13,15 +13,23 @@ import {
   PROD_RATES, JOB_TYPES, QUOTE_TERMS,
   PREP_OPTS, HEIGHT_OPTS, ACCESS_OPTS, METHOD_OPTS, CONS_PREP,
   JOB_WORKFLOWS, PREP_LEVELS, workflowStepNames, defaultPrepLevels,
-  BENCHMARKS,
+  BENCHMARKS, coverageFor, serviceFor, serviceGroups,
 } from '@/lib/quoteData'
 import {
-  SUBSTRATES, emptySubstrates, normaliseSubstrates, substrateLines as buildSubLines,
-  substrateTotals, newSubLine, coatOf, type SubEntry,
+  SUBSTRATES, SUB_BY_KEY, emptySubstrates, normaliseSubstrates,
+  substrateLines as buildSubLines, substrateTotals, subTotal, newSubLine,
+  coatOf, unitLabel, type SubEntry, type SubLine, type FinishSpec,
 } from '@/lib/substrates'
 import SubstratePicker from '@/components/SubstratePicker'
-import { SUB_BY_KEY, unitLabel, subTotal } from '@/lib/substrates'
+import { roomTotals, roomsTotal, roomQuantities, type Room } from '@/lib/roomCalc'
+import { buildJobRates, serviceRates } from '@/lib/jobRates'
+import ScopePanel from '@/components/ScopePanel'
+import { Modal } from '@/components/ui/Modal'
+import { buildScope, scopeStats, pruneLinks, scopeSummary, type ScopePhoto } from '@/lib/scopeModel'
+import { shrinkToDataUrl } from '@/lib/image'
+import { uploadPhoto, signPhotos, type StoredPhoto } from '@/lib/photoStore'
 import { checkTakeoff, hasError, type Warning } from '@/lib/takeoffChecks'
+import { applyFinishRows, finishScheduleText } from '@/lib/finishes'
 import {
   Plus, Trash2, Loader2, Sparkles, Save, ClipboardList, Settings2,
   FileText, Image as ImageIcon, Ruler, Hammer, RefreshCw,
@@ -49,7 +57,6 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 /** np = painters on this step. V16 defaults it to the crew size but lets each
  *  step differ, so a two-painter job can still have one painter on touch-ups. */
 type Process = { id: string; name: string; hours: number; np: number }
-type Room = { id: string; name: string; w: number; l: number; h: number }
 type Equip = { id: string; name: string; cost: number }
 type ExtraMat = { id: string; name: string; cost: number }
 type Painter = { id: string; name: string; role: string; rate: number }
@@ -185,6 +192,34 @@ export default function QuotingTool() {
   // Proposed quantities awaiting review; null once applied or dismissed.
   const [review, setReview] = useState<ReviewRow[] | null>(null)
   const [applied, setApplied] = useState(0)
+  // Indexing a 40 sheet set then measuring takes minutes; silence reads as a hang.
+  const [extractStage, setExtractStage] = useState('')
+  // Products and colours an architect specified. Kept beside the coating
+  // settings rather than inside them: CoatSettings.colour is the magnitude of
+  // colour change, which drives coat counts, not the colour itself.
+  const [finishSpecs, setFinishSpecs] = useState<Record<string, FinishSpec>>({})
+  // The scope panel. `rightTab` auto-switches to the estimate once, via a ref,
+  // so it does not fight you flipping back to check the scope against it.
+  const [rightTab, setRightTab] = useState<'scope' | 'estimate'>('scope')
+  const autoSwitched = useRef(false)
+  const [scopePhotos, setScopePhotos] = useState<ScopePhoto[]>([])
+  const [photoLinks, setPhotoLinks] = useState<Record<string, string[]>>({})
+  const [highlightKey, setHighlightKey] = useState('')
+  const [scopeOpen, setScopeOpen] = useState(false)   // the phone sheet
+  // Show every substrate, or only the groups this service touches. Narrowed
+  // by default: a kitchen cabinet quote does not want 34 rows of roofing.
+  const [allSubs, setAllSubs] = useState(false)
+  /**
+   * How labour is priced. 'process' is hours against named steps, which is
+   * how the tool has always worked. 'quantity' is a rate per unit against the
+   * measured substrates — faster on a job shaped like one you have done
+   * before, and the only mode history rates can feed.
+   */
+  const [priceMode, setPriceMode] = useState<'process' | 'quantity'>('process')
+  /** Substrate key -> dollars per unit, ex GST. Blank means use the default. */
+  const [unitRates, setUnitRates] = useState<Record<string, number>>({})
+  /** Scale the standard rates by what this kind of job actually took. */
+  const [useHistory, setUseHistory] = useState(false)
   const imgRef = useRef<HTMLInputElement>(null)
   const pdfRef = useRef<HTMLInputElement>(null)
 
@@ -293,14 +328,35 @@ export default function QuotingTool() {
           setSiteNotes(p.areas.map((a: any) => `${a.area_name}: ${a.notes || ''}`)
             .filter((l: string) => l.trim().length > 2).join('\n'))
         }
+        if (p.visitId) loadVisitPhotos(p.visitId)
         setRooms(p.areas.filter((a: any) => a.length || a.height).map((a: any) => ({
-          id: genId('rm'), name: a.area_name ?? '', w: 0, l: a.length ?? 0, h: a.height ?? 2.4,
+          id: genId('rm'), name: a.area_name ?? '',
+          // Older payloads carried only the area, so derive the width from it.
+          w: a.width ?? (a.length > 0 && a.sqm > 0 ? a.sqm / a.length : 0),
+          l: a.length ?? 0, h: a.height ?? 2.4, doors: 0, wins: 0,
         })))
       }
     } catch {}
   }, [])
 
-  const substrateLines = useMemo(() => buildSubLines(substrates).join('\n'), [substrates])
+  const substrateLines = useMemo(
+    () => buildSubLines(substrates, finishSpecs).join('\n'), [substrates, finishSpecs])
+
+  // Warnings outlive the review table, which is cleared the moment quantities
+  // are applied — the panel needs them for as long as the scope exists.
+  const takeoffWarnings = useMemo(
+    () => extractRes
+      ? checkTakeoff(extractRes.quantities, { totalFloorArea: extractRes.totalFloorArea })
+      : {},
+    [extractRes])
+  const scopeItems = useMemo(
+    () => buildScope({ substrates, takeoff: extractRes, warnings: takeoffWarnings, finishSpecs, photoLinks }),
+    [substrates, extractRes, takeoffWarnings, finishSpecs, photoLinks])
+  const scopeStat = useMemo(() => scopeStats(scopeItems), [scopeItems])
+
+  useEffect(() => {
+    if (estimate && !autoSwitched.current) { autoSwitched.current = true; setRightTab('estimate') }
+  }, [estimate])
   const totals = useMemo(() => substrateTotals(substrates), [substrates])
 
   // V16 PROD_RATES baseline — a sanity figure next to the AI's hours
@@ -313,8 +369,49 @@ export default function QuotingTool() {
   // hrs × the average painter rate × however many painters are on that step.
   const avgRate = painters.length ? rateSum / painters.length : rates.standard
   const stepCost = (p: Process) => (p.hours || 0) * avgRate * Math.max(1, p.np || painters.length)
-  const totalHours = processes.reduce((s, p) => s + (p.hours || 0), 0)
-  const labourCost = processes.reduce((s, p) => s + stepCost(p), 0)
+  const procHours = processes.reduce((s, p) => s + (p.hours || 0), 0)
+  const procCost = processes.reduce((s, p) => s + stepCost(p), 0)
+
+  /**
+   * The rate per unit for a substrate: whatever has been typed, else the
+   * production rate turned into money at the crew's average rate. Stage 4
+   * will offer a third source — what this actually cost on past jobs.
+   */
+  /**
+   * What your crew really does against the standard production rates on this
+   * kind of job — actual hours over book hours, median across finished jobs.
+   * It is the one history figure that applies to every substrate, because a
+   * labour entry records hours against the job and not against a surface.
+   */
+  const history = useMemo(
+    () => serviceRates(buildJobRates({ jobs, labour: pastLabour, materials: pastMaterials })),
+    [jobs, pastLabour, pastMaterials])
+  const serviceHistory = history.find(h => h.type === jobType)
+  const calibration = serviceHistory?.calibration ?? null
+
+  const defaultUnitRate = (key: string) =>
+    Math.round((PROD_RATES[key] ?? 0) * avgRate * (useHistory && calibration ? calibration : 1) * 100) / 100
+  const unitRateFor = (key: string) =>
+    unitRates[key] != null ? unitRates[key] : defaultUnitRate(key)
+
+  const qtyLines = useMemo(() => Object.entries(totals)
+    .filter(([, q]) => q > 0)
+    .map(([key, qty]) => {
+      const sub = SUB_BY_KEY[key]
+      const rate = unitRateFor(key)
+      return {
+        key, qty, label: sub?.label ?? key, unit: unitLabel(sub?.unit ?? 'sqm'),
+        rate, cost: Math.round(qty * rate * 100) / 100,
+        hours: qty * (PROD_RATES[key] ?? 0),
+      }
+    }), [totals, unitRates, avgRate])
+
+  const qtyCost = qtyLines.reduce((s, l) => s + l.cost, 0)
+  const qtyHours = qtyLines.reduce((s, l) => s + l.hours, 0)
+
+  const byQty = priceMode === 'quantity'
+  const totalHours = byQty ? qtyHours : procHours
+  const labourCost = byQty ? qtyCost : procCost
   const days = rates.hpd > 0 ? totalHours / rates.hpd : 0
   const equipTotal = equip.reduce((s, e) => s + (e.cost || 0), 0)
   const extraMatTotal = extraMats.reduce((s, m) => s + (m.cost || 0), 0)
@@ -326,15 +423,24 @@ export default function QuotingTool() {
     SUBSTRATES.forEach(sub => {
       const q = totals[sub.key] ?? 0
       if (q <= 0) return
-      const first = sub.paint.toLowerCase().split(' ')[0]
+      // A specified product is what gets bought, so it is what gets priced.
+      const want = finishSpecs[sub.key]?.product || sub.paint
+      const first = want.toLowerCase().split(' ')[0]
       const hit = lib.find(p => (p.product ?? '').toLowerCase().includes(first))
       const coverage = hit?.coverage ?? 12
       // linear metres and counts convert to an approximate painted area
       const m2 = sub.unit === 'sqm' ? q : sub.unit === 'lm' ? q * 0.3 : q * 2
-      // Coats now come from the substrate's own settings, undercoats included
+      // Coats now come from the substrate's own settings, undercoats included.
+      // Top coats and undercoat are counted separately because they can be
+      // applied differently — a sprayed undercoat under brushed top coats is
+      // the normal new-build sequence — and spraying covers less per litre.
       const c = coatOf(substrates, sub.key)
-      const litres = (m2 * (c.topCoats + (c.uc !== 'None' ? c.ucCoats : 0))) / coverage
-      const key = hit?.product ?? sub.paint
+      const topLitres = (m2 * c.topCoats) / coverageFor(coverage, c.app)
+      const ucLitres = c.uc !== 'None' && c.ucCoats > 0
+        ? (m2 * c.ucCoats) / coverageFor(coverage, c.ucApp)
+        : 0
+      const litres = topLitres + ucLitres
+      const key = hit?.product ?? want
       if (!products[key]) products[key] = { product: key, size: hit?.size ?? '4L', litres: 0, coverage, price: hit?.yours ?? 0 }
       products[key].litres += litres
     })
@@ -344,7 +450,7 @@ export default function QuotingTool() {
       return { ...p, tins, cost: tins * p.price }
     })
     return { rows, total: rows.reduce((s, r) => s + r.cost, 0) + extraMatTotal }
-  }, [totals, substrates, biz, extraMatTotal])
+  }, [totals, substrates, biz, extraMatTotal, finishSpecs])
 
   const subtotal = labourCost + materials.total + consTotal + equipTotal
   const gst = subtotal * 0.1
@@ -413,11 +519,98 @@ export default function QuotingTool() {
     })
   }
 
+  /** Change one line of one substrate, leaving the coating and the rest alone. */
+  function patchSubLine(key: string, lineId: string, patch: Partial<SubLine>) {
+    setSubstrates(prev => {
+      const entry = prev[key]
+      if (!entry) return prev
+      return { ...prev, [key]: { ...entry, lines: entry.lines.map(l => l.id === lineId ? { ...l, ...patch } : l) } }
+    })
+  }
+
+  function deleteSubLine(key: string, lineId: string) {
+    setSubstrates(prev => {
+      const entry = prev[key]
+      if (!entry) return prev
+      const lines = entry.lines.filter(l => l.id !== lineId)
+      // A substrate always keeps one line; emptying the last one unticks it.
+      return lines.length
+        ? { ...prev, [key]: { ...entry, lines } }
+        : { ...prev, [key]: { ...entry, inc: false, lines: [newSubLine()] } }
+    })
+  }
+
+  /** `inc` lives on the entry, so excluding is per substrate, not per line. */
+  function excludeSubstrate(key: string) {
+    setSubstrates(prev => (prev[key] ? { ...prev, [key]: { ...prev[key], inc: false } } : prev))
+  }
+
+  /** Scroll the substrate list to a row and flash it. */
+  function revealSubstrate(key: string) {
+    setScopeOpen(false)
+    setHighlightKey(key)
+    setTimeout(() => {
+      document.getElementById(`subrow-${key}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }, 0)
+    setTimeout(() => setHighlightKey(''), 1600)
+  }
+
+  function togglePhotoLink(itemId: string, photoId: string) {
+    setPhotoLinks(prev => {
+      const have = prev[itemId] ?? []
+      const next = have.includes(photoId) ? have.filter(x => x !== photoId) : [...have, photoId]
+      return { ...prev, [itemId]: next }
+    })
+  }
+
+  /**
+   * Photos from the site visit this quote came from. Fetched by id rather
+   * than carried through sessionStorage, which has neither the room nor a
+   * failure mode better than losing the whole prefill in silence.
+   */
+  async function loadVisitPhotos(visitId: string) {
+    try {
+      const { data } = await (supabase.from('np_site_visits') as any)
+        .select('photos').eq('id', visitId).maybeSingle()
+      const stored: StoredPhoto[] = data?.photos ?? []
+      if (!stored.length) return
+      const urls = await signPhotos(stored)
+      setScopePhotos(stored
+        .filter(ph => urls[ph.id])
+        .map(ph => ({ id: ph.id, data: urls[ph.id], path: ph.path, tag: ph.tag, label: ph.label, source: 'visit' as const })))
+    } catch { /* a quote without its photos still works */ }
+  }
+
+  /** Re-sign the stored paths so the photos render again. */
+  async function restorePhotos(saved: any[]) {
+    if (!saved.length) { setScopePhotos([]); return }
+    const urls = await signPhotos(saved)
+    setScopePhotos(saved
+      .filter(ph => urls[ph.id] || ph.data)
+      .map(ph => ({ ...ph, data: urls[ph.id] ?? ph.data })))
+  }
+
+  async function addScopePhotos(files: FileList | null) {
+    for (const file of Array.from(files ?? [])) {
+      const id = genId('ph')
+      try {
+        // Shown from a local preview straight away, then uploaded so it
+        // survives a reload.
+        const data = await shrinkToDataUrl(file)
+        setScopePhotos(prev => [...prev, { id, data, label: file.name, source: 'upload' }])
+        if (user?.id) {
+          const path = await uploadPhoto(file, user.id, quoteId || 'quote', id)
+          setScopePhotos(prev => prev.map(ph => ph.id === id ? { ...ph, path } : ph))
+        }
+      } catch (e: any) { alert(e?.message ?? `Could not read ${file.name}.`) }
+    }
+  }
+
   async function runExtract() {
     if (!apiKey) { setGenErr('No API key set. Add your Anthropic API key in Settings.'); return }
     setExtracting(true); setGenErr(''); setApplied(0); setReview(null)
     try {
-      const res = await extractQuantities(apiKey, docs, siteNotes)
+      const res = await extractQuantities(apiKey, docs, siteNotes, setExtractStage)
       setExtractRes(res)
       const warnings = checkTakeoff(res.quantities, { totalFloorArea: res.totalFloorArea })
       setReview(res.quantities.map(q => {
@@ -438,7 +631,33 @@ export default function QuotingTool() {
           warnings: ws,
         }
       }))
-    } catch (e: any) { setGenErr(e?.message ?? 'Extraction failed') } finally { setExtracting(false) }
+    } catch (e: any) { setGenErr(e?.message ?? 'Extraction failed') }
+    finally { setExtracting(false); setExtractStage('') }
+  }
+
+  /**
+   * Fold the finishes schedule into the coating settings and remember the
+   * named products. Separate from the quantities, since one may be wanted
+   * without the other.
+   */
+  function applyFinishes() {
+    if (!extractRes?.finishes.length) return
+    const { coats, specs, unmatched } = applyFinishRows(extractRes.finishes)
+    setSubstrates(prev => {
+      const out = { ...prev }
+      Object.entries(coats).forEach(([key, patch]) => {
+        if (!(key in out)) return
+        out[key] = { ...out[key], coat: { ...coatOf(prev, key), ...patch } }
+      })
+      return out
+    })
+    setFinishSpecs(prev => ({ ...prev, ...specs }))
+    const n = Object.keys(coats).length
+    alert(unmatched.length
+      ? `${n} coating setting${n === 1 ? '' : 's'} applied. ${unmatched.length} schedule `
+        + `row${unmatched.length === 1 ? '' : 's'} could not be matched to a substrate: `
+        + unmatched.map(f => f.area).filter(Boolean).join(', ')
+      : `${n} coating setting${n === 1 ? '' : 's'} applied from the finishes schedule.`)
   }
 
   /** Write the ticked rows into the substrates, then clear the review. */
@@ -455,9 +674,7 @@ export default function QuotingTool() {
     setReview(rs => rs?.map(r => (r.key === key ? { ...r, ...patch } : r)) ?? null)
 
   function applyRooms() {
-    const ceil = rooms.reduce((s, r) => s + r.w * r.l, 0)
-    const wall = rooms.reduce((s, r) => s + 2 * (r.w + r.l) * (r.h || 2.4), 0)
-    applyQuantities({ ceilings: Math.round(ceil), walls: Math.round(wall) })
+    applyQuantities(roomQuantities(rooms))
   }
 
   const newStep = (name: string): Process => ({ id: genId('pr'), name, hours: 0, np: painters.length })
@@ -475,15 +692,18 @@ export default function QuotingTool() {
   function changeJobType(next: string) {
     setJobType(next)
     setPrepLevels(defaultPrepLevels(next))
-    if (/new build/i.test(next)) { setMethod('spray'); applyNewBuildCoats(next) }
+    if (serviceFor(next).newBuild) { setMethod('spray'); applyNewBuildCoats(next) }
   }
 
   /** V16 autoApplyNewBuildSettings(): a new build gets 1 coat of Acrylic
    *  undercoat sprayed onto every substrate, and interior work is sprayed
    *  rather than rolled. Oil-finish substrates (decking) are left alone. */
   function applyNewBuildCoats(type: string) {
-    const isInt = /interior/i.test(type) || /full/i.test(type)
-    const isExt = /exterior/i.test(type) || /full/i.test(type)
+    // Was `/interior/i.test(type)` over the job-type string, which read seven
+    // of the thirteen services as neither interior nor exterior.
+    const svc = serviceFor(type)
+    const isInt = svc.interior
+    const isExt = svc.exterior
     setSubstrates(prev => {
       const next = { ...prev }
       SUBSTRATES.forEach(sub => {
@@ -633,6 +853,10 @@ export default function QuotingTool() {
           .map((p: any) => `${p.product} ${p.size}: $${p.yours} trade, ${p.coverage}m2/L`).join('; '),
         benchmarks: benchmarkText,
         siteNotes, logisticsNotes,
+        finishesSchedule: finishScheduleText(
+          finishSpecs,
+          Object.fromEntries(Object.keys(finishSpecs).map(k => [k, coatOf(substrates, k)])),
+        ),
       })
       setEstimate(text)
       // V16 seeds the adjustment panels from the estimate it just built.
@@ -705,6 +929,25 @@ export default function QuotingTool() {
       client, address, jobType, terms, substrates, prep, ceilingHeight, access,
       method, coats, processes, prepLevels, consPrep, consTotal, consNotes, extraMats,
       painters, travelKm, equip, siteNotes, logisticsNotes, estimate, lockedPrice, rooms,
+      finishSpecs, priceMode, unitRates, useHistory,
+      // The scope panel is mostly evidence. Without this a reopened quote
+      // shows a bare list of numbers with nothing behind them.
+      takeoff: extractRes && {
+        quantities: extractRes.quantities,
+        finishes: extractRes.finishes,
+        totalFloorArea: extractRes.totalFloorArea,
+        scopeNotes: extractRes.scopeNotes,
+        extractionSummary: extractRes.extractionSummary,
+        sheetIndex: extractRes.sheetIndex,
+        confidence: extractRes.confidence,
+      },
+      photoLinks: pruneLinks(photoLinks, scopeItems),
+      // Paths, not links: a signed URL expires in hours, the path does not.
+      scopePhotos: scopePhotos.map(ph => ({
+        id: ph.id, path: ph.path, tag: ph.tag, label: ph.label, source: ph.source,
+        // Only an upload that never reached the bucket keeps its bytes.
+        data: ph.path ? undefined : ph.data,
+      })),
       adjLab, adjMat, waste, contingency, overheadPct, bufDays, bufHrs, travelCost,
       paintRows, laHpd, laPrep, laTop, laBufD, laBufH, laRates,
     }
@@ -714,6 +957,14 @@ export default function QuotingTool() {
     setClient(d.client ?? ''); setAddress(d.address ?? ''); setJobType(d.jobType ?? JOB_TYPES[0])
     setTerms(d.terms ?? QUOTE_TERMS[0])
     setSubstrates(normaliseSubstrates(d.substrates ?? d.qty))
+    setFinishSpecs(d.finishSpecs ?? {})
+    setPriceMode(d.priceMode === 'quantity' ? 'quantity' : 'process')
+    setUseHistory(!!d.useHistory)
+    setUnitRates(d.unitRates ?? {})
+    setExtractRes(d.takeoff ?? null)
+    setPhotoLinks(d.photoLinks ?? {})
+    restorePhotos(d.scopePhotos ?? [])
+    setReview(null)
     setPrep(d.prep ?? PREP_OPTS[1]); setCeilingHeight(d.ceilingHeight ?? HEIGHT_OPTS[0]); setAccess(d.access ?? ACCESS_OPTS[0])
     setMethod(d.method ?? 'roll'); setCoats(d.coats ?? '2'); setProcesses(d.processes ?? [])
     // Drafts saved before per-item prep levels existed fall back to the type's defaults.
@@ -800,14 +1051,18 @@ export default function QuotingTool() {
     const coatRows = SUBSTRATES.filter(s => (totals[s.key] ?? 0) > 0).map(s => {
       const c = coatOf(substrates, s.key)
       const hasUC = c.uc !== 'None'
+      const spec = finishSpecs[s.key]
+      // Name what the architect specified, with the colour, so the client sees
+      // their own schedule reflected back.
+      const mat = (spec?.product || s.paint) + (spec?.colour ? ` — ${spec.colour}` : '')
       return s.group === 'Specialty'
-        ? { sub: s.label, sys: `${c.fin} system`, coats: String(c.topCoats), app: c.app, mat: s.paint }
+        ? { sub: s.label, sys: `${c.fin} system`, coats: String(c.topCoats), app: c.app, mat }
         : {
             sub: s.group === 'Exterior' ? `${s.label} (ext)` : s.label,
             sys: hasUC ? `${c.uc} undercoat (${c.ucApp}) + ${c.fin}` : c.fin,
             coats: hasUC ? `${c.ucCoats} + ${c.topCoats}` : String(c.topCoats),
             app: c.app,
-            mat: s.paint,
+            mat,
           }
     })
 
@@ -897,8 +1152,16 @@ export default function QuotingTool() {
           <Card>
             <div className={CT}>1b. Documents, Drawings &amp; Scope</div>
             <div className="text-[11px] text-[#666] mb-2.5">
-              Upload floor plans, drawings, finishes schedules, scope of works, or site photos.
-              AI reads all documents and auto-fills substrate quantities below.
+              {serviceFor(jobType).input === 'drawings'
+                ? <>A {jobType.toLowerCase()} usually arrives as drawings. Upload the set, any
+                    finishes schedule and the scope of works — a large set is indexed first so
+                    only the sheets carrying surfaces are measured.</>
+                : serviceFor(jobType).input === 'photos'
+                  ? <>A {jobType.toLowerCase()} is usually quoted from photos. Add them here, or
+                      take them on a site visit where you can describe each one out loud.
+                      Drawings and schedules work too.</>
+                  : <>This one is usually measured by hand. Upload whatever you have, or enter
+                      the quantities below directly.</>}
             </div>
             <div className="flex gap-2 flex-wrap mb-2.5">
               <button onClick={() => imgRef.current?.click()} className={BTN}><ImageIcon size={13} /> Add Images</button>
@@ -909,6 +1172,9 @@ export default function QuotingTool() {
                 <button onClick={runExtract} disabled={extracting} className={`${BTN_P} disabled:opacity-50`}>
                   {extracting ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />} Extract quantities
                 </button>
+              )}
+              {extracting && extractStage && (
+                <span className="text-[11px] text-[#666] self-center">{extractStage}</span>
               )}
             </div>
             {docs.map((d, i) => (
@@ -1031,6 +1297,13 @@ export default function QuotingTool() {
                       <summary className="text-[11px] text-[#2563eb] cursor-pointer">
                         Finishes schedule ({extractRes.finishes.length})
                       </summary>
+                      <button onClick={applyFinishes} className={`${BTN} mt-1.5`}>
+                        <Check size={12} /> Apply to coating settings
+                      </button>
+                      <div className="text-[10px] text-[#666] mt-1">
+                        Sets the sheen, coats and undercoat per substrate, and names the
+                        specified products and colours in the quote.
+                      </div>
                       <table className="w-full text-[11px] mt-1.5 border-collapse">
                         <tbody>
                           {extractRes.finishes.map((f, i) => (
@@ -1043,6 +1316,25 @@ export default function QuotingTool() {
                           ))}
                         </tbody>
                       </table>
+                    </details>
+                  )}
+                  {extractRes.sheetIndex && extractRes.sheetIndex.length > 0 && (
+                    <details>
+                      <summary className="text-[11px] text-[#2563eb] cursor-pointer">
+                        Sheet index ({extractRes.sheetIndex.filter(e => e.relevant).length} of{' '}
+                        {extractRes.sheetIndex.length} sheets measured)
+                      </summary>
+                      <div className="mt-1.5 max-h-56 overflow-auto">
+                        {extractRes.sheetIndex.map(e => (
+                          <div key={e.page} className="flex gap-2 text-[10px] py-0.5"
+                            style={{ color: e.relevant ? '#111' : '#999' }}>
+                            <span className="w-8 shrink-0 text-right">p{e.page}</span>
+                            <span className="w-14 shrink-0 font-mono">{e.sheetNo || '—'}</span>
+                            <span className="flex-1 truncate">{e.title}</span>
+                            <span className="text-[#666] shrink-0">{e.kind}</span>
+                          </div>
+                        ))}
+                      </div>
                     </details>
                   )}
                   {extractRes.model && (
@@ -1064,24 +1356,25 @@ export default function QuotingTool() {
           <Card>
             <div className="flex justify-between items-center mb-2">
               <div className={`${CT} m-0`}>1c. Room Calculator</div>
-              <button onClick={() => setRooms(r => [...r, { id: genId('rm'), name: '', w: 0, l: 0, h: 2.4 }])} className={BTN}>
+              <button onClick={() => setRooms(r => [...r, { id: genId('rm'), name: '', w: 0, l: 0, h: 2.4, doors: 0, wins: 0 }])} className={BTN}>
                 <Plus size={12} /> Add room
               </button>
             </div>
             <div className="text-[11px] text-[#666] mb-2">
-              Enter dimensions to auto-calculate ceiling and wall areas (height defaults to 2.4m).
+              Ceilings and walls in m², cornice and skirting in lineal metres (height defaults
+              to 2.4&nbsp;m). Door and window counts are optional — each door deducts 1.89&nbsp;m²
+              from the walls and 0.9&nbsp;m from the skirting, each window 1.2&nbsp;m².
             </div>
             {rooms.length > 0 && (
               <table className="w-full border-collapse text-xs mb-2">
                 <thead>
-                  <tr>{['Room', 'W m', 'L m', 'H m', 'Ceil m²', 'Wall m²', ''].map(h => (
+                  <tr>{['Room', 'W m', 'L m', 'H m', 'Drs', 'Win', 'Ceil m²', 'Wall m²', 'Corn lm', 'Skirt lm', ''].map(h => (
                     <th key={h} className="text-left px-1.5 py-1 text-[#666] border-b border-black/[0.12] font-medium">{h}</th>
                   ))}</tr>
                 </thead>
                 <tbody>
                   {rooms.map(r => {
-                    const ceil = r.w * r.l
-                    const wall = 2 * (r.w + r.l) * (r.h || 2.4)
+                    const t = roomTotals(r)
                     const upd = (patch: Partial<Room>) => setRooms(x => x.map(y => y.id === r.id ? { ...y, ...patch } : y))
                     return (
                       <tr key={r.id}>
@@ -1092,8 +1385,17 @@ export default function QuotingTool() {
                               className="w-14 px-1 py-0.5 border border-black/15 rounded text-xs text-right font-mono" />
                           </td>
                         ))}
-                        <td className="px-1.5 py-1 font-mono">{ceil.toFixed(1)}</td>
-                        <td className="px-1.5 py-1 font-mono">{wall.toFixed(1)}</td>
+                        {(['doors', 'wins'] as const).map(k => (
+                          <td key={k} className="px-1.5 py-1">
+                            <input type="number" min={0} step="1" value={r[k] || ''} placeholder="0"
+                              onChange={e => upd({ [k]: parseInt(e.target.value) || 0 } as Partial<Room>)}
+                              className="w-11 px-1 py-0.5 border border-black/15 rounded text-xs text-right font-mono" />
+                          </td>
+                        ))}
+                        <td className="px-1.5 py-1 font-mono">{t.ceilings.toFixed(1)}</td>
+                        <td className="px-1.5 py-1 font-mono">{t.walls.toFixed(1)}</td>
+                        <td className="px-1.5 py-1 font-mono">{t.cornice.toFixed(1)}</td>
+                        <td className="px-1.5 py-1 font-mono">{t.skirtings.toFixed(1)}</td>
                         <td className="px-1.5 py-1"><button onClick={() => setRooms(x => x.filter(y => y.id !== r.id))} className="text-[#c0392b]"><Trash2 size={12} /></button></td>
                       </tr>
                     )
@@ -1103,7 +1405,12 @@ export default function QuotingTool() {
             )}
             <div className="flex justify-between items-center gap-2 flex-wrap">
               <div className="text-xs text-[#666]">
-                {rooms.length > 0 && `Total ceiling ${rooms.reduce((s, r) => s + r.w * r.l, 0).toFixed(1)} m² · wall ${rooms.reduce((s, r) => s + 2 * (r.w + r.l) * (r.h || 2.4), 0).toFixed(1)} m²`}
+                {rooms.length > 0 && (() => {
+                  const t = roomsTotal(rooms)
+                  return `Ceilings ${t.ceilings.toFixed(1)} m² · walls ${t.walls.toFixed(1)} m²`
+                    + ` · cornice ${t.cornice.toFixed(1)} lm · skirting ${t.skirtings.toFixed(1)} lm`
+                    + (t.deductedM2 > 0 ? ` (${t.deductedM2.toFixed(1)} m² of openings deducted)` : '')
+                })()}
               </div>
               <button onClick={applyRooms} disabled={!rooms.length} className={`${BTN_P} disabled:opacity-50`}>
                 <Check size={12} /> Apply to substrates
@@ -1112,13 +1419,19 @@ export default function QuotingTool() {
           </Card>
 
           <Card>
-            <div className={CT}>2. Substrates</div>
+            <div className="flex justify-between items-center gap-2 flex-wrap mb-1">
+              <div className={`${CT} m-0`}>2. Substrates</div>
+              <button onClick={() => setAllSubs(v => !v)} className="text-[11px] text-[#2563eb]">
+                {allSubs ? `Only what ${jobType.toLowerCase()} involves` : 'Show every substrate'}
+              </button>
+            </div>
             <div className="text-[11px] text-[#666] mb-2.5">
               Tick what's in scope, then add a line per type — pick a preset or enter your own,
               so French, solid and panel doors can be priced separately. This is the same list the
               site visit uses, so a visit's takeoff lands here unchanged.
             </div>
-            <SubstratePicker value={substrates} onChange={setSubstrates} showCoating />
+            <SubstratePicker value={substrates} onChange={setSubstrates} showCoating highlight={highlightKey}
+              groups={allSubs ? undefined : serviceGroups(jobType)} />
             {Object.keys(totals).length > 0 && (
               <div className="mt-3 pt-2.5 border-t border-black/[0.12] text-[11px] text-[#666]">
                 {Object.keys(totals).length} substrate{Object.keys(totals).length !== 1 ? 's' : ''} in scope ·
@@ -1138,25 +1451,122 @@ export default function QuotingTool() {
 
           <Card>
             <div className="flex justify-between items-center mb-1 flex-wrap gap-2">
-              <div className={`${CT} m-0`}>4. Labour — Processes &amp; Hours</div>
+              <div className={`${CT} m-0`}>
+                4. Labour — {byQty ? 'Rates per Unit' : 'Processes & Hours'}
+              </div>
               <div className="flex gap-1.5 items-center flex-wrap">
                 <div className="flex border border-black/[0.18] rounded-md overflow-hidden text-[11px]">
-                  {(['hrs', 'days'] as const).map(u => (
-                    <button key={u} onClick={() => setProcUnit(u)}
-                      className={`px-2.5 py-1 font-semibold ${procUnit === u ? 'bg-blue-600 text-white' : 'bg-[#f5f4f0] text-[#666]'}`}>{u}</button>
+                  {([['process', 'By process'], ['quantity', 'By quantity']] as const).map(([m, l]) => (
+                    <button key={m} onClick={() => setPriceMode(m)}
+                      className={`px-2.5 py-1 font-semibold ${priceMode === m ? 'bg-blue-600 text-white' : 'bg-[#f5f4f0] text-[#666]'}`}>{l}</button>
                   ))}
                 </div>
-                <button onClick={loadWorkflow} className={BTN}><ClipboardList size={12} /> Template</button>
-                <button onClick={aiSuggestHours} disabled={suggesting} className={`${BTN} disabled:opacity-50`}>
-                  {suggesting ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />} AI Suggest
-                </button>
-                <button onClick={() => setProcesses(p => [...p, newStep('')])} className={BTN}><Plus size={12} /></button>
+                {!byQty && (
+                  <div className="flex border border-black/[0.18] rounded-md overflow-hidden text-[11px]">
+                    {(['hrs', 'days'] as const).map(u => (
+                      <button key={u} onClick={() => setProcUnit(u)}
+                        className={`px-2.5 py-1 font-semibold ${procUnit === u ? 'bg-blue-600 text-white' : 'bg-[#f5f4f0] text-[#666]'}`}>{u}</button>
+                    ))}
+                  </div>
+                )}
+                {!byQty && <>
+                  <button onClick={loadWorkflow} className={BTN}><ClipboardList size={12} /> Template</button>
+                  <button onClick={aiSuggestHours} disabled={suggesting} className={`${BTN} disabled:opacity-50`}>
+                    {suggesting ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />} AI Suggest
+                  </button>
+                  <button onClick={() => setProcesses(p => [...p, newStep('')])} className={BTN}><Plus size={12} /></button>
+                </>}
               </div>
             </div>
             <div className="text-[11px] text-[#666] mb-2.5">
-              Enter time per process step. These exact totals go into the quote — AI does not recalculate them.
-              {baselineHours > 0 && <> Production-rate baseline for your quantities: <strong>{baselineHours.toFixed(1)} hrs</strong>.</>}
+              {byQty
+                ? <>A rate per unit against each measured substrate. Rates start from the
+                    production rates at your crew&apos;s average of {fmtCurrency(avgRate)}/hr — type over any of them.</>
+                : <>Enter time per process step. These exact totals go into the quote — AI does not recalculate them.
+                    {baselineHours > 0 && <> Production-rate baseline for your quantities: <strong>{baselineHours.toFixed(1)} hrs</strong>.</>}</>}
             </div>
+
+            {/* What is actually being painted, beside the time being put on it.
+                Pricing a step called "Second coat" means nothing without the
+                area it covers. */}
+            {qtyLines.length > 0 && !byQty && (
+              <div className="flex flex-wrap gap-1 mb-2.5">
+                {qtyLines.map(l => (
+                  <span key={l.key} className="text-[10px] px-1.5 py-0.5 rounded bg-[#eef5ff] text-[#1e40af]">
+                    {l.label} <b>{l.qty}</b> {l.unit}
+                  </span>
+                ))}
+              </div>
+            )}
+            {byQty && calibration != null && (
+              <label className="flex items-start gap-2 mb-2.5 px-3 py-2 bg-[#f0fdf4] border border-[#86efac] rounded-lg cursor-pointer">
+                <input type="checkbox" checked={useHistory} onChange={e => setUseHistory(e.target.checked)}
+                  className="w-4 h-4 accent-green-700 mt-0.5 shrink-0" />
+                <span className="text-[11px] text-[#166534]">
+                  Scale by what {jobType.toLowerCase()} actually takes you:{' '}
+                  <b>{calibration.toFixed(2)}×</b> the standard rates
+                  {serviceHistory && <> — from {serviceHistory.samples} finished job{serviceHistory.samples === 1 ? '' : 's'}</>}.
+                  {serviceHistory && serviceHistory.samples < 3 && (
+                    <span className="text-[#92400e]"> Too few jobs to lean on yet.</span>
+                  )}
+                  {' '}<Link to="/rates" className="underline">See the numbers</Link>
+                </span>
+              </label>
+            )}
+
+            {byQty && (
+              qtyLines.length === 0 ? (
+                <div className="text-[11px] text-[#666] bg-[#fffbeb] border border-[#fbbf24] rounded-lg px-3 py-2 mb-2.5">
+                  Nothing measured yet. Pricing by quantity needs quantities — tick substrates above,
+                  use the room calculator, or extract them from drawings.
+                </div>
+              ) : (
+                <div className="border border-black/[0.12] rounded-lg overflow-hidden mb-2.5">
+                  <table className="w-full border-collapse text-xs">
+                    <thead>
+                      <tr>{['Substrate', 'Qty', '', 'Rate $/unit', 'Cost', 'Hrs'].map(h => (
+                        <th key={h} className="text-left px-2 py-1 text-[#666] border-b border-black/[0.12] font-medium">{h}</th>
+                      ))}</tr>
+                    </thead>
+                    <tbody>
+                      {qtyLines.map(l => (
+                        <tr key={l.key} className="border-b border-black/[0.06]">
+                          <td className="px-2 py-1">{l.label}</td>
+                          <td className="px-2 py-1 font-mono text-right">{l.qty}</td>
+                          <td className="px-2 py-1 text-[10px] text-[#666]">{l.unit}</td>
+                          <td className="px-2 py-1">
+                            <input type="number" min={0} step="0.01" value={unitRates[l.key] ?? ''}
+                              placeholder={String(defaultUnitRate(l.key))}
+                              onChange={e => {
+                                const v = e.target.value
+                                setUnitRates(r => {
+                                  const n = { ...r }
+                                  if (v === '') delete n[l.key]; else n[l.key] = parseFloat(v) || 0
+                                  return n
+                                })
+                              }}
+                              className="w-20 px-1 py-0.5 border border-black/15 rounded text-xs text-right font-mono" />
+                          </td>
+                          <td className="px-2 py-1 font-mono text-right">{fmtCurrency(l.cost)}</td>
+                          <td className="px-2 py-1 font-mono text-right text-[#666]">{l.hours.toFixed(1)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  <div className="flex justify-between items-center px-2 py-1.5 bg-[#f5f4f0] text-xs font-bold">
+                    <span>{qtyLines.length} substrate{qtyLines.length === 1 ? '' : 's'}</span>
+                    <span>{qtyHours.toFixed(1)} hrs · {fmtCurrency(qtyCost)} ex GST</span>
+                  </div>
+                  {Object.keys(unitRates).length > 0 && (
+                    <button onClick={() => setUnitRates({})}
+                      className="w-full text-[10px] text-[#2563eb] py-1 border-t border-black/[0.08]">
+                      Reset {Object.keys(unitRates).length} edited rate{Object.keys(unitRates).length === 1 ? '' : 's'}
+                    </button>
+                  )}
+                </div>
+              )
+            )}
+
             <div className="flex gap-2 mb-2.5 flex-wrap">
               <div className="flex-1 min-w-[140px]">
                 <label className="block text-[10px] uppercase font-bold text-[#666] mb-1">Application method</label>
@@ -1228,7 +1638,7 @@ export default function QuotingTool() {
               </div>
             )}
 
-            {processes.length === 0 ? (
+            {!byQty && (processes.length === 0 ? (
               <div className="text-[#666] text-xs py-1.5">
                 Use <b>Template</b> to load the steps for this job type, then <b>AI Suggest</b> to estimate times.
               </div>
@@ -1265,7 +1675,7 @@ export default function QuotingTool() {
                   </div>
                 ))}
               </div>
-            )}
+            ))}
 
             {totalHours > 0 && (
               <div className="grid grid-cols-3 gap-2 px-3 py-2.5 bg-[#f5f4f0] rounded-lg">
@@ -1408,258 +1818,290 @@ export default function QuotingTool() {
 
         {/* RIGHT */}
         <div>
-          <Card className="min-h-[300px]">
-            <div className={CT}>Quote Estimate</div>
-            {genErr && <div className="text-xs text-[#c0392b] bg-[#fef2f2] rounded-lg px-3 py-2 mb-2.5">{genErr}</div>}
-            {estimate ? (
-              <div className="text-[13px] leading-relaxed" dangerouslySetInnerHTML={{ __html: renderEstimate(estimate) }} />
-            ) : !genErr && (
-              <div className="text-center py-10 text-[#666]">
-                <Sparkles size={36} className="mx-auto mb-3 opacity-25" />
-                Fill in the substrates and details, then click Generate
-              </div>
-            )}
-          </Card>
+          <div className="flex gap-1 p-1 mb-3.5 bg-[#f5f4f0] rounded-xl">
+            {([['scope', `Scope${scopeStat.items ? ` (${scopeStat.items})` : ''}`],
+               ['estimate', 'Estimate']] as const).map(([id, label]) => (
+              <button key={id} onClick={() => setRightTab(id)}
+                className={`flex-1 py-2 text-[13px] font-semibold rounded-lg transition-colors ${
+                  rightTab === id ? 'bg-white shadow-sm text-gray-900' : 'text-[#666]'}`}>
+                {label}
+                {id === 'scope' && scopeStat.errors > 0 && <span className="ml-1.5 text-[#c0392b]">●</span>}
+              </button>
+            ))}
+          </div>
 
-          {estimate && (
+          {rightTab === 'scope' ? (
+            <div className="hidden lg:block">
+              <ScopePanel
+                items={scopeItems}
+                photos={scopePhotos}
+                sheetIndex={extractRes?.sheetIndex}
+                scopeNotes={extractRes?.scopeNotes}
+                onQty={(k, id, qty) => patchSubLine(k, id, { qty })}
+                onExclude={excludeSubstrate}
+                onDeleteLine={deleteSubLine}
+                onReveal={revealSubstrate}
+                onTogglePhoto={togglePhotoLink}
+                onAddPhotos={addScopePhotos}
+              />
+            </div>
+          ) : (
             <>
-              <Card>
-                <div className={CT}>Cost Adjustments</div>
-                <div className="text-xs text-[#666] mb-3">
-                  Base costs come from the estimate above. Adjustments apply live and set the quoted price.
+            <Card className="min-h-[300px]">
+              <div className={CT}>Quote Estimate</div>
+              {genErr && <div className="text-xs text-[#c0392b] bg-[#fef2f2] rounded-lg px-3 py-2 mb-2.5">{genErr}</div>}
+              {estimate ? (
+                <div className="text-[13px] leading-relaxed" dangerouslySetInnerHTML={{ __html: renderEstimate(estimate) }} />
+              ) : !genErr && (
+                <div className="text-center py-10 text-[#666]">
+                  <Sparkles size={36} className="mx-auto mb-3 opacity-25" />
+                  Fill in the substrates and details, then click Generate
                 </div>
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 mb-3">
-                  {([
-                    ['Labour ex GST ($)', adjLab, setAdjLab, ''],
-                    ['Materials ex GST ($)', adjMat, setAdjMat, ''],
-                    ['Waste %', waste, setWaste, 'on materials'],
-                    ['Contingency %', contingency, setContingency, 'on labour'],
-                    ['Overhead %', overheadPct, setOverheadPct, 'on subtotal'],
-                    ['Buffer days', bufDays, setBufDays, ''],
-                    ['Buffer hours', bufHrs, setBufHrs, ''],
-                    ['Travel expenses ($)', travelCost, setTravelCost, 'ex GST'],
-                  ] as [string, number, (n: number) => void, string][]).map(([label, val, set, hint]) => (
-                    <div key={label}>
-                      <label className="block text-[10px] uppercase font-bold text-[#666] mb-1">
-                        {label} {hint && <span className="font-normal normal-case">({hint})</span>}
-                      </label>
-                      <input type="number" min={0} value={val || ''} placeholder="0"
-                        onChange={e => set(parseFloat(e.target.value) || 0)} className={INP} />
-                    </div>
-                  ))}
-                </div>
-                <div className="bg-[#f5f4f0] rounded-lg px-3.5 py-3">
-                  <div className="grid grid-cols-3 gap-2.5">
-                    {([['Labour (adj)', labAdj], ['Materials+cons (adj)', matAdj],
-                       ['Overhead', adjSub * (overheadPct / 100)]] as [string, number][]).map(([l, v]) => (
-                      <div key={l}>
-                        <div className="text-[10px] text-[#666] font-semibold uppercase mb-0.5">{l}</div>
-                        <div className="text-[15px] font-bold">{fmtCurrency(v)}</div>
-                      </div>
-                    ))}
-                  </div>
-                  {consTotal > 0 && (
-                    <div className="flex justify-between items-center py-1 mt-2 border-t border-black/[0.06]">
-                      <span className="text-[10px] text-[#666] font-semibold uppercase">↳ Consumables (incl. in materials)</span>
-                      <span className="text-xs text-[#666]">{fmtCurrency(consTotal)}</span>
-                    </div>
-                  )}
-                  {travelCost > 0 && (
-                    <div className="flex justify-between items-center py-1 border-t border-black/[0.06]">
-                      <span className="text-[10px] text-[#666] font-semibold uppercase">Travel expenses</span>
-                      <span className="text-sm font-bold">{fmtCurrency(travelCost)}</span>
-                    </div>
-                  )}
-                  <div className="grid grid-cols-3 gap-2.5 mt-2">
-                    {([['Total ex GST', adjTotalEx, true], ['GST (10%)', adjGst, false],
-                       ['Total inc GST', adjTotalEx + adjGst, false]] as [string, number, boolean][]).map(([l, v, hl]) => (
-                      <div key={l}>
-                        <div className="text-[10px] text-[#666] font-semibold uppercase mb-0.5">{l}</div>
-                        <div className="text-base font-bold" style={hl ? { color: '#2563eb' } : undefined}>{fmtCurrency(v)}</div>
-                      </div>
-                    ))}
-                  </div>
-                  {(bufDays > 0 || bufHrs > 0) && (
-                    <div className="text-xs text-[#666] border-t border-black/[0.08] pt-1.5 mt-1.5">
-                      Buffer: {bufDays > 0 && `${bufDays} day${bufDays !== 1 ? 's' : ''} `}
-                      {bufHrs > 0 && `${bufHrs} hr${bufHrs !== 1 ? 's' : ''}`} added to schedule
-                    </div>
-                  )}
-                </div>
-              </Card>
+              )}
+            </Card>
 
-              <Card>
-                <div className="flex justify-between items-center mb-2.5">
-                  <div className={`${CT} m-0`}>Paint Quantity Adjuster</div>
-                  <button onClick={() => setPaintRows(r => [...r, newPaintRow('', 0)])} className={BTN}>
-                    <Plus size={12} /> Add product
-                  </button>
-                </div>
-                <div className="text-[11px] text-[#666] mb-2.5">
-                  Enter litres needed per product. Choose tin sizes, set prices — materials cost recalculates live.
-                </div>
-                {paintRows.map(r => {
-                  const t = rowTins(r)
-                  return (
-                    <div key={r.id} className="border border-black/10 rounded-lg px-3 py-2.5 mb-2">
-                      <div className="flex gap-2 items-center mb-2 flex-wrap">
-                        <input value={r.product} placeholder="Product name (e.g. Wash and Wear Low Sheen)"
-                          onChange={e => patchPaint(r.id, { product: e.target.value })}
-                          className="flex-1 min-w-[180px] px-2 py-1.5 text-xs bg-white border border-black/20 rounded-lg focus:outline-none" />
-                        <div className="flex items-center gap-1">
-                          <input type="number" min={0} step="0.5" value={r.litres || ''}
-                            onChange={e => {
-                              const l = parseFloat(e.target.value) || 0
-                              patchPaint(r.id, { litres: l, qty: suggestTins(l) })
-                            }}
-                            className="w-16 px-1.5 py-1.5 text-center text-xs bg-white border border-black/20 rounded-lg focus:outline-none" />
-                          <span className="text-[11px] text-[#666]">L needed</span>
-                        </div>
-                        <button onClick={() => patchPaint(r.id, { qty: suggestTins(r.litres) })} className={BTN} title="Auto-suggest tins">
-                          <Sparkles size={11} /> Suggest tins
-                        </button>
-                        <button onClick={() => setPaintRows(x => x.filter(y => y.id !== r.id))} className="text-[#c0392b]"><Trash2 size={12} /></button>
-                      </div>
-                      <div className="overflow-x-auto">
-                        <table className="w-full text-xs border-collapse min-w-[420px]">
-                          <thead>
-                            <tr className="bg-[#f5f4f0]">
-                              {TIN_SIZES.map(s => <th key={s} className="px-2 py-1.5 text-center font-semibold">{TIN_LABEL[s]}</th>)}
-                              <th className="px-2 py-1.5 text-right font-semibold">Total L</th>
-                              <th className="px-2 py-1.5 text-right font-semibold">Cost ex GST</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            <tr>
-                              {TIN_SIZES.map(s => (
-                                <td key={s} className="px-1 py-1.5 text-center">
-                                  <div className="flex flex-col gap-1 items-center">
-                                    <input type="number" min={0} value={r.qty[s] || 0}
-                                      onChange={e => patchPaint(r.id, { qty: { ...r.qty, [s]: parseInt(e.target.value) || 0 } })}
-                                      className="w-11 px-1 py-1 text-center text-xs bg-white border border-black/20 rounded focus:outline-none" />
-                                    <input type="number" min={0} step="0.01" value={r.price[s] || ''} placeholder="$"
-                                      onChange={e => patchPaint(r.id, { price: { ...r.price, [s]: parseFloat(e.target.value) || 0 } })}
-                                      className="w-14 px-1 py-1 text-center text-[11px] text-[#666] bg-white border border-black/20 rounded focus:outline-none" />
-                                  </div>
-                                </td>
-                              ))}
-                              <td className="px-2 py-1.5 text-right font-semibold whitespace-nowrap">{t.litres.toFixed(1)} L</td>
-                              <td className="px-2 py-1.5 text-right font-bold text-[#2563eb]">{fmtCurrency(t.cost)}</td>
-                            </tr>
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-                  )
-                })}
-                {paintRows.length > 0 && (
-                  <div className="flex justify-between items-center mt-2.5 px-3 py-2.5 bg-[#f5f4f0] rounded-lg">
-                    <span className="text-xs text-[#666]">Total materials ex GST</span>
-                    <span className="font-bold text-base text-[#2563eb]">{fmtCurrency(paintTotal)}</span>
-                  </div>
-                )}
-              </Card>
-
-              <Card>
-                <div className={CT}>Labour Calculator</div>
-                <div className="text-[11px] text-[#666] mb-2.5">
-                  Break down labour days by phase. Rates auto-fill from your painters above.
-                </div>
-                <div className="grid grid-cols-3 sm:grid-cols-5 gap-2.5 mb-2.5">
-                  {([['Hrs per day', laHpd, setLaHpd], ['Days — Prep', laPrep, setLaPrep],
-                     ['Days — Top coats', laTop, setLaTop], ['Buffer days', laBufD, setLaBufD],
-                     ['Buffer hours', laBufH, setLaBufH]] as [string, number, (n: number) => void][]).map(([l, v, set]) => (
-                    <div key={l}>
-                      <label className="block text-[10px] uppercase font-bold text-[#666] mb-1">{l}</label>
-                      <input type="number" min={0} step="0.5" value={v || ''} placeholder="0"
-                        onChange={e => set(parseFloat(e.target.value) || 0)} className={INP} />
-                    </div>
-                  ))}
-                </div>
-                <div className="mb-2.5">
-                  {painters.map((p, i) => (
-                    <div key={p.id} className="flex items-center gap-2 mb-1.5 text-xs">
-                      <span className="w-24 text-[#666] truncate">{p.name || `Painter ${i + 1}`}</span>
-                      <span className="text-[#666]">$</span>
-                      <input type="number" min={0} value={laRates[i] ?? p.rate}
-                        onChange={e => setLaRates(r => {
-                          const n = painters.map((q, j) => r[j] ?? q.rate)
-                          n[i] = parseFloat(e.target.value) || 0
-                          return n
-                        })}
-                        className="w-16 px-1.5 py-1 text-xs bg-white border border-black/20 rounded-lg focus:outline-none" />
-                      <span className="text-[10px] text-[#999]">/hr</span>
-                    </div>
-                  ))}
-                </div>
-                <div className="bg-[#f5f4f0] rounded-lg px-3 py-2.5">
-                  <div className="grid grid-cols-3 gap-2">
-                    {([['Total days', (laPrep + laTop).toFixed(1)],
-                       ['Buffer', laBufD > 0 || laBufH > 0 ? `${laBufD > 0 ? laBufD + 'd ' : ''}${laBufH > 0 ? laBufH + 'h' : ''}` : '—'],
-                       ['Total hours', laTotalHrs.toFixed(1)]] as [string, string][]).map(([l, v]) => (
-                      <div key={l}>
-                        <div className="text-[10px] text-[#666] font-semibold uppercase mb-0.5">{l}</div>
-                        <div className="text-[15px] font-bold">{v}</div>
-                      </div>
-                    ))}
-                  </div>
-                  <div className="flex justify-between items-center pt-2 mt-2 border-t border-black/[0.08]">
-                    <span className="text-xs text-[#666]">Labour cost ex GST</span>
-                    <span className="text-lg font-bold text-[#2563eb]">{fmtCurrency(laCost)}</span>
-                  </div>
-                </div>
-              </Card>
-
-              {compJobs.length > 0 && (
+            {estimate && (
+              <>
                 <Card>
-                  <div className={CT}>Comparable Past Jobs</div>
-                  <div className="text-xs text-[#666] mb-2.5">
-                    Found {compJobs.length} comparable finished job{compJobs.length !== 1 ? 's' : ''} — sorted by
-                    relevance. Margins calculated from logged materials &amp; labour.
+                  <div className={CT}>Cost Adjustments</div>
+                  <div className="text-xs text-[#666] mb-3">
+                    Base costs come from the estimate above. Adjustments apply live and set the quoted price.
                   </div>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-xs border-collapse">
-                      <thead>
-                        <tr className="bg-[#f5f4f0]">
-                          <th className="px-2 py-1.5 text-left font-semibold">Job</th>
-                          <th className="px-2 py-1.5 text-right font-semibold">Agreed</th>
-                          <th className="px-2 py-1.5 text-right font-semibold">Real Cost</th>
-                          <th className="px-2 py-1.5 text-right font-semibold">Margin</th>
-                          <th className="px-2 py-1.5 text-center font-semibold">Sub Match</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {compJobs.map(c => (
-                          <tr key={c.job.id} className="border-b border-black/[0.06]">
-                            <td className="px-2 py-1.5">
-                              <div className="font-medium">{c.job.client || '—'}</div>
-                              <div className="text-[10px] text-[#666]">
-                                {c.job.type || ''} · {(c.job.address || '').split(',')[0]}
-                              </div>
-                            </td>
-                            <td className="px-2 py-1.5 text-right font-semibold">{fmtCurrency(c.job.agreed_ex_gst)}</td>
-                            <td className="px-2 py-1.5 text-right text-[#666]">{c.realCost > 0 ? fmtCurrency(c.realCost) : '—'}</td>
-                            <td className="px-2 py-1.5 text-right font-semibold"
-                              style={{ color: c.margin === null ? '#666' : c.margin >= 30 ? '#27ae60' : c.margin >= 15 ? '#e67e22' : '#c0392b' }}>
-                              {c.margin !== null ? `${c.margin.toFixed(1)}%` : '—'}
-                            </td>
-                            <td className="px-2 py-1.5 text-center">
-                              <span className="text-[10px] bg-[#2563eb]/[0.13] text-[#2563eb] rounded-full px-1.5 py-0.5 font-semibold">
-                                {c.matchPct > 0 ? `${c.matchPct}%` : 'type only'}
-                              </span>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 mb-3">
+                    {([
+                      ['Labour ex GST ($)', adjLab, setAdjLab, ''],
+                      ['Materials ex GST ($)', adjMat, setAdjMat, ''],
+                      ['Waste %', waste, setWaste, 'on materials'],
+                      ['Contingency %', contingency, setContingency, 'on labour'],
+                      ['Overhead %', overheadPct, setOverheadPct, 'on subtotal'],
+                      ['Buffer days', bufDays, setBufDays, ''],
+                      ['Buffer hours', bufHrs, setBufHrs, ''],
+                      ['Travel expenses ($)', travelCost, setTravelCost, 'ex GST'],
+                    ] as [string, number, (n: number) => void, string][]).map(([label, val, set, hint]) => (
+                      <div key={label}>
+                        <label className="block text-[10px] uppercase font-bold text-[#666] mb-1">
+                          {label} {hint && <span className="font-normal normal-case">({hint})</span>}
+                        </label>
+                        <input type="number" min={0} value={val || ''} placeholder="0"
+                          onChange={e => set(parseFloat(e.target.value) || 0)} className={INP} />
+                      </div>
+                    ))}
                   </div>
-                  {compJobs.some(c => c.realCost === 0) && (
-                    <div className="text-[11px] text-[#666] mt-2 pt-1.5 border-t border-black/[0.06] flex items-center gap-1">
-                      <Info size={11} /> Log materials &amp; labour against a job to see real cost and margin.
+                  <div className="bg-[#f5f4f0] rounded-lg px-3.5 py-3">
+                    <div className="grid grid-cols-3 gap-2.5">
+                      {([['Labour (adj)', labAdj], ['Materials+cons (adj)', matAdj],
+                         ['Overhead', adjSub * (overheadPct / 100)]] as [string, number][]).map(([l, v]) => (
+                        <div key={l}>
+                          <div className="text-[10px] text-[#666] font-semibold uppercase mb-0.5">{l}</div>
+                          <div className="text-[15px] font-bold">{fmtCurrency(v)}</div>
+                        </div>
+                      ))}
+                    </div>
+                    {consTotal > 0 && (
+                      <div className="flex justify-between items-center py-1 mt-2 border-t border-black/[0.06]">
+                        <span className="text-[10px] text-[#666] font-semibold uppercase">↳ Consumables (incl. in materials)</span>
+                        <span className="text-xs text-[#666]">{fmtCurrency(consTotal)}</span>
+                      </div>
+                    )}
+                    {travelCost > 0 && (
+                      <div className="flex justify-between items-center py-1 border-t border-black/[0.06]">
+                        <span className="text-[10px] text-[#666] font-semibold uppercase">Travel expenses</span>
+                        <span className="text-sm font-bold">{fmtCurrency(travelCost)}</span>
+                      </div>
+                    )}
+                    <div className="grid grid-cols-3 gap-2.5 mt-2">
+                      {([['Total ex GST', adjTotalEx, true], ['GST (10%)', adjGst, false],
+                         ['Total inc GST', adjTotalEx + adjGst, false]] as [string, number, boolean][]).map(([l, v, hl]) => (
+                        <div key={l}>
+                          <div className="text-[10px] text-[#666] font-semibold uppercase mb-0.5">{l}</div>
+                          <div className="text-base font-bold" style={hl ? { color: '#2563eb' } : undefined}>{fmtCurrency(v)}</div>
+                        </div>
+                      ))}
+                    </div>
+                    {(bufDays > 0 || bufHrs > 0) && (
+                      <div className="text-xs text-[#666] border-t border-black/[0.08] pt-1.5 mt-1.5">
+                        Buffer: {bufDays > 0 && `${bufDays} day${bufDays !== 1 ? 's' : ''} `}
+                        {bufHrs > 0 && `${bufHrs} hr${bufHrs !== 1 ? 's' : ''}`} added to schedule
+                      </div>
+                    )}
+                  </div>
+                </Card>
+
+                <Card>
+                  <div className="flex justify-between items-center mb-2.5">
+                    <div className={`${CT} m-0`}>Paint Quantity Adjuster</div>
+                    <button onClick={() => setPaintRows(r => [...r, newPaintRow('', 0)])} className={BTN}>
+                      <Plus size={12} /> Add product
+                    </button>
+                  </div>
+                  <div className="text-[11px] text-[#666] mb-2.5">
+                    Enter litres needed per product. Choose tin sizes, set prices — materials cost recalculates live.
+                  </div>
+                  {paintRows.map(r => {
+                    const t = rowTins(r)
+                    return (
+                      <div key={r.id} className="border border-black/10 rounded-lg px-3 py-2.5 mb-2">
+                        <div className="flex gap-2 items-center mb-2 flex-wrap">
+                          <input value={r.product} placeholder="Product name (e.g. Wash and Wear Low Sheen)"
+                            onChange={e => patchPaint(r.id, { product: e.target.value })}
+                            className="flex-1 min-w-[180px] px-2 py-1.5 text-xs bg-white border border-black/20 rounded-lg focus:outline-none" />
+                          <div className="flex items-center gap-1">
+                            <input type="number" min={0} step="0.5" value={r.litres || ''}
+                              onChange={e => {
+                                const l = parseFloat(e.target.value) || 0
+                                patchPaint(r.id, { litres: l, qty: suggestTins(l) })
+                              }}
+                              className="w-16 px-1.5 py-1.5 text-center text-xs bg-white border border-black/20 rounded-lg focus:outline-none" />
+                            <span className="text-[11px] text-[#666]">L needed</span>
+                          </div>
+                          <button onClick={() => patchPaint(r.id, { qty: suggestTins(r.litres) })} className={BTN} title="Auto-suggest tins">
+                            <Sparkles size={11} /> Suggest tins
+                          </button>
+                          <button onClick={() => setPaintRows(x => x.filter(y => y.id !== r.id))} className="text-[#c0392b]"><Trash2 size={12} /></button>
+                        </div>
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-xs border-collapse min-w-[420px]">
+                            <thead>
+                              <tr className="bg-[#f5f4f0]">
+                                {TIN_SIZES.map(s => <th key={s} className="px-2 py-1.5 text-center font-semibold">{TIN_LABEL[s]}</th>)}
+                                <th className="px-2 py-1.5 text-right font-semibold">Total L</th>
+                                <th className="px-2 py-1.5 text-right font-semibold">Cost ex GST</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              <tr>
+                                {TIN_SIZES.map(s => (
+                                  <td key={s} className="px-1 py-1.5 text-center">
+                                    <div className="flex flex-col gap-1 items-center">
+                                      <input type="number" min={0} value={r.qty[s] || 0}
+                                        onChange={e => patchPaint(r.id, { qty: { ...r.qty, [s]: parseInt(e.target.value) || 0 } })}
+                                        className="w-11 px-1 py-1 text-center text-xs bg-white border border-black/20 rounded focus:outline-none" />
+                                      <input type="number" min={0} step="0.01" value={r.price[s] || ''} placeholder="$"
+                                        onChange={e => patchPaint(r.id, { price: { ...r.price, [s]: parseFloat(e.target.value) || 0 } })}
+                                        className="w-14 px-1 py-1 text-center text-[11px] text-[#666] bg-white border border-black/20 rounded focus:outline-none" />
+                                    </div>
+                                  </td>
+                                ))}
+                                <td className="px-2 py-1.5 text-right font-semibold whitespace-nowrap">{t.litres.toFixed(1)} L</td>
+                                <td className="px-2 py-1.5 text-right font-bold text-[#2563eb]">{fmtCurrency(t.cost)}</td>
+                              </tr>
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )
+                  })}
+                  {paintRows.length > 0 && (
+                    <div className="flex justify-between items-center mt-2.5 px-3 py-2.5 bg-[#f5f4f0] rounded-lg">
+                      <span className="text-xs text-[#666]">Total materials ex GST</span>
+                      <span className="font-bold text-base text-[#2563eb]">{fmtCurrency(paintTotal)}</span>
                     </div>
                   )}
                 </Card>
-              )}
+
+                <Card>
+                  <div className={CT}>Labour Calculator</div>
+                  <div className="text-[11px] text-[#666] mb-2.5">
+                    Break down labour days by phase. Rates auto-fill from your painters above.
+                  </div>
+                  <div className="grid grid-cols-3 sm:grid-cols-5 gap-2.5 mb-2.5">
+                    {([['Hrs per day', laHpd, setLaHpd], ['Days — Prep', laPrep, setLaPrep],
+                       ['Days — Top coats', laTop, setLaTop], ['Buffer days', laBufD, setLaBufD],
+                       ['Buffer hours', laBufH, setLaBufH]] as [string, number, (n: number) => void][]).map(([l, v, set]) => (
+                      <div key={l}>
+                        <label className="block text-[10px] uppercase font-bold text-[#666] mb-1">{l}</label>
+                        <input type="number" min={0} step="0.5" value={v || ''} placeholder="0"
+                          onChange={e => set(parseFloat(e.target.value) || 0)} className={INP} />
+                      </div>
+                    ))}
+                  </div>
+                  <div className="mb-2.5">
+                    {painters.map((p, i) => (
+                      <div key={p.id} className="flex items-center gap-2 mb-1.5 text-xs">
+                        <span className="w-24 text-[#666] truncate">{p.name || `Painter ${i + 1}`}</span>
+                        <span className="text-[#666]">$</span>
+                        <input type="number" min={0} value={laRates[i] ?? p.rate}
+                          onChange={e => setLaRates(r => {
+                            const n = painters.map((q, j) => r[j] ?? q.rate)
+                            n[i] = parseFloat(e.target.value) || 0
+                            return n
+                          })}
+                          className="w-16 px-1.5 py-1 text-xs bg-white border border-black/20 rounded-lg focus:outline-none" />
+                        <span className="text-[10px] text-[#999]">/hr</span>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="bg-[#f5f4f0] rounded-lg px-3 py-2.5">
+                    <div className="grid grid-cols-3 gap-2">
+                      {([['Total days', (laPrep + laTop).toFixed(1)],
+                         ['Buffer', laBufD > 0 || laBufH > 0 ? `${laBufD > 0 ? laBufD + 'd ' : ''}${laBufH > 0 ? laBufH + 'h' : ''}` : '—'],
+                         ['Total hours', laTotalHrs.toFixed(1)]] as [string, string][]).map(([l, v]) => (
+                        <div key={l}>
+                          <div className="text-[10px] text-[#666] font-semibold uppercase mb-0.5">{l}</div>
+                          <div className="text-[15px] font-bold">{v}</div>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="flex justify-between items-center pt-2 mt-2 border-t border-black/[0.08]">
+                      <span className="text-xs text-[#666]">Labour cost ex GST</span>
+                      <span className="text-lg font-bold text-[#2563eb]">{fmtCurrency(laCost)}</span>
+                    </div>
+                  </div>
+                </Card>
+
+                {compJobs.length > 0 && (
+                  <Card>
+                    <div className={CT}>Comparable Past Jobs</div>
+                    <div className="text-xs text-[#666] mb-2.5">
+                      Found {compJobs.length} comparable finished job{compJobs.length !== 1 ? 's' : ''} — sorted by
+                      relevance. Margins calculated from logged materials &amp; labour.
+                    </div>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-xs border-collapse">
+                        <thead>
+                          <tr className="bg-[#f5f4f0]">
+                            <th className="px-2 py-1.5 text-left font-semibold">Job</th>
+                            <th className="px-2 py-1.5 text-right font-semibold">Agreed</th>
+                            <th className="px-2 py-1.5 text-right font-semibold">Real Cost</th>
+                            <th className="px-2 py-1.5 text-right font-semibold">Margin</th>
+                            <th className="px-2 py-1.5 text-center font-semibold">Sub Match</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {compJobs.map(c => (
+                            <tr key={c.job.id} className="border-b border-black/[0.06]">
+                              <td className="px-2 py-1.5">
+                                <div className="font-medium">{c.job.client || '—'}</div>
+                                <div className="text-[10px] text-[#666]">
+                                  {c.job.type || ''} · {(c.job.address || '').split(',')[0]}
+                                </div>
+                              </td>
+                              <td className="px-2 py-1.5 text-right font-semibold">{fmtCurrency(c.job.agreed_ex_gst)}</td>
+                              <td className="px-2 py-1.5 text-right text-[#666]">{c.realCost > 0 ? fmtCurrency(c.realCost) : '—'}</td>
+                              <td className="px-2 py-1.5 text-right font-semibold"
+                                style={{ color: c.margin === null ? '#666' : c.margin >= 30 ? '#27ae60' : c.margin >= 15 ? '#e67e22' : '#c0392b' }}>
+                                {c.margin !== null ? `${c.margin.toFixed(1)}%` : '—'}
+                              </td>
+                              <td className="px-2 py-1.5 text-center">
+                                <span className="text-[10px] bg-[#2563eb]/[0.13] text-[#2563eb] rounded-full px-1.5 py-0.5 font-semibold">
+                                  {c.matchPct > 0 ? `${c.matchPct}%` : 'type only'}
+                                </span>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    {compJobs.some(c => c.realCost === 0) && (
+                      <div className="text-[11px] text-[#666] mt-2 pt-1.5 border-t border-black/[0.06] flex items-center gap-1">
+                        <Info size={11} /> Log materials &amp; labour against a job to see real cost and margin.
+                      </div>
+                    )}
+                  </Card>
+                )}
+              </>
+            )}
+
             </>
           )}
 
@@ -1745,6 +2187,33 @@ export default function QuotingTool() {
           </Card>
         </div>
       </div>
+
+      {/* On a phone the right column lands after nine cards, so the panel gets
+          its own bar and opens as a sheet rather than being scrolled to. */}
+      {scopeItems.length > 0 && (
+        <button onClick={() => setScopeOpen(true)}
+          className="lg:hidden fixed bottom-0 inset-x-0 z-30 flex items-center gap-2 px-4 py-3
+                     bg-[#166534] text-white text-[13px] font-semibold shadow-lg">
+          <ClipboardList size={15} />
+          <span className="flex-1 text-left">{scopeSummary(scopeStat)}</span>
+          <span className="text-[11px] opacity-80">View scope</span>
+        </button>
+      )}
+
+      <Modal open={scopeOpen} onClose={() => setScopeOpen(false)} size="xl" title="Painting scope">
+        <ScopePanel
+          items={scopeItems}
+          photos={scopePhotos}
+          sheetIndex={extractRes?.sheetIndex}
+          scopeNotes={extractRes?.scopeNotes}
+          onQty={(k, id, qty) => patchSubLine(k, id, { qty })}
+          onExclude={excludeSubstrate}
+          onDeleteLine={deleteSubLine}
+          onReveal={revealSubstrate}
+          onTogglePhoto={togglePhotoLink}
+          onAddPhotos={addScopePhotos}
+        />
+      </Modal>
     </div>
   )
 }

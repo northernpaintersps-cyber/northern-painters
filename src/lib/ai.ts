@@ -2,9 +2,12 @@
 // using the key stored in business settings (np_settings key='business')
 
 import {
-  TAKEOFF_TOOL, SUBSTRATE_DOC, type TakeoffRow, type FinishRow,
+  TAKEOFF_TOOL, SUBSTRATE_DOC, SUB_KEYS,
+  type TakeoffRow, type FinishRow, type RowConfidence,
 } from './takeoffSchema'
-import { SUB_BY_KEY } from './substrates'
+import { SUB_BY_KEY, type SubUnit } from './substrates'
+import { shrinkImage } from './image'
+import { pdfPageCount, pdfSubset, pdfChunks, PdfReadError } from './pdfPages'
 import { normaliseLineItems, reconcileGst, type InvoiceLineItem } from './utils'
 
 export type { InvoiceLineItem }
@@ -109,26 +112,6 @@ async function callClaude(
   return text()
 }
 
-/** Shrink a large photo before sending. A phone shot can be 10MB+, which makes
- *  the request slow and can push it past the API's size limit; the service
- *  downscales past ~1568px anyway, so nothing legible is lost. */
-async function shrinkImage(file: File, maxEdge = 1568): Promise<Blob> {
-  if (!file.type.startsWith('image/')) return file
-  const bitmap = await createImageBitmap(file).catch(() => null)
-  if (!bitmap) return file
-  const scale = Math.min(1, maxEdge / Math.max(bitmap.width, bitmap.height))
-  if (scale === 1 && file.size < 4_000_000) { bitmap.close?.(); return file }
-  const canvas = document.createElement('canvas')
-  canvas.width = Math.round(bitmap.width * scale)
-  canvas.height = Math.round(bitmap.height * scale)
-  const ctx = canvas.getContext('2d')
-  if (!ctx) { bitmap.close?.(); return file }
-  ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height)
-  bitmap.close?.()
-  const blob = await new Promise<Blob | null>(r => canvas.toBlob(r, 'image/jpeg', 0.92))
-  return blob && blob.size < file.size ? blob : file
-}
-
 // Convert a File (image or PDF first-page) to base64 data URL parts
 async function fileToBase64(file: File): Promise<{ base64: string; mediaType: string }> {
   return new Promise((resolve, reject) => {
@@ -188,6 +171,8 @@ export interface QuoteInput {
   benchmarks: string
   siteNotes: string
   logisticsNotes: string
+  /** Products and colours named by the architect's finishes schedule. */
+  finishesSchedule?: string
   photos?: Array<{ dataUrl: string; tag?: string; caption?: string }>
 }
 
@@ -214,7 +199,9 @@ ${q.materialsTotal ? `Total materials: ${money(q.materialsTotal)} ex GST` : ''}
 ## Suggested Price Range
 Low / Mid / High ex GST (±10% variance)
 ## Assumptions and Exclusions
-## Benchmark Check`
+## Benchmark Check
+${q.finishesSchedule ? `
+SPECIFIED FINISHES: this job has an architect's finishes schedule. The products and colours below are contractual — name them in the Scope of Work and in the Paint Materials table, and do not substitute. If a specified product has no trade price above, price it as given and say so under Assumptions rather than quietly swapping it for something we stock.` : ''}`
 
   const user = `Quote for: ${q.client || 'Unknown'} at ${q.address || 'TBC'}
 Job type: ${q.jobType}
@@ -237,6 +224,7 @@ CONSUMABLES (pre-estimated): ${money(q.consumables)} ex GST
 ${q.equipTotal > 0 ? `EQUIPMENT HIRE: ${money(q.equipTotal)} ex GST` : ''}
 ${q.siteNotes ? 'SITE/SCOPE NOTES: ' + q.siteNotes : ''}
 ${q.logisticsNotes ? 'LOGISTICS NOTES: ' + q.logisticsNotes : ''}
+${q.finishesSchedule ? `SPECIFIED FINISHES (from the finishes schedule — contractual):\n${q.finishesSchedule}` : ''}
 
 PRE-CALCULATED MATERIALS BREAKDOWN (present in ## Paint Materials exactly — do not recalculate):
 ${q.materialsBreakdown}`
@@ -383,6 +371,8 @@ export interface QuantityExtraction {
   confidence?: string
   /** Which model actually answered, so a silent fallback is visible. */
   model?: string
+  /** Pass-1 result, when the set was large enough to index. */
+  sheetIndex?: SheetIndexEntry[]
   usage?: { inputTokens: number; outputTokens: number }
 }
 
@@ -452,6 +442,265 @@ function parseExtraction(raw: string): QuantityExtraction {
   return JSON.parse(text)
 }
 
+// ── Pass 1: index the sheets ─────────────────────────────────
+// A full architectural set is mostly sheets with no paintable surface on them
+// — structural, hydraulic, electrical, drainage. Reading all forty costs the
+// whole context window and leaves nothing to reason with, so the set is
+// indexed first and only the sheets that carry surfaces are measured.
+
+export interface SheetIndexEntry {
+  /** 1-indexed page in the original file. */
+  page: number
+  sheetNo: string
+  title: string
+  discipline: string
+  kind: string
+  relevant: boolean
+  why: string
+}
+
+/** Above this, index first. Below it, indexing costs more than it saves. */
+export const INDEX_THRESHOLD = 20
+/** Pages per pass-1 chunk. */
+const INDEX_CHUNK = 15
+/** Most sheets to put through the takeoff, before dropping the least useful. */
+const MAX_TAKEOFF_SHEETS = 25
+
+/** Sheet kinds worth measuring, most valuable first — also the drop order. */
+const KIND_PRIORITY = [
+  'floor plan', 'elevation', 'finishes schedule', 'section',
+  'reflected ceiling plan', 'door/window schedule', 'internal elevation',
+  'detail', 'site plan', 'other',
+]
+
+const INDEX_TOOL = {
+  name: 'index_sheets',
+  description: 'List every sheet in this drawing set and say whether it carries paintable surfaces.',
+  input_schema: {
+    type: 'object' as const,
+    additionalProperties: false,
+    required: ['sheets'],
+    properties: {
+      sheets: {
+        type: 'array',
+        description: 'One entry per page, in order. Every page, including the ones that are not relevant.',
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['page', 'sheetNo', 'title', 'discipline', 'kind', 'relevant', 'why'],
+          properties: {
+            page: { type: 'number', description: '1-indexed page number within this document.' },
+            sheetNo: { type: 'string', description: 'The sheet number from the title block, e.g. "A-02". "" if none.' },
+            title: { type: 'string', description: 'The sheet title from the title block.' },
+            discipline: {
+              type: 'string',
+              enum: ['architectural', 'structural', 'hydraulic', 'electrical', 'mechanical',
+                     'landscape', 'survey', 'schedule', 'other'],
+            },
+            kind: { type: 'string', enum: KIND_PRIORITY.concat(['cover', 'not a drawing']) },
+            relevant: {
+              type: 'boolean',
+              description: 'True only if a painter could measure a surface or read a specified finish from this sheet.',
+            },
+            why: { type: 'string', description: 'One short clause.' },
+          },
+        },
+      },
+    },
+  },
+}
+
+const INDEX_SYSTEM = `You are reading the title blocks of an architectural drawing set for a painting estimator, to work out which sheets are worth measuring.
+
+For each page, read the title block and record the sheet number, title, discipline and kind.
+
+Mark relevant = true for: floor plans, reflected ceiling plans, elevations (internal and external), sections, finishes schedules, door and window schedules, and details that show a paintable surface.
+
+Mark relevant = false for: structural, hydraulic, drainage, electrical, mechanical, survey, civil and landscape sheets, cover sheets, location plans, notes-only sheets and revision sheets — unless that sheet also carries a finishes note or a paintable surface, in which case say so in "why".
+
+Record every page, including the ones you mark false. Do not skip pages. If a title block is unreadable, record what you can and mark it relevant with why = "title block unreadable".`
+
+/** Models to try, strongest first. */
+const TAKEOFF_MODELS = ['claude-opus-5', 'claude-sonnet-5', 'claude-sonnet-4-6']
+
+// ── Photos and a spoken note become a scope ──────────────────
+// The repaint path. There are no drawings to measure, so the model is asked
+// for what it can actually tell from a photograph — the surfaces present and
+// the state they are in — and is told to leave the quantity out rather than
+// guess at one from perspective.
+
+export interface PhotoInput {
+  /** A data URL or any URL the API can be handed as base64. */
+  dataUrl: string
+  /** What the estimator said about this photo. */
+  note?: string
+  tag?: string
+}
+
+export interface ScopeObservation {
+  key: string
+  qty: number | null
+  unit: SubUnit
+  /** Where the number came from, or why there is none. */
+  basis: string
+  condition: string
+  prep: string
+  confidence: RowConfidence
+  /** Indexes into the photos passed in, 1-based as the prompt numbers them. */
+  photos: number[]
+}
+
+export interface PhotoScope {
+  jobType: string
+  observations: ScopeObservation[]
+  scopeNotes: string
+  summary: string
+  model?: string
+}
+
+const PHOTO_SCOPE_SYSTEM = `You are a senior Australian painting estimator looking at photographs of a property that needs repainting, with the estimator's own spoken notes against them.
+
+Your job is to say what has to be painted and what state it is in. Record it with the record_scope tool.
+
+WHAT A PHOTOGRAPH CAN AND CANNOT TELL YOU
+- You can identify surfaces, their material, and their condition: chalking, peeling, water damage, mould, previous coating failing, bare timber, new plasterboard.
+- You can judge prep: a wall that needs a wash and a light sand is not the same job as one needing stripping and full filling. Say which.
+- You CANNOT measure from a photograph. Perspective makes a guess worse than no number at all, and the quote is built on these figures.
+- So: give a quantity ONLY when the estimator's note states one, or when the photo contains something of known size you can count — doors, windows, cabinet doors, posts, downpipes. Counting is reliable; estimating area is not.
+- When you have no quantity, set qty to null and say in basis what is needed to get one, for example "measure the run" or "count from the floor plan".
+
+THE ESTIMATOR'S NOTES ARE AUTHORITATIVE
+A note saying "hallway is about forty square metres" is a measurement; use it and say so in basis. A note contradicting what you think you see is right and you are wrong — these were taken standing in the room.
+
+THE SUBSTRATE TABLE IS AUTHORITATIVE
+Use only these keys, with the unit each states. A surface that fits no key goes in scopeNotes rather than being forced into the nearest one.
+
+{SUBSTRATE_DOC}
+
+Also: say what kind of job this looks like, flag anything that will not be obvious from a photograph but will cost money — access, height, lead paint on pre-1970 timber, asbestos-era sheeting, rot needing a carpenter — and list what you could not see and would need before quoting.`
+
+const PHOTO_SCOPE_TOOL = {
+  name: 'record_scope',
+  description: 'Record the paintable surfaces visible in these photographs and their condition.',
+  input_schema: {
+    type: 'object' as const,
+    additionalProperties: false,
+    required: ['jobType', 'observations', 'scopeNotes', 'summary'],
+    properties: {
+      jobType: { type: 'string', description: 'e.g. "Interior repaint", "Kitchen cabinets".' },
+      observations: {
+        type: 'array',
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['key', 'qty', 'unit', 'basis', 'condition', 'prep', 'confidence', 'photos'],
+          properties: {
+            key: { type: 'string', enum: SUB_KEYS },
+            qty: {
+              type: ['number', 'null'],
+              description: 'Only from a stated measurement or a reliable count. null otherwise — never estimated from perspective.',
+            },
+            unit: { type: 'string', enum: ['sqm', 'lm', 'qty'] },
+            basis: { type: 'string', description: 'Where the number came from, or what is needed to get one.' },
+            condition: { type: 'string', description: 'What the surface looks like now.' },
+            prep: { type: 'string', description: 'The preparation this surface needs before coating.' },
+            confidence: { type: 'string', enum: ['high', 'medium', 'low'] },
+            photos: {
+              type: 'array', items: { type: 'number' },
+              description: 'Which photo numbers show this surface.',
+            },
+          },
+        },
+      },
+      scopeNotes: { type: 'string', description: 'Access, hazards, anything not visible, anything needing a measure.' },
+      summary: { type: 'string', description: 'The walkthrough in a few lines, as the estimator would describe it.' },
+    },
+  },
+}
+
+/** Read a set of site photos and their notes into a painting scope. */
+export async function photosToScope(
+  apiKey: string, photos: PhotoInput[], visitNotes = '',
+): Promise<PhotoScope> {
+  if (!photos.length) throw new Error('No photos to read.')
+
+  const content: any[] = []
+  if (visitNotes.trim()) {
+    content.push({
+      type: 'text',
+      text: 'ESTIMATOR NOTES FROM THE VISIT (authoritative):\n' + visitNotes.trim(),
+    })
+  }
+
+  photos.forEach((p, i) => {
+    content.push({
+      type: 'text',
+      text: `Photo ${i + 1}${p.tag ? ` [${p.tag}]` : ''}${p.note ? ` — ${p.note}` : ''}:`,
+    })
+    const mime = p.dataUrl.match(/^data:([^;]+);/)?.[1] ?? 'image/jpeg'
+    content.push({
+      type: 'image',
+      source: { type: 'base64', media_type: mime, data: p.dataUrl.replace(/^data:[^;]+;base64,/, '') },
+    })
+  })
+
+  content.push({
+    type: 'text',
+    text: 'Record what has to be painted and the state it is in, with the record_scope tool.',
+  })
+
+  let usage: CallUsage | undefined
+  const call = (model: string) =>
+    callClaude(apiKey, [{ role: 'user', content }],
+      PHOTO_SCOPE_SYSTEM.replace('{SUBSTRATE_DOC}', SUBSTRATE_DOC), {
+        model,
+        maxTokens: 8000,
+        thinking: { budgetTokens: 4000 },
+        tool: PHOTO_SCOPE_TOOL,
+        toolOptional: true,
+        cacheSystem: true,
+        onUsage: u => { usage = u },
+      })
+
+  let raw = ''
+  let lastErr: any
+  for (const model of TAKEOFF_MODELS) {
+    try { raw = await call(model); lastErr = undefined; break } catch (e: any) {
+      lastErr = e
+      if (!/model|not_found|404/i.test(e?.message ?? '')) throw e
+    }
+  }
+  if (lastErr) throw lastErr
+
+  let parsed: any
+  try { parsed = JSON.parse(raw) } catch {
+    try { parsed = parseExtraction(raw) } catch {
+      throw new Error('AI returned unexpected format. Raw response:\n' + raw.slice(0, 400))
+    }
+  }
+
+  const observations: ScopeObservation[] = (Array.isArray(parsed.observations) ? parsed.observations : [])
+    .filter((o: any) => SUB_BY_KEY[o?.key])
+    .map((o: any) => ({
+      key: String(o.key),
+      qty: Number.isFinite(Number(o.qty)) && Number(o.qty) > 0 ? Number(o.qty) : null,
+      unit: (o.unit === 'sqm' || o.unit === 'lm' || o.unit === 'qty') ? o.unit : SUB_BY_KEY[o.key].unit,
+      basis: String(o.basis ?? ''),
+      condition: String(o.condition ?? ''),
+      prep: String(o.prep ?? ''),
+      confidence: (o.confidence === 'low' || o.confidence === 'medium') ? o.confidence : 'high',
+      photos: Array.isArray(o.photos) ? o.photos.map(Number).filter(Number.isFinite) : [],
+    }))
+
+  return {
+    jobType: String(parsed.jobType ?? ''),
+    observations,
+    scopeNotes: String(parsed.scopeNotes ?? ''),
+    summary: String(parsed.summary ?? ''),
+    model: usage?.model,
+  }
+}
+
 /** Drop rows we cannot use, and flag the ones that are suspect but keep them. */
 function cleanRows(raw: any): TakeoffRow[] {
   const seen = new Map<string, TakeoffRow>()
@@ -498,13 +747,88 @@ function cleanFinishes(raw: any): FinishRow[] {
   })).filter(f => f.area || f.product || f.colour)
 }
 
-/** Models to try, strongest first. */
-const TAKEOFF_MODELS = ['claude-opus-5', 'claude-sonnet-5', 'claude-sonnet-4-6']
+/**
+ * Index one PDF's sheets, chunking when the set is too big to send at once.
+ * Returns [] when the file cannot be split, so the caller falls back to
+ * sending it whole.
+ */
+async function indexSheets(
+  apiKey: string, file: File, pageCount: number,
+  onProgress?: (stage: string) => void,
+): Promise<SheetIndexEntry[]> {
+  const chunks = await pdfChunks(file, INDEX_CHUNK)
+  const out: SheetIndexEntry[] = []
+
+  for (const [i, chunk] of chunks.entries()) {
+    onProgress?.(chunks.length > 1
+      ? `Indexing sheets ${chunk.firstPage}-${chunk.lastPage} of ${pageCount}…`
+      : `Indexing ${pageCount} sheets…`)
+
+    const b64 = await fileToB64(chunk.file)
+    // Sent one chunk at a time, not in parallel: these are large requests and
+    // the key is the user's own, with their own rate limit.
+    const raw = await callClaude(apiKey, [{
+      role: 'user',
+      content: [
+        { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: b64 } },
+        { type: 'text', text: `Index these ${chunk.lastPage - chunk.firstPage + 1} sheets with the index_sheets tool.` },
+      ],
+    }], INDEX_SYSTEM, {
+      model: 'claude-sonnet-5',
+      maxTokens: 8000,
+      temperature: 0,
+      tool: INDEX_TOOL,
+    })
+
+    let sheets: any[] = []
+    try { sheets = JSON.parse(raw)?.sheets ?? [] } catch { sheets = [] }
+    sheets.forEach((e: any, n: number) => {
+      const local = Number(e?.page)
+      out.push({
+        // The model numbers pages within the chunk it was given.
+        page: chunk.firstPage + (Number.isInteger(local) && local >= 1 ? local - 1 : n),
+        sheetNo: String(e?.sheetNo ?? ''),
+        title: String(e?.title ?? ''),
+        discipline: String(e?.discipline ?? 'other'),
+        kind: String(e?.kind ?? 'other'),
+        relevant: !!e?.relevant,
+        why: String(e?.why ?? ''),
+      })
+    })
+    if (i === chunks.length - 1) onProgress?.('')
+  }
+  return out
+}
+
+/** The sheets to measure, trimmed to what one request can carry. */
+export function chooseSheets(index: SheetIndexEntry[]): { pages: number[]; dropped: SheetIndexEntry[] } {
+  const relevant = index.filter(e => e.relevant)
+  if (relevant.length <= MAX_TAKEOFF_SHEETS) {
+    return { pages: relevant.map(e => e.page).sort((a, b) => a - b), dropped: [] }
+  }
+  // Too many to send: keep the most informative kinds first.
+  const rank = (e: SheetIndexEntry) => {
+    const i = KIND_PRIORITY.indexOf(e.kind)
+    return i === -1 ? KIND_PRIORITY.length : i
+  }
+  const ordered = [...relevant].sort((a, b) => rank(a) - rank(b) || a.page - b.page)
+  return {
+    pages: ordered.slice(0, MAX_TAKEOFF_SHEETS).map(e => e.page).sort((a, b) => a - b),
+    dropped: ordered.slice(MAX_TAKEOFF_SHEETS),
+  }
+}
+
+const sheetLine = (e: SheetIndexEntry) =>
+  `  p${e.page} ${e.sheetNo || '—'} ${e.title}${e.kind ? ` (${e.kind})` : ''}`
+
 
 export async function extractQuantities(
   apiKey: string, docs: ExtractDoc[], scopeNotes = '',
+  onProgress?: (stage: string) => void,
 ): Promise<QuantityExtraction> {
   const content: any[] = []
+  const index: SheetIndexEntry[] = []
+  const indexNotes: string[] = []
 
   if (scopeNotes.trim()) {
     content.push({
@@ -522,7 +846,38 @@ export async function extractQuantities(
         + (meas ? '\nThese are measured on site. Use them as the absolute scale reference for this document.' : ''),
     })
     if (d.file.type === 'application/pdf') {
-      const b64 = await fileToB64(d.file)
+      let send = d.file
+      try {
+        const pages = await pdfPageCount(d.file)
+        if (pages > INDEX_THRESHOLD) {
+          const sheets = await indexSheets(apiKey, d.file, pages, onProgress)
+          const { pages: chosen, dropped } = chooseSheets(sheets)
+          if (chosen.length) {
+            index.push(...sheets)
+            send = await pdfSubset(d.file, chosen, d.file.name)
+            const skipped = sheets.filter(e => !e.relevant)
+            indexNotes.push(
+              `[${d.file.name}] is a ${pages} sheet set. Measuring the ${chosen.length} sheets below.\n`
+              + sheets.filter(e => chosen.includes(e.page)).map(sheetLine).join('\n')
+              + (skipped.length
+                ? `\nNot shown to you (${skipped.length} sheets, judged to carry no paintable surface): `
+                  + skipped.map(e => e.sheetNo || `p${e.page}`).join(', ')
+                : '')
+              + (dropped.length
+                ? `\nAlso withheld to fit the request (${dropped.length}): `
+                  + dropped.map(e => e.sheetNo || `p${e.page}`).join(', ')
+                : '')
+              + '\nIf a quantity needs a sheet you were not given, say which in scopeNotes rather than guessing.',
+            )
+          }
+        }
+      } catch (e) {
+        // An encrypted or damaged PDF cannot be split. Send it whole and say so.
+        if (e instanceof PdfReadError) indexNotes.push(`[${d.file.name}] could not be split, so it is sent whole.`)
+        else throw e
+      }
+      onProgress?.('Reading the drawings…')
+      const b64 = await fileToB64(send)
       content.push({ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: b64 } })
     } else if (d.file.type.startsWith('image/')) {
       // A phone photo of a plan was being sent full size; the API caps the long
@@ -539,10 +894,16 @@ export async function extractQuantities(
     throw new Error('No readable drawings or photos. Upload a PDF or an image.')
   }
 
+  if (indexNotes.length) {
+    content.push({ type: 'text', text: 'SHEET INDEX\n' + indexNotes.join('\n\n') })
+  }
+
   content.push({
     type: 'text',
     text: 'Measure every paintable surface in these documents and record the takeoff with the record_takeoff tool.',
   })
+
+  onProgress?.('Measuring…')
 
   let usage: CallUsage | undefined
   const call = (model: string) =>
@@ -587,6 +948,7 @@ export async function extractQuantities(
     confidence: parsed.confidence ? String(parsed.confidence) : '',
     model: usage?.model,
     usage: usage ? { inputTokens: usage.inputTokens, outputTokens: usage.outputTokens } : undefined,
+    sheetIndex: index.length ? index : undefined,
   }
 }
 

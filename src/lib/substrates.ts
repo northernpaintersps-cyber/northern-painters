@@ -230,7 +230,14 @@ export function normaliseSubstrates(raw: any): Record<string, SubEntry> {
 }
 
 /** One "Label (type): qty unit" line per typed entry, for AI prompts and scope text. */
-export function substrateLines(subs: Record<string, SubEntry>): string[] {
+/** A product and colour named by an architect's finishes schedule. */
+export type FinishSpec = { product?: string; colour?: string }
+
+export function substrateLines(
+  subs: Record<string, SubEntry>,
+  /** Overrides the substrate's default paint where a schedule specified one. */
+  specs?: Record<string, FinishSpec>,
+): string[] {
   const out: string[] = []
   SUBSTRATES.forEach(s => {
     const e = subs?.[s.key]
@@ -242,7 +249,10 @@ export function substrateLines(subs: Record<string, SubEntry>): string[] {
       // Describe what was actually specified, not the substrate's defaults
       const c = coatOf(subs, s.key)
       const uc = c.uc !== 'None' ? `${c.ucCoats} x ${c.uc} undercoat (${c.ucApp}) + ` : ''
-      out.push(`${name}: ${qty} ${unitLabel(s.unit)} — ${s.paint}, ${c.app}, ${uc}${c.topCoats} x ${c.fin}${l.notes ? ` (${l.notes})` : ''}`)
+      const spec = specs?.[s.key]
+      const paint = spec?.product || s.paint
+      const colour = spec?.colour ? ` in ${spec.colour}` : ''
+      out.push(`${name}: ${qty} ${unitLabel(s.unit)} — ${paint}${colour}, ${c.app}, ${uc}${c.topCoats} x ${c.fin}${l.notes ? ` (${l.notes})` : ''}`)
     })
   })
   return out

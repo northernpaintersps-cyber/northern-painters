@@ -8,11 +8,19 @@ import {
   ArrowLeft, Save, Check, Plus, Trash2, Mic, Camera, Upload, Copy,
   Pencil, Eraser, Undo2, Sparkles, Loader2,
 } from 'lucide-react'
+import { shrinkToDataUrl } from '@/lib/image'
+import { uploadPhoto, signPhotos } from '@/lib/photoStore'
+import { useDictation, appendPhrase } from '@/lib/useDictation'
 
 type Row = Record<string, any>
 
 export type SVArea = { id: string; name: string; condition: string; prep: string; l: number; w: number; h: number; notes: string }
-export type SVPhoto = { id: string; data: string; tag: string; label: string }
+/**
+ * `path` is the bucket path for anything taken since photos moved to storage.
+ * `data` is the inline data URL older visits still carry, and the local
+ * preview shown while an upload is in flight — the renderer takes either.
+ */
+export type SVPhoto = { id: string; data?: string; path?: string; tag: string; label: string }
 export type SVVoice = { id: string; text: string }
 
 export type SVState = {
@@ -30,6 +38,7 @@ const CT = 'text-[13px] font-bold'
 const INP = 'w-full px-2 py-1.5 text-[13px] bg-white border border-black/20 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500'
 const BTN = 'flex items-center gap-1.5 px-2.5 py-1.5 text-[12px] bg-white border border-black/20 rounded-lg hover:bg-[#f5f4f0]'
 const BTN_P = 'flex items-center gap-1.5 px-2.5 py-1.5 text-[12px] bg-blue-600 hover:bg-blue-700 text-white rounded-lg'
+const BTN_STOP = 'flex items-center gap-1.5 px-2.5 py-1.5 text-[12px] bg-[#dc2626] hover:bg-[#b91c1c] text-white rounded-lg'
 
 export const emptyArea = (n: number): SVArea =>
   ({ id: genId('ar'), name: `Area ${n}`, condition: 'Good', prep: '', l: 0, w: 0, h: 0, notes: '' })
@@ -160,17 +169,28 @@ function Sketch({ value, onChange }: { value: string | null; onChange: (v: strin
   )
 }
 
-export default function SiteVisitEditor({ initial, jobs, isNew, onClose, onSave, onAIParse, aiBusy }: {
+export default function SiteVisitEditor({ initial, jobs, visitId, userId, isNew, onClose, onSave, onAIParse, aiBusy }: {
   initial: SVState
   jobs: Row[]
+  /** Minted before the editor opens — a photo uploads under it immediately. */
+  visitId: string
+  userId: string
   isNew: boolean
   onClose: () => void
   onSave: (state: SVState, complete: boolean) => void
-  onAIParse?: (state: SVState) => void
+  /** Reads the photos into a scope and returns what to merge in. */
+  onAIParse?: (state: SVState) => Promise<Partial<SVState> | null>
   aiBusy?: boolean
 }) {
   const [sv, setSv] = useState<SVState>(initial)
-  const [listening, setListening] = useState(false)
+  const dict = useDictation()
+  // Which field the microphone is feeding: the visit's voice notes, or one
+  // photo's caption. Only one can be dictating at a time.
+  const [dictTarget, setDictTarget] = useState<string>('')
+  // Photo id -> something an <img> can show: a signed bucket link, or the
+  // inline data URL an older visit carries.
+  const [photoSrc, setPhotoSrc] = useState<Record<string, string>>({})
+  const [uploading, setUploading] = useState(0)
   const camRef = useRef<HTMLInputElement>(null)
   const upRef = useRef<HTMLInputElement>(null)
 
@@ -188,29 +208,82 @@ export default function SiteVisitEditor({ initial, jobs, isNew, onClose, onSave,
   async function addPhotos(e: React.ChangeEvent<HTMLInputElement>, tag = 'reference') {
     const files = Array.from(e.target.files ?? [])
     e.target.value = ''
+    if (!files.length) return
+    setUploading(n => n + files.length)
+
     for (const file of files) {
-      const data = await new Promise<string>(res => {
-        const r = new FileReader(); r.onload = () => res(r.result as string); r.readAsDataURL(file)
-      })
-      setSv(s => ({ ...s, photos: [...s.photos, { id: genId('ph'), data, tag, label: '' }] }))
+      const id = genId('ph')
+      try {
+        // Show it immediately from a local preview, then upload. Standing on a
+        // site with one bar of signal, waiting on a round trip before the photo
+        // appears makes the app feel broken.
+        const preview = await shrinkToDataUrl(file)
+        setSv(s => ({ ...s, photos: [...s.photos, { id, data: preview, tag, label: '' }] }))
+        setPhotoSrc(prev => ({ ...prev, [id]: preview }))
+
+        const path = await uploadPhoto(file, userId, visitId, id)
+        // Drop the inline copy once it is in the bucket: keeping both is what
+        // made these rows too big to save. The preview stays in photoSrc so
+        // the image does not blink.
+        setSv(s => ({ ...s, photos: s.photos.map(x => x.id === id ? { ...x, path, data: undefined } : x) }))
+      } catch (err: any) {
+        // Keep the inline copy so the photo is not lost — an oversized row is
+        // better than a photo the estimator thinks they took and did not.
+        alert(err?.message ?? `Could not add ${file.name}.`)
+      } finally {
+        setUploading(n => Math.max(0, n - 1))
+      }
     }
   }
 
+  // Bucket paths are not URLs, so they have to be signed before they render.
+  useEffect(() => {
+    let live = true
+    signPhotos(sv.photos).then(map => { if (live) setPhotoSrc(prev => ({ ...prev, ...map })) })
+    return () => { live = false }
+  }, [sv.photos])
+
+  const srcOf = (p: SVPhoto) => photoSrc[p.id] ?? p.data ?? ''
+
   // Voice
+  /** Dictate into the visit's voice notes, as one growing note per session. */
   function record() {
-    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
-    if (!SR) { alert('Voice input not supported in this browser.\nPlease use Google Chrome.'); return }
-    const rec = new SR()
-    rec.lang = 'en-AU'; rec.interimResults = false; rec.maxAlternatives = 1; rec.continuous = false
-    setListening(true)
-    rec.onresult = (ev: any) => {
-      setListening(false)
-      const text = ev.results[0][0].transcript
-      setSv(s => ({ ...s, voiceNotes: [...s.voiceNotes, { id: genId('vn'), text }] }))
+    if (!dict.supported) {
+      alert('Voice input is not supported in this browser. Chrome or Edge on Android, or Safari on iOS.')
+      return
     }
-    rec.onerror = (ev: any) => { setListening(false); if (ev.error !== 'no-speech') alert(`Voice error: ${ev.error}`) }
-    rec.onend = () => setListening(false)
-    try { rec.start() } catch (err: any) { setListening(false); alert('Could not start microphone: ' + err.message) }
+    if (dict.listening) { dict.stop(); setDictTarget(''); return }
+    const id = genId('vn')
+    let first = true
+    setDictTarget('notes')
+    dict.start(phrase => {
+      setSv(s => {
+        if (first) {
+          first = false
+          return { ...s, voiceNotes: [...s.voiceNotes, { id, text: phrase }] }
+        }
+        return {
+          ...s,
+          voiceNotes: s.voiceNotes.map(v => v.id === id ? { ...v, text: appendPhrase(v.text, phrase) } : v),
+        }
+      })
+    })
+  }
+
+  /** Dictate into one photo's caption. */
+  function recordCaption(photoId: string) {
+    if (!dict.supported) {
+      alert('Voice input is not supported in this browser. Chrome or Edge on Android, or Safari on iOS.')
+      return
+    }
+    if (dict.listening) { dict.stop(); setDictTarget(''); return }
+    setDictTarget(photoId)
+    dict.start(phrase => {
+      setSv(s => ({
+        ...s,
+        photos: s.photos.map(x => x.id === photoId ? { ...x, label: appendPhrase(x.label, phrase) } : x),
+      }))
+    })
   }
 
   return (
@@ -267,26 +340,48 @@ export default function SiteVisitEditor({ initial, jobs, isNew, onClose, onSave,
         <div className={CARD}>
           <div className="flex justify-between items-center mb-2.5 gap-2 flex-wrap">
             <div className={CT}>Voice notes</div>
-            <button onClick={record} className={BTN_P}>
-              <Mic size={13} /> {listening ? 'Listening…' : 'Record voice note'}
+            <button onClick={record} className={dict.listening && dictTarget === 'notes' ? BTN_STOP : BTN_P}>
+              <Mic size={13} /> {dict.listening && dictTarget === 'notes' ? 'Stop' : 'Record voice note'}
             </button>
           </div>
           <div className="flex flex-col gap-1.5">
             {sv.voiceNotes.map(vn => (
               <div key={vn.id} className="bg-[#f0fdf4] rounded-lg px-3 py-2 flex justify-between items-start gap-2">
-                <div className="text-[13px] flex-1">{vn.text}</div>
+                {/* Editable: a misheard word used to mean deleting the note and
+                    saying the whole thing again. */}
+                <textarea value={vn.text} rows={Math.min(6, Math.max(1, Math.ceil(vn.text.length / 60)))}
+                  onChange={e => setSv(s => ({
+                    ...s, voiceNotes: s.voiceNotes.map(v => v.id === vn.id ? { ...v, text: e.target.value } : v),
+                  }))}
+                  className="text-[13px] flex-1 bg-transparent border-0 outline-none resize-y leading-snug" />
                 <button onClick={() => setSv(s => ({ ...s, voiceNotes: s.voiceNotes.filter(v => v.id !== vn.id) }))}
                   className="text-[#666] text-base leading-none shrink-0">×</button>
               </div>
             ))}
           </div>
-          {listening && <div className="text-xs text-[#dc2626] mt-2">● Recording… speak now</div>}
+          {dict.listening && dictTarget === 'notes' && (
+            <div className="text-xs text-[#dc2626] mt-2">
+              ● Listening — keep talking, it carries on through pauses. Press Stop when you are done.
+              {dict.interim && <span className="block text-[#666] italic mt-0.5">{dict.interim}</span>}
+            </div>
+          )}
+          {dict.error && <div className="text-xs text-[#c0392b] mt-2">{dict.error}</div>}
+          {!dict.supported && (
+            <div className="text-xs text-[#92400e] mt-2">
+              This browser cannot do voice input. Chrome or Edge on Android, Safari on iOS.
+            </div>
+          )}
           {onAIParse && (
             <div className="mt-2.5 px-3 py-2 bg-[#fefce8] rounded-lg text-xs text-[#92400e] flex items-center justify-between gap-2 flex-wrap">
               <span className="flex items-center gap-1.5">
-                <Sparkles size={13} /> Record your walkthrough, then let AI extract areas and measurements from your notes
+                <Sparkles size={13} /> Take photos and describe them, then let AI work out the surfaces,
+                their condition and the prep they need. It counts doors and windows but will not
+                guess an area from a photo — those it leaves for you to measure.
               </span>
-              <button onClick={() => onAIParse(sv)} disabled={aiBusy}
+              <button onClick={async () => {
+                  const patch = await onAIParse(sv)
+                  if (patch) setSv(s => ({ ...s, ...patch }))
+                }} disabled={aiBusy}
                 className="flex items-center gap-1.5 px-2.5 py-1.5 text-[12px] rounded-lg bg-[#eab308] text-white border border-[#d97706] whitespace-nowrap disabled:opacity-50">
                 {aiBusy ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />} AI Parse
               </button>
@@ -377,7 +472,7 @@ export default function SiteVisitEditor({ initial, jobs, isNew, onClose, onSave,
             <div className="grid gap-2.5" style={{ gridTemplateColumns: 'repeat(auto-fill,minmax(160px,1fr))' }}>
               {sv.photos.map(p => (
                 <div key={p.id} className="border border-black/[0.12] rounded-[10px] overflow-hidden relative">
-                  <img src={p.data} alt={p.label} className="w-full h-[130px] object-cover block" />
+                  <img src={srcOf(p)} alt={p.label} className="w-full h-[130px] object-cover block" />
                   <div className="px-2 py-1.5">
                     <select value={p.tag}
                       onChange={e => setSv(s => ({ ...s, photos: s.photos.map(x => x.id === p.id ? { ...x, tag: e.target.value } : x) }))}
@@ -388,9 +483,23 @@ export default function SiteVisitEditor({ initial, jobs, isNew, onClose, onSave,
                       style={{ background: SV_TAG_BG[p.tag] ?? SV_TAG_BG.reference, color: SV_TAG_FG[p.tag] ?? SV_TAG_FG.reference }}>
                       {(p.tag || 'reference').toUpperCase()}
                     </div>
-                    <input value={p.label} placeholder="Caption…"
-                      onChange={e => setSv(s => ({ ...s, photos: s.photos.map(x => x.id === p.id ? { ...x, label: e.target.value } : x) }))}
-                      className="w-full text-[11px] border-0 border-t border-black/[0.12] py-1 mt-1 bg-transparent outline-none" />
+                    <div className="flex items-center gap-1 border-t border-black/[0.12] mt-1">
+                      <input value={p.label} placeholder="Caption or say it…"
+                        onChange={e => setSv(s => ({ ...s, photos: s.photos.map(x => x.id === p.id ? { ...x, label: e.target.value } : x) }))}
+                        className="flex-1 text-[11px] border-0 py-1 bg-transparent outline-none" />
+                      {dict.supported && (
+                        <button onClick={() => recordCaption(p.id)}
+                          title={dict.listening && dictTarget === p.id ? 'Stop' : 'Describe this photo'}
+                          className={dict.listening && dictTarget === p.id ? 'text-[#dc2626]' : 'text-[#2563eb]'}>
+                          <Mic size={12} />
+                        </button>
+                      )}
+                    </div>
+                    {dict.listening && dictTarget === p.id && (
+                      <div className="text-[10px] text-[#dc2626]">
+                        ● Listening{dict.interim ? ` — ${dict.interim}` : '…'}
+                      </div>
+                    )}
                   </div>
                   <button onClick={() => setSv(s => ({ ...s, photos: s.photos.filter(x => x.id !== p.id) }))}
                     className="absolute top-1 right-1 w-[22px] h-[22px] rounded-full bg-black/60 text-white text-sm leading-none flex items-center justify-center">×</button>

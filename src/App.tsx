@@ -22,6 +22,7 @@ import Clients from '@/pages/Clients'
 import LegalDocs from '@/pages/LegalDocs'
 import Costs from '@/pages/Costs'
 import Profitability from '@/pages/Profitability'
+import Rates from '@/pages/Rates'
 import Insights from '@/pages/Insights'
 import PaintCalc from '@/pages/PaintCalc'
 import Payments from '@/pages/Payments'
@@ -65,6 +66,7 @@ export default function App() {
         <Route path="/legal" element={<LegalDocs />} />
         <Route path="/costs" element={<Costs />} />
         <Route path="/profitability" element={<Profitability />} />
+        <Route path="/rates" element={<Rates />} />
         <Route path="/insights" element={<Insights />} />
         <Route path="/paintcalc" element={<PaintCalc />} />
         <Route path="/payments" element={<Payments />} />
