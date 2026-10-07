@@ -1191,6 +1191,17 @@ export default function QuotingTool() {
                 <span className="text-[11px] text-[#666] self-center">{extractStage}</span>
               )}
             </div>
+
+            {/* A failure has to appear where the button is. This used to render
+                only inside the Estimate panel, which is not the tab you are on
+                while extracting — so a failed extract looked like the button
+                doing nothing at all. */}
+            {genErr && (
+              <div className="text-xs text-[#c0392b] bg-[#fef2f2] border border-[#fca5a5] rounded-lg px-3 py-2 mb-2.5">
+                {genErr}
+              </div>
+            )}
+
             {docs.map((d, i) => (
               <div key={i} className="bg-[#f5f4f0] rounded-[7px] px-2.5 py-1.5 mb-1.5">
                 <div className="flex items-center gap-2 flex-wrap">

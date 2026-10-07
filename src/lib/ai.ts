@@ -88,7 +88,11 @@ async function callClaude(
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({}))
-    throw new Error((err as any)?.error?.message ?? `API error ${res.status}`)
+    const detail = (err as any)?.error?.message
+    // The status is kept in the message: the takeoff tries a ladder of models
+    // and decides whether to step down by reading it, and a 404 whose body
+    // does not happen to contain the word "model" would otherwise stop it.
+    throw new Error(detail ? `${detail} (HTTP ${res.status}, ${model})` : `API error ${res.status} (${model})`)
   }
 
   const data = await res.json()
