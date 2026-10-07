@@ -39,6 +39,13 @@ export interface CallUsage {
   inputTokens: number
   outputTokens: number
   cacheReadTokens: number
+  /**
+   * 'max_tokens' means the answer was cut off mid-sentence. A truncated tool
+   * call still arrives as a tool_use block, just with its arguments
+   * incomplete, so without this a cut-off takeoff is indistinguishable from
+   * one that genuinely found nothing.
+   */
+  stopReason: string
 }
 
 async function callClaude(
@@ -114,6 +121,7 @@ async function callClaude(
     inputTokens: data.usage?.input_tokens ?? 0,
     outputTokens: data.usage?.output_tokens ?? 0,
     cacheReadTokens: data.usage?.cache_read_input_tokens ?? 0,
+    stopReason: data.stop_reason ?? '',
   })
 
   const text = () =>
@@ -670,7 +678,7 @@ export async function photosToScope(
     callClaude(apiKey, [{ role: 'user', content }],
       PHOTO_SCOPE_SYSTEM.replace('{SUBSTRATE_DOC}', SUBSTRATE_DOC), {
         model,
-        maxTokens: 8000,
+        maxTokens: 16000,
         thinking: { budgetTokens: 4000 },
         tool: PHOTO_SCOPE_TOOL,
         toolOptional: true,
@@ -924,7 +932,11 @@ export async function extractQuantities(
   const call = (model: string) =>
     callClaude(apiKey, [{ role: 'user', content }], takeoffSystem(), {
       model,
-      maxTokens: 16000,
+      // The thinking budget comes out of max_tokens, so this is 10k to reason
+      // with and 22k to answer in. At 16k the answer had 6k, and a takeoff
+      // that writes out its arithmetic per row does not fit in that — it was
+      // being truncated into a tool call with no quantities in it.
+      maxTokens: 32000,
       thinking: { budgetTokens: 10000 },
       tool: TAKEOFF_TOOL,
       toolOptional: true,
@@ -953,10 +965,21 @@ export async function extractQuantities(
     }
   }
 
+  const quantities = cleanRows(parsed.quantities)
+
+  // Nothing measured is a real answer when the documents carry no surfaces,
+  // and a bug when the reply was cut off. Tell them apart.
+  if (!quantities.length && usage?.stopReason === 'max_tokens') {
+    throw new Error(
+      'The reply was cut off before any quantities came back — the drawings needed more '
+      + 'room than the model was given. Try fewer documents at once, or split the set.',
+    )
+  }
+
   return {
     jobType: parsed.jobType ? String(parsed.jobType) : undefined,
     totalFloorArea: Number.isFinite(Number(parsed.totalFloorArea)) ? Number(parsed.totalFloorArea) : null,
-    quantities: cleanRows(parsed.quantities),
+    quantities,
     finishes: cleanFinishes(parsed.finishes),
     extractionSummary: parsed.extractionSummary ? String(parsed.extractionSummary) : '',
     scopeNotes: parsed.scopeNotes ? String(parsed.scopeNotes) : '',

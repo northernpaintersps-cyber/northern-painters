@@ -1256,6 +1256,18 @@ export default function QuotingTool() {
                   <button onClick={() => setReview(null)} className="text-[11px] text-[#666]">Discard</button>
                 </div>
 
+                {review.length === 0 && (
+                  <div className="px-3 py-3 text-[12px] text-[#92400e] bg-[#fffbeb]">
+                    <b>Nothing was measured.</b> The notes and the sheet index below say what the
+                    model was given and what it made of it — most often it was shown the wrong
+                    sheets, or the drawings carry no dimensions it could scale from.
+                    {extractRes.sheetIndex && extractRes.sheetIndex.length > 0 && (
+                      <> It read {extractRes.sheetIndex.filter(e => e.relevant).length} of{' '}
+                        {extractRes.sheetIndex.length} sheets as worth measuring.</>
+                    )}
+                  </div>
+                )}
+
                 <div className="max-h-80 overflow-y-auto">
                   {review.map(r => {
                     const err = hasError(r.warnings)
@@ -1310,7 +1322,7 @@ export default function QuotingTool() {
                     </div>
                   )}
                   {extractRes.extractionSummary && (
-                    <details>
+                    <details open={review.length === 0}>
                       <summary className="text-[11px] text-[#2563eb] cursor-pointer">Room-by-room working</summary>
                       <pre className="text-[10px] whitespace-pre-wrap mt-1.5 text-[#444] max-h-64 overflow-auto">
                         {extractRes.extractionSummary}
@@ -1344,7 +1356,7 @@ export default function QuotingTool() {
                     </details>
                   )}
                   {extractRes.sheetIndex && extractRes.sheetIndex.length > 0 && (
-                    <details>
+                    <details open={review.length === 0}>
                       <summary className="text-[11px] text-[#2563eb] cursor-pointer">
                         Sheet index ({extractRes.sheetIndex.filter(e => e.relevant).length} of{' '}
                         {extractRes.sheetIndex.length} sheets measured)
