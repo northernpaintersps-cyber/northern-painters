@@ -1,7 +1,7 @@
 // The whole of one job in one place: its details, schedule, crew, money and
 // history. Lifted out of the Jobs page so the Pipeline board can open the same
 // modal instead of navigating away and losing the board's position.
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase, selectAll } from '@/lib/supabase'
 import { useAuth } from '@/lib/auth'
@@ -9,6 +9,9 @@ import { Badge } from '@/components/ui/Badge'
 import { Modal } from '@/components/ui/Modal'
 import { Input, Select, TextArea } from '@/components/ui/Field'
 import JobBillingTab from '@/components/JobBillingTab'
+import SubstratePicker from '@/components/SubstratePicker'
+import { normaliseSubstrates, substrateTotals, emptySubstrates, SUB_BY_KEY, unitLabel,
+  type SubEntry } from '@/lib/substrates'
 import {
   fmtCurrency, fmtDate, nextJobId, genId,
   deriveScheduledDates, crewLabel, today,
@@ -225,7 +228,67 @@ export function emptyForm(): Job {
 }
 
 // ── Cost Tracker Tab ─────────────────────────────────────────
-function CostTrackerTab({ job, jobId }: { job: any; jobId: string | null }) {
+/**
+ * What the job consisted of, in measured quantities.
+ *
+ * A quote built in this tool writes its takeoff onto the job, which is what
+ * the Rates page divides costs by. A job typed in by hand or imported has
+ * none, so it can never produce a rate — this is where those get filled in.
+ */
+function QuantitiesPanel({ value, onChange }: {
+  value: Record<string, SubEntry>
+  onChange: (next: Record<string, SubEntry>) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const totals = substrateTotals(value)
+  const keys = Object.keys(totals)
+
+  return (
+    <div className="mt-4 pt-4 border-t border-gray-200">
+      <div className="flex justify-between items-center gap-2 flex-wrap mb-1.5">
+        <div className="text-[13px] font-bold">
+          Quantities {keys.length > 0 && <span className="text-[#666] font-normal">· {keys.length} substrates</span>}
+        </div>
+        <button onClick={() => setOpen(v => !v)} className="text-[11px] text-[#2563eb]">
+          {open ? 'Done' : keys.length ? 'Edit' : 'Add quantities'}
+        </button>
+      </div>
+
+      {keys.length === 0 && !open && (
+        <div className="text-[11px] text-[#92400e] bg-[#fffbeb] border border-[#fbbf24] rounded-lg px-3 py-2">
+          Nothing measured against this job, so it cannot produce a rate per unit.
+          Adding what was painted brings it into the Rates page.
+        </div>
+      )}
+
+      {keys.length > 0 && !open && (
+        <div className="flex flex-wrap gap-1">
+          {keys.map(k => (
+            <span key={k} className="text-[10px] px-1.5 py-0.5 rounded bg-[#eef5ff] text-[#1e40af]">
+              {SUB_BY_KEY[k]?.label ?? k} <b>{totals[k]}</b> {unitLabel(SUB_BY_KEY[k]?.unit ?? 'sqm')}
+            </span>
+          ))}
+        </div>
+      )}
+
+      {open && (
+        <>
+          <div className="text-[11px] text-[#666] mb-2">
+            What was actually painted. Close enough is useful — a rate built on roughly
+            the right area beats no rate at all.
+          </div>
+          <SubstratePicker value={value} onChange={onChange} />
+        </>
+      )}
+    </div>
+  )
+}
+
+function CostTrackerTab({ job, jobId, substrates, onSubstrates }: {
+  job: any; jobId: string | null
+  substrates: Record<string, SubEntry>
+  onSubstrates: (next: Record<string, SubEntry>) => void
+}) {
   const { user } = useAuth()
 
   const { data: labourEntries = [] } = useQuery<any[]>({
@@ -369,6 +432,7 @@ function CostTrackerTab({ job, jobId }: { job: any; jobId: string | null }) {
           </div>
         </div>
       )}
+      <QuantitiesPanel value={substrates} onChange={onSubstrates} />
     </div>
   )
 }
@@ -559,6 +623,11 @@ export default function JobModal({ open, jobId, initial, onClose }: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, jobId, stored?.updated_at])
 
+  // Whatever shape the takeoff was stored in, edited as the shared record.
+  const jobSubstrates = useMemo<Record<string, SubEntry>>(
+    () => form.extra?.substrates ? normaliseSubstrates(form.extra.substrates) : emptySubstrates(),
+    [form.extra?.substrates])
+
   function set(k: string, v: any) { setForm(prev => ({ ...prev, [k]: v })) }
   const fld = (k: string) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => set(k, e.target.value)
   const num = (k: string) => (e: React.ChangeEvent<HTMLInputElement>) => set(k, e.target.value === '' ? null : parseFloat(e.target.value))
@@ -673,7 +742,13 @@ export default function JobModal({ open, jobId, initial, onClose }: {
           </div>
         )}
 
-        {tab === 'costs' && <CostTrackerTab job={form} jobId={selectedId} />}
+        {tab === 'costs' && (
+          <CostTrackerTab job={form} jobId={selectedId}
+            substrates={jobSubstrates}
+            onSubstrates={next => setForm(f => ({
+              ...f, extra: { ...(f.extra ?? {}), substrates: next },
+            }))} />
+        )}
         {tab === 'billing' && <JobBillingTab job={form} jobId={selectedId} />}
         {tab === 'variations' && <VariationsTab jobId={selectedId} />}
         {tab === 'crew' && <CrewTab job={form} jobId={selectedId} />}

@@ -123,8 +123,8 @@ export default function Rates() {
           <div className="text-[11px] text-[#666] mb-2.5">
             These have costs logged but no takeoff, so they cannot produce a rate. Jobs quoted
             through the quote builder record theirs automatically; these were entered by hand or
-            imported. Open a job and fill in its substrate quantities on the Cost Tracker to
-            bring it into the numbers above.
+            imported. Open the job, go to <b>Cost Tracker</b>, and add what was painted under
+            Quantities — roughly right is enough to produce a useful rate.
           </div>
           <div className="overflow-auto max-h-80">
             <table className="w-full border-collapse text-[12.5px]">
