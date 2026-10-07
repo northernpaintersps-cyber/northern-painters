@@ -27,6 +27,13 @@ export interface InvoiceExtraction {
   items: InvoiceLineItem[]
 }
 
+/**
+ * A Claude 5 model. The generation is the number straight after the family,
+ * so claude-opus-4-5 and claude-haiku-4-5 are NOT this — they end in a five
+ * but are the 4.5 generation, and they still take a temperature.
+ */
+const isGen5 = (model: string) => /^claude-(opus|sonnet|haiku|fable)-5(|-)/.test(model)
+
 export interface CallUsage {
   model: string
   inputTokens: number
@@ -73,7 +80,12 @@ async function callClaude(
         : sysText,
       messages,
       // Temperature cannot be set alongside extended thinking.
-      ...(opts?.temperature != null && !opts?.thinking ? { temperature: opts.temperature } : {}),
+      // temperature is deprecated on the Claude 5 models and sending it is a
+      // 400, not a warning. Thinking also rules it out. These are all forced
+      // tool calls answering from a schema, so dropping it changes nothing
+      // that matters.
+      ...(opts?.temperature != null && !opts?.thinking && !isGen5(model)
+        ? { temperature: opts.temperature } : {}),
       ...(opts?.thinking
         ? { thinking: { type: 'enabled', budget_tokens: opts.thinking.budgetTokens } }
         : {}),
@@ -780,7 +792,6 @@ async function indexSheets(
     }], INDEX_SYSTEM, {
       model: 'claude-sonnet-5',
       maxTokens: 8000,
-      temperature: 0,
       tool: INDEX_TOOL,
     })
 
