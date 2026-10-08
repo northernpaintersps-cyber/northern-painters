@@ -6,7 +6,7 @@ import { useAuth } from '@/lib/auth'
 import { fmtCurrency, genId, nextJobId } from '@/lib/utils'
 import { useBusinessSettings } from '@/pages/SettingsPage'
 import {
-  generateQuote, suggestProcessHours, estimateConsumables,
+  generateQuote, suggestProcess, estimateConsumables,
   extractQuantities, type ExtractDoc, type QuantityExtraction,
 } from '@/lib/ai'
 import {
@@ -209,6 +209,14 @@ export default function QuotingTool() {
   // Show every substrate, or only the groups this service touches. Narrowed
   // by default: a kitchen cabinet quote does not want 34 rows of roofing.
   const [allSubs, setAllSubs] = useState(false)
+  /**
+   * A quote often covers more than one trade — an interior repaint and an
+   * exterior repaint and a driveway seal. The job type stays single, because
+   * it is what the job is filed as; these are the other services in scope,
+   * and the work programme has to cover all of them.
+   */
+  const [extraServices, setExtraServices] = useState<string[]>([])
+  const [procNotes, setProcNotes] = useState('')
   /**
    * How labour is priced. 'process' is hours against named steps, which is
    * how the tool has always worked. 'quantity' is a rate per unit against the
@@ -749,22 +757,42 @@ export default function QuotingTool() {
     })
   }
 
+  /**
+   * Write the work programme for everything in scope.
+   *
+   * This used to only put hours against steps that already existed, and those
+   * came from a template for a single job type — so a quote covering an
+   * interior, an exterior and a driveway got one template's steps and nothing
+   * for the other two.
+   */
   async function aiSuggestHours() {
     if (!apiKey) { setGenErr('No API key set. Add your Anthropic API key in Settings.'); return }
-    let list = processes
-    if (!list.length) {
-      list = workflowStepNames(jobType, prepLevels).map(newStep)
-      setProcesses(list)
-    }
+    const services = [jobType, ...extraServices]
     setSuggesting(true); setGenErr('')
     try {
-      const hours = await suggestProcessHours(apiKey, {
-        jobType, prep, method: METHOD_OPTS.find(m => m.v === method)?.l ?? 'Brush & Roll',
-        coats, access, ceilingHeight, substrates: substrateLines,
-        processes: list.map(p => p.name), painters: painters.length,
+      const { steps, notes } = await suggestProcess(apiKey, {
+        services,
+        prep,
+        method: METHOD_OPTS.find(m => m.v === method)?.l ?? 'Brush & Roll',
+        coats,
+        access,
+        ceilingHeight,
+        substrates: substrateLines,
+        painters: painters.length,
+        siteNotes,
       })
-      setProcesses(list.map(p => ({ ...p, hours: hours[p.name] ?? p.hours })))
-    } catch (e: any) { setGenErr(e?.message ?? 'Hour estimate failed') } finally { setSuggesting(false) }
+      setProcesses(steps.map(st => ({
+        id: genId('pr'),
+        name: st.name,
+        hours: st.hours,
+        np: painters.length,
+      })))
+      setProcNotes(notes)
+    } catch (e: any) {
+      setGenErr(e?.message ?? 'Could not write the process')
+    } finally {
+      setSuggesting(false)
+    }
   }
 
   async function runConsAI() {
@@ -772,7 +800,7 @@ export default function QuotingTool() {
     setConsBusy(true); setGenErr('')
     try {
       const r = await estimateConsumables(apiKey, {
-        jobType, prepLevel: consPrep, substrates: substrateLines,
+        jobType: [jobType, ...extraServices].join(' + '), prepLevel: consPrep, substrates: substrateLines,
         method: METHOD_OPTS.find(m => m.v === method)?.l ?? 'Brush & Roll',
       })
       setConsTotal(Math.round(r.total)); setConsNotes(r.notes)
@@ -846,7 +874,7 @@ export default function QuotingTool() {
     setGenBusy(true); setGenErr(''); setEstimate('')
     try {
       const text = await generateQuote(apiKey, {
-        client, address, jobType, terms,
+        client, address, jobType: [jobType, ...extraServices].join(' + '), terms,
         method: METHOD_OPTS.find(m => m.v === method)?.l ?? 'Brush & Roll',
         coats, prep, ceilingHeight, access, travelKm,
         equipText: equip.map(e => e.name).filter(Boolean).join(', ') || 'None',
@@ -943,7 +971,7 @@ export default function QuotingTool() {
       client, address, jobType, terms, substrates, prep, ceilingHeight, access,
       method, coats, processes, prepLevels, consPrep, consTotal, consNotes, extraMats,
       painters, travelKm, equip, siteNotes, logisticsNotes, estimate, lockedPrice, rooms,
-      finishSpecs, priceMode, unitRates, useHistory,
+      finishSpecs, priceMode, unitRates, useHistory, extraServices,
       // The scope panel is mostly evidence. Without this a reopened quote
       // shows a bare list of numbers with nothing behind them.
       takeoff: extractRes && {
@@ -974,6 +1002,7 @@ export default function QuotingTool() {
     setFinishSpecs(d.finishSpecs ?? {})
     setPriceMode(d.priceMode === 'quantity' ? 'quantity' : 'process')
     setUseHistory(!!d.useHistory)
+    setExtraServices(Array.isArray(d.extraServices) ? d.extraServices : [])
     setUnitRates(d.unitRates ?? {})
     setExtractRes(d.takeoff ?? null)
     setPhotoLinks(d.photoLinks ?? {})
@@ -1456,6 +1485,31 @@ export default function QuotingTool() {
           </Card>
 
           <Card>
+            <div className={CT}>1d. Other services in this quote</div>
+            <div className="text-[11px] text-[#666] mb-2">
+              A quote often covers more than one trade. The job stays filed as
+              <b> {jobType.toLowerCase()}</b>; tick anything else in scope and the work
+              programme will cover it too.
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {JOB_TYPES.filter(t => t !== jobType).map(t => {
+                const on = extraServices.includes(t)
+                return (
+                  <button key={t}
+                    onClick={() => setExtraServices(xs =>
+                      on ? xs.filter(x => x !== t) : [...xs, t])}
+                    className="text-[11px] px-2 py-1 rounded-lg border"
+                    style={on
+                      ? { background: '#2563eb', color: '#fff', borderColor: '#2563eb' }
+                      : { background: '#f5f4f0', color: '#666', borderColor: 'rgba(0,0,0,.15)' }}>
+                    {t}
+                  </button>
+                )
+              })}
+            </div>
+          </Card>
+
+          <Card>
             <div className="flex justify-between items-center gap-2 flex-wrap mb-1">
               <div className={`${CT} m-0`}>2. Substrates</div>
               <button onClick={() => setAllSubs(v => !v)} className="text-[11px] text-[#2563eb]">
@@ -1509,7 +1563,7 @@ export default function QuotingTool() {
                 {!byQty && <>
                   <button onClick={loadWorkflow} className={BTN}><ClipboardList size={12} /> Template</button>
                   <button onClick={aiSuggestHours} disabled={suggesting} className={`${BTN} disabled:opacity-50`}>
-                    {suggesting ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />} AI Suggest
+                    {suggesting ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />} Write the process
                   </button>
                   <button onClick={() => setProcesses(p => [...p, newStep('')])} className={BTN}><Plus size={12} /></button>
                 </>}
@@ -1675,9 +1729,18 @@ export default function QuotingTool() {
               </div>
             )}
 
+            {!byQty && procNotes && (
+              <div className="text-[11px] text-[#166534] bg-[#f0fdf4] border border-[#86efac] rounded-lg px-3 py-2 mb-2.5">
+                {procNotes}
+              </div>
+            )}
+
             {!byQty && (processes.length === 0 ? (
               <div className="text-[#666] text-xs py-1.5">
-                Use <b>Template</b> to load the steps for this job type, then <b>AI Suggest</b> to estimate times.
+                <b>Write the process</b> builds the programme from the services and the
+                substrates in scope — every service gets its own phases, sequenced the way
+                the work actually happens. <b>Template</b> loads the fixed steps for this
+                job type instead.
               </div>
             ) : (
               <div className="flex flex-col gap-1.5 mb-2.5">

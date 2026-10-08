@@ -276,42 +276,130 @@ ${q.materialsBreakdown}`
 }
 
 // V16 suggestProcesses — estimate hours per workflow phase
-export async function suggestProcessHours(
-  apiKey: string,
-  opts: { jobType: string; prep: string; method: string; coats: string; access: string; ceilingHeight: string; substrates: string; processes: string[]; painters: number },
-): Promise<Record<string, number>> {
-  const prompt = `You are a senior Australian painting estimator. Estimate CREW hours for each process phase below.
+// ── The process itself, not just its hours ──────────────────
+// The process steps used to come from a fixed template for one job type, and
+// the AI could only put a number against steps that already existed. A quote
+// covering an interior, an exterior and a driveway got one template's steps
+// and nothing for the other two.
 
-Job type: ${opts.jobType}
+export interface ProcessStep {
+  name: string
+  hours: number
+  /** Which service this belongs to, so the list reads in blocks. */
+  service: string
+  /** The substrates it covers, so the step can be checked against the scope. */
+  covers: string[]
+}
+
+const PROCESS_TOOL = {
+  name: 'record_process',
+  description: 'The ordered work phases for this job, with estimated crew hours.',
+  input_schema: {
+    type: 'object' as const,
+    additionalProperties: false,
+    required: ['steps', 'notes'],
+    properties: {
+      steps: {
+        type: 'array',
+        description: 'Every phase, in the order it is carried out on site.',
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['name', 'hours', 'service', 'covers'],
+          properties: {
+            name: {
+              type: 'string',
+              description: 'What is done, specific enough to price: "Exterior — pressure wash and sugar soap", not "Prep".',
+            },
+            hours: { type: 'number', description: 'Crew hours for the phase, elapsed, not per painter.' },
+            service: { type: 'string', description: 'The service it belongs to, from the list given.' },
+            covers: {
+              type: 'array', items: { type: 'string' },
+              description: 'Substrate keys this phase works on. Empty for setup, access and clean-up.',
+            },
+          },
+        },
+      },
+      notes: { type: 'string', description: 'Anything about sequencing, drying, access or weather worth saying.' },
+    },
+  },
+}
+
+const PROCESS_SYSTEM = `You are a senior Australian painting estimator writing the work programme for a quote.
+
+Set out every phase of the job in the order it actually happens on site, and put an hours figure against each. Record it with the record_process tool.
+
+COVER THE WHOLE JOB
+The scope below may span several services — an interior repaint and an exterior repaint and a driveway seal are three different trades' worth of work in one quote. Give each service its own phases. Do not fold them together and do not leave one out because another is larger.
+
+Order the programme the way the work is actually sequenced, not service by service in the order listed. Exterior preparation before interior finishing where weather allows; anything that makes dust before anything that must stay clean; floor coatings and driveways last, because they cannot be walked on.
+
+DO NOT SKIP THE UNGLAMOROUS PARTS
+A programme that is only "prep" and "two coats" underprices every job. Include, where they apply: setting up and protecting, moving and covering furniture, access equipment up and down, washing down, scraping and sanding, filling and making good, caulking and gap filling, spot priming and full priming, each coat separately, cutting in where it is a distinct effort, hardware off and back on, daily clean-up, final clean and touch-up, and the inspection walk.
+
+BE SPECIFIC
+Name the surface in the phase: "Ceilings — two coats flat" beats "Second coat". A phase should be something you could stand in front of and say was done or not done.
+
+HOURS
+Crew hours, elapsed on site, not per painter. Account for the prep level, the access, the ceiling height and the application method given. A sprayed job is faster to apply and slower to mask.
+
+Put the substrate keys each phase works on in "covers", so the programme can be checked against the scope. Setup, access and clean-up cover nothing and that is correct.`
+
+/** Propose the work programme for a quote, across every service in scope. */
+export async function suggestProcess(
+  apiKey: string,
+  opts: {
+    services: string[]
+    prep: string
+    method: string
+    coats: string
+    access: string
+    ceilingHeight: string
+    /** The substrate lines, as the quote already renders them. */
+    substrates: string
+    painters: number
+    siteNotes?: string
+  },
+): Promise<{ steps: ProcessStep[]; notes: string }> {
+  const user = `SERVICES IN THIS QUOTE:
+${opts.services.map(s => `- ${s}`).join('\n') || '- (none selected)'}
+
+WHAT IS BEING PAINTED:
+${opts.substrates || '(nothing measured yet)'}
+
 Prep level: ${opts.prep}
 Application: ${opts.method}, ${opts.coats} coats
 Access: ${opts.access}
 Ceiling height: ${opts.ceilingHeight}
-Crew size: ${opts.painters} painter(s) working together
+Crew: ${opts.painters} painter${opts.painters === 1 ? '' : 's'} working together
+${opts.siteNotes ? `\nSITE NOTES:\n${opts.siteNotes}` : ''}
 
-SUBSTRATES AND QUANTITIES:
-${opts.substrates || '(none entered)'}
+Write the programme with the record_process tool.`
 
-PHASES TO ESTIMATE:
-${opts.processes.map((p, i) => `${i + 1}. ${p}`).join('\n')}
+  const raw = await callClaude(apiKey, [{ role: 'user', content: user }], PROCESS_SYSTEM, {
+    model: 'claude-sonnet-5',
+    maxTokens: 8000,
+    tool: PROCESS_TOOL,
+  })
 
-Return ONLY a JSON object mapping each phase name exactly as given to its estimated hours as a number. No markdown, no prose.
-Example: {"Setup and protection": 4, "Prep and sanding": 12}`
-
-  const raw = await callClaude(apiKey, [{ role: 'user', content: prompt }],
-    'You estimate painting labour hours. Return ONLY valid JSON, no markdown fences.',
-    { model: 'claude-sonnet-4-6', maxTokens: 1000 })
-
-  const cleaned = raw.replace(/```(?:json)?/gi, '').trim()
-  const start = cleaned.indexOf('{')
-  const parsed = JSON.parse(start > 0 ? cleaned.slice(start) : cleaned)
-  const out: Record<string, number> = {}
-  for (const [k, v] of Object.entries(parsed)) {
-    const n = Number(v)
-    if (!isNaN(n)) out[k] = n
+  let parsed: any
+  try { parsed = JSON.parse(raw) } catch {
+    throw new Error('AI returned unexpected format while writing the process.')
   }
-  return out
+
+  const steps: ProcessStep[] = (Array.isArray(parsed.steps) ? parsed.steps : [])
+    .map((st: any) => ({
+      name: String(st?.name ?? '').trim(),
+      hours: Number.isFinite(Number(st?.hours)) && Number(st.hours) > 0 ? Number(st.hours) : 0,
+      service: String(st?.service ?? ''),
+      covers: Array.isArray(st?.covers) ? st.covers.map(String).filter((k: string) => SUB_BY_KEY[k]) : [],
+    }))
+    .filter((st: ProcessStep) => st.name)
+
+  if (!steps.length) throw new Error('The AI did not return any process steps. Try again.')
+  return { steps, notes: String(parsed.notes ?? '') }
 }
+
 
 // V16 runConsAI — estimate consumables spend
 export async function estimateConsumables(
