@@ -423,6 +423,13 @@ Exterior, facade by facade:
 - Eaves: overhang depth x the length it runs. Check the section drawing for the overhang.
 - Fascia and gutter: the roofline perimeter.
 
+BEING CONSISTENT RUN TO RUN
+The same drawings should give the same answer twice. What makes them differ is reading loosely, so:
+- Prefer a labelled dimension to one you scale off the page, every time. Only scale where nothing is labelled, and say in basis that you scaled it.
+- Work room by room in the order the plan labels them, and measure every room before totalling. Do not estimate a total directly.
+- Round each room to 0.1 m and each area to 0.5 m2. Round once, at the end, not at every step.
+- Where a dimension is genuinely ambiguous, pick the reading the labelled dimensions support and say which in basis — do not average two readings.
+
 For every row, write the arithmetic into "basis" — the rooms or facades and their dimensions, ending in the total. "Bed1 3.6x3.2 + Bed2 3.0x3.4 + Living 4.2x5.0 = 44.5", not "measured from the floor plan". Put the full room-by-room working in extractionSummary.
 
 THE SUBSTRATE TABLE IS AUTHORITATIVE
@@ -772,6 +779,24 @@ function cleanFinishes(raw: any): FinishRow[] {
 }
 
 /**
+ * Sheet indexes already worked out, keyed by the file itself.
+ *
+ * Reading a drawing is a judgement, so two runs over the same set will not
+ * agree to the square metre. But the index pass is a second, avoidable source
+ * of disagreement: if one run measures from A-02 and A-03 and the next picks
+ * A-02 and A-05, the quantities differ because the model was shown different
+ * drawings, not because it read them differently. Re-extracting the same file
+ * now measures the same sheets, which removes that axis and saves the pass.
+ */
+const sheetIndexCache = new Map<string, SheetIndexEntry[]>()
+const fileKey = (f: File) => `${f.name}|${f.size}|${f.lastModified}`
+
+/** Forget the cached sheet index, so the next extract indexes afresh. */
+export function clearSheetIndexCache() {
+  sheetIndexCache.clear()
+}
+
+/**
  * Index one PDF's sheets, chunking when the set is too big to send at once.
  * Returns [] when the file cannot be split, so the caller falls back to
  * sending it whole.
@@ -780,6 +805,9 @@ async function indexSheets(
   apiKey: string, file: File, pageCount: number,
   onProgress?: (stage: string) => void,
 ): Promise<SheetIndexEntry[]> {
+  const cached = sheetIndexCache.get(fileKey(file))
+  if (cached) return cached
+
   const chunks = await pdfChunks(file, INDEX_CHUNK)
   const out: SheetIndexEntry[] = []
 
@@ -820,6 +848,7 @@ async function indexSheets(
     })
     if (i === chunks.length - 1) onProgress?.('')
   }
+  if (out.length) sheetIndexCache.set(fileKey(file), out)
   return out
 }
 
