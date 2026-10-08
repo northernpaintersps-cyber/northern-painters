@@ -284,7 +284,6 @@ ${q.materialsBreakdown}`
 
 export interface ProcessStep {
   name: string
-  hours: number
   /** Which service this belongs to, so the list reads in blocks. */
   service: string
   /** The substrates it covers, so the step can be checked against the scope. */
@@ -293,7 +292,7 @@ export interface ProcessStep {
 
 const PROCESS_TOOL = {
   name: 'record_process',
-  description: 'The ordered work phases for this job, with estimated crew hours.',
+  description: 'The ordered work phases for this job. Phases only — the estimator puts the time against them.',
   input_schema: {
     type: 'object' as const,
     additionalProperties: false,
@@ -305,13 +304,12 @@ const PROCESS_TOOL = {
         items: {
           type: 'object',
           additionalProperties: false,
-          required: ['name', 'hours', 'service', 'covers'],
+          required: ['name', 'service', 'covers'],
           properties: {
             name: {
               type: 'string',
               description: 'What is done, specific enough to price: "Exterior — pressure wash and sugar soap", not "Prep".',
             },
-            hours: { type: 'number', description: 'Crew hours for the phase, elapsed, not per painter.' },
             service: { type: 'string', description: 'The service it belongs to, from the list given.' },
             covers: {
               type: 'array', items: { type: 'string' },
@@ -327,7 +325,7 @@ const PROCESS_TOOL = {
 
 const PROCESS_SYSTEM = `You are a senior Australian painting estimator writing the work programme for a quote.
 
-Set out every phase of the job in the order it actually happens on site, and put an hours figure against each. Record it with the record_process tool.
+Set out every phase of the job in the order it actually happens on site. Record it with the record_process tool.
 
 COVER THE WHOLE JOB
 The scope below may span several services — an interior repaint and an exterior repaint and a driveway seal are three different trades' worth of work in one quote. Give each service its own phases. Do not fold them together and do not leave one out because another is larger.
@@ -340,8 +338,10 @@ A programme that is only "prep" and "two coats" underprices every job. Include, 
 BE SPECIFIC
 Name the surface in the phase: "Ceilings — two coats flat" beats "Second coat". A phase should be something you could stand in front of and say was done or not done.
 
-HOURS
-Crew hours, elapsed on site, not per painter. Account for the prep level, the access, the ceiling height and the application method given. A sprayed job is faster to apply and slower to mask.
+NO TIMES
+Do not estimate hours or days, and do not imply them in the phase names. The estimator puts the time against each phase themselves — they know this crew and this site, and a number from you would only anchor them to a worse guess. Your job is the programme: that every phase is there, named clearly, and in the right order.
+
+Split a phase where the time would differ a lot across it. "Prep" covering a sound interior and a peeling weatherboard exterior is one box for two very different numbers; those are two phases.
 
 Put the substrate keys each phase works on in "covers", so the programme can be checked against the scope. Setup, access and clean-up cover nothing and that is correct.`
 
@@ -390,7 +390,6 @@ Write the programme with the record_process tool.`
   const steps: ProcessStep[] = (Array.isArray(parsed.steps) ? parsed.steps : [])
     .map((st: any) => ({
       name: String(st?.name ?? '').trim(),
-      hours: Number.isFinite(Number(st?.hours)) && Number(st.hours) > 0 ? Number(st.hours) : 0,
       service: String(st?.service ?? ''),
       covers: Array.isArray(st?.covers) ? st.covers.map(String).filter((k: string) => SUB_BY_KEY[k]) : [],
     }))

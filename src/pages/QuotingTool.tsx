@@ -781,10 +781,12 @@ export default function QuotingTool() {
         painters: painters.length,
         siteNotes,
       })
+      // Steps only. The time against each is the estimator's to put, and a
+      // number from the model would just anchor them to a worse guess.
       setProcesses(steps.map(st => ({
         id: genId('pr'),
         name: st.name,
-        hours: st.hours,
+        hours: 0,
         np: painters.length,
       })))
       setProcNotes(notes)
@@ -1739,8 +1741,8 @@ export default function QuotingTool() {
               <div className="text-[#666] text-xs py-1.5">
                 <b>Write the process</b> builds the programme from the services and the
                 substrates in scope — every service gets its own phases, sequenced the way
-                the work actually happens. <b>Template</b> loads the fixed steps for this
-                job type instead.
+                the work actually happens. It does not guess at times; you put those in.
+                <b>Template</b> loads the fixed steps for this job type instead.
               </div>
             ) : (
               <div className="flex flex-col gap-1.5 mb-2.5">
