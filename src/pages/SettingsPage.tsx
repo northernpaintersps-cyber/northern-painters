@@ -13,7 +13,9 @@ export interface LabourRates {
   standard: number   // standard painter $/hr
   lead: number       // leading hand $/hr
   sub: number        // subcontractor $/hr
-  overhead: number   // overhead $/hr
+  /** Overhead as a PERCENTAGE on the quote subtotal, not dollars per hour.
+   *  The quoting tool has always applied it as a percent; the label said $/hr. */
+  overhead: number   // overhead %, applied to the quote subtotal
   hpd: number        // hours per day default
   charge_rate: number // charge-out rate to client $/hr
 }
@@ -368,7 +370,7 @@ export default function SettingsPage() {
             <Field label="Standard ($/hr)" value={biz.rates.standard} onChange={setRate('standard')} type="number" />
             <Field label="Lead hand ($/hr)" value={biz.rates.lead} onChange={setRate('lead')} type="number" />
             <Field label="Sub ($/hr)" value={biz.rates.sub} onChange={setRate('sub')} type="number" />
-            <Field label="Overhead ($/hr)" value={biz.rates.overhead} onChange={setRate('overhead')} type="number" />
+            <Field label="Overhead % (on quote subtotal)" value={biz.rates.overhead} onChange={setRate('overhead')} type="number" />
             <Field label="Charge rate ($/hr)" value={biz.rates.charge_rate} onChange={setRate('charge_rate')} type="number" />
             <Field label="Hours per day" value={biz.rates.hpd} onChange={setRate('hpd')} type="number" />
           </div>

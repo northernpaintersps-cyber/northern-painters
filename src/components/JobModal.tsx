@@ -729,7 +729,11 @@ export default function JobModal({ open, jobId, initial, onClose }: {
             <Input label="Agreed ex GST ($)" type="number" value={form.agreed_ex_gst || ''} onChange={num('agreed_ex_gst')} min={0} />
             <Input label="Est. labour ex GST ($)" type="number" value={form.est_labour_ex || ''} onChange={num('est_labour_ex')} min={0} />
             <Input label="Est. materials ex GST ($)" type="number" value={form.est_materials_ex || ''} onChange={num('est_materials_ex')} min={0} />
-            <Input label="Labour rate ($/hr)" type="number" value={form.labour_rate || ''} onChange={num('labour_rate')} min={0} />
+            {/* Cost, not charge. The Costs page divides the labour budget by
+                this to get the hours budget, so a charge rate typed here
+                silently shrinks the hours you think you have. */}
+            <Input label="Labour cost rate ($/hr — what the crew costs you)" type="number"
+              value={form.labour_rate || ''} onChange={num('labour_rate')} min={0} />
             <div className="col-span-2 bg-gray-50 rounded-lg p-3 space-y-1">
               <p className="text-xs text-gray-500">Estimated financials</p>
               <div className="grid grid-cols-3 gap-2 mt-2">

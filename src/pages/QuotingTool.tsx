@@ -202,6 +202,8 @@ export default function QuotingTool() {
   // so it does not fight you flipping back to check the scope against it.
   const [rightTab, setRightTab] = useState<'scope' | 'estimate'>('scope')
   const autoSwitched = useRef(false)
+  /** Whether overheadPct has been decided — by the settings or by a draft. */
+  const overheadSet = useRef(false)
   const [scopePhotos, setScopePhotos] = useState<ScopePhoto[]>([])
   const [photoLinks, setPhotoLinks] = useState<Record<string, string[]>>({})
   const [highlightKey, setHighlightKey] = useState('')
@@ -275,10 +277,23 @@ export default function QuotingTool() {
   const [adjMat, setAdjMat] = useState(0)
   const [waste, setWaste] = useState(5)              // on materials
   const [contingency, setContingency] = useState(10) // on labour
+  // Seeded from Settings → Overhead % once the settings load, below. It cannot
+  // be the initial value because biz arrives async, and a restored draft must
+  // win over the setting.
   const [overheadPct, setOverheadPct] = useState(0)  // on subtotal
   const [bufDays, setBufDays] = useState(0)
   const [bufHrs, setBufHrs] = useState(0)
   const [travelCost, setTravelCost] = useState(0)
+
+  // Settings → Overhead % was displayed on this page and passed to the AI, but
+  // the field the price actually uses defaulted to 0, so the setting never
+  // reached a quote. Seed it once the settings arrive, unless a draft has
+  // already said what the overhead is.
+  useEffect(() => {
+    if (overheadSet.current || !biz) return
+    overheadSet.current = true
+    setOverheadPct(biz.rates?.overhead ?? 0)
+  }, [biz])
   const [paintRows, setPaintRows] = useState<PaintRow[]>([])
   const [laHpd, setLaHpd] = useState(rates.hpd)
   const [laPrep, setLaPrep] = useState(0)
@@ -942,7 +957,11 @@ export default function QuotingTool() {
         agreed_ex_gst: Math.round(agreed),
         est_labour_ex: Math.round(labourCost),
         est_materials_ex: Math.round(materials.total + consTotal),
-        labour_rate: painters[0]?.rate ?? rates.standard,
+        // The crew's average, because that is the rate est_labour_ex was
+        // costed at. Storing the first painter's rate made the Costs page
+        // divide the budget by the wrong number: a lead at 75 ahead of a
+        // standard at 65 understated the hours budget by 7%.
+        labour_rate: Math.round(avgRate * 100) / 100,
         est_days: Math.max(1, Math.round(days)),
         notes: siteNotes,
         quote_no: quoteNo || null,
@@ -1020,6 +1039,9 @@ export default function QuotingTool() {
     setLogisticsNotes(d.logisticsNotes ?? ''); setEstimate(d.estimate ?? '')
     setLockedPrice(d.lockedPrice ?? ''); setRooms(d.rooms ?? [])
     setAdjLab(d.adjLab ?? 0); setAdjMat(d.adjMat ?? 0)
+    // A draft carries its own overhead, including a deliberate 0, so mark it
+    // decided before the settings effect can seed over the top.
+    overheadSet.current = true
     setWaste(d.waste ?? 5); setContingency(d.contingency ?? 10); setOverheadPct(d.overheadPct ?? 0)
     setBufDays(d.bufDays ?? 0); setBufHrs(d.bufHrs ?? 0); setTravelCost(d.travelCost ?? 0)
     setPaintRows(d.paintRows ?? [])
@@ -1080,7 +1102,10 @@ export default function QuotingTool() {
     setPrepLevels(defaultPrepLevels(jobType))
     setConsTotal(0); setConsNotes(''); setExtraMats([]); setEquip([]); setRooms([])
     setSiteNotes(''); setLogisticsNotes(''); setEstimate(''); setLockedPrice(''); setDocs([]); setExtractRes(null)
-    setAdjLab(0); setAdjMat(0); setWaste(5); setContingency(10); setOverheadPct(0)
+    // Overhead back to the setting, not to zero: a new quote should start
+    // with your standing overhead the same way waste and contingency do.
+    setAdjLab(0); setAdjMat(0); setWaste(5); setContingency(10)
+    setOverheadPct(rates.overhead ?? 0)
     setBufDays(0); setBufHrs(0); setTravelCost(0); setPaintRows([])
     setLaHpd(rates.hpd); setLaPrep(0); setLaTop(0); setLaBufD(0); setLaBufH(0); setLaRates([])
     setQuoteId(null); setQuoteNo('')
