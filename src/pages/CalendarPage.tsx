@@ -9,6 +9,9 @@ import { Input, Select, TextArea } from '@/components/ui/Field'
 import { fmtDate, genId, today, addDays, getJobScheduledDates, localDate, parseLocal } from '@/lib/utils'
 import { ChevronLeft, ChevronRight, Plus, Loader2, Trash2, X } from 'lucide-react'
 import { invalidateTable } from '@/lib/queryKeys'
+import { useWeather, isWet } from '@/lib/weather'
+import WeatherBadge from '@/components/WeatherBadge'
+import { useBusinessSettings } from '@/pages/SettingsPage'
 
 const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December']
 const DAYS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat']
@@ -105,6 +108,8 @@ export default function CalendarPage() {
   const upsertEvent = useUpsertEvent()
   const deleteEvent = useDeleteEvent()
   const setJobDates = useSetJobDates()
+  const { data: biz } = useBusinessSettings()
+  const { data: weather = {} } = useWeather(biz?.weather_lat, biz?.weather_lon)
 
   const now = new Date()
   const [year, setYear] = useState(now.getFullYear())
@@ -268,13 +273,20 @@ export default function CalendarPage() {
             {cells.map(({ date, isCurrentMonth }) => {
               const items = itemsByDate[date] || []
               const isToday = date === todayStr
+              const wx = weather[date]
+              // Rain only matters where there is work to lose to it.
+              const rainedOn = items.length > 0 && !!wx && isWet(wx)
               return (
                 <div key={date} onClick={() => openCell(date)}
                   className={`rounded-lg p-1.5 cursor-pointer flex flex-col transition-colors
-                    ${isCurrentMonth ? 'bg-white hover:bg-gray-50' : 'bg-white/40 opacity-50 hover:opacity-70'}
-                    ${isToday ? 'ring-2 ring-blue-500' : 'border border-gray-200'}`}>
-                  <div className={`text-xs font-medium mb-1 ${isToday ? 'text-blue-600' : isCurrentMonth ? 'text-gray-600' : 'text-gray-600'}`}>
-                    {parseLocal(date).getDate()}
+                    ${isCurrentMonth
+                      ? rainedOn ? 'bg-amber-50 hover:bg-amber-100' : 'bg-white hover:bg-gray-50'
+                      : 'bg-white/40 opacity-50 hover:opacity-70'}
+                    ${isToday ? 'ring-2 ring-blue-500'
+                      : rainedOn ? 'border border-amber-300' : 'border border-gray-200'}`}>
+                  <div className={`flex items-center justify-between gap-1 text-xs font-medium mb-1 ${isToday ? 'text-blue-600' : isCurrentMonth ? 'text-gray-600' : 'text-gray-600'}`}>
+                    <span>{parseLocal(date).getDate()}</span>
+                    <WeatherBadge wx={wx} booked={items.length > 0} />
                   </div>
                   {/* Every item shows: a day with a job and two quote visits was
                       being cut off at three with no way to reach the rest. The

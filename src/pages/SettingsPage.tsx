@@ -5,7 +5,8 @@ import { useAuth } from '@/lib/auth'
 import { supabase } from '@/lib/supabase'
 import { importBackup } from '@/lib/importData'
 import type { ImportResult } from '@/lib/importData'
-import { Upload, CheckCircle, AlertCircle, Loader2, ChevronDown, ChevronRight, Save, Plus, Trash2, Key } from 'lucide-react'
+import { geocode } from '@/lib/weather'
+import { Upload, CheckCircle, AlertCircle, Loader2, ChevronDown, ChevronRight, Save, Plus, Trash2, Key, MapPin } from 'lucide-react'
 
 // ── Business settings hook ────────────────────────────────────
 export interface LabourRates {
@@ -50,6 +51,10 @@ export interface BusinessSettings {
   rates: LabourRates
   paint_products: PaintProduct[]
   ai_api_key: string
+  /** Town the calendar's forecast is for, and the point it resolved to. */
+  weather_location?: string
+  weather_lat?: number
+  weather_lon?: number
 }
 
 const DEFAULT_RATES: LabourRates = {
@@ -101,6 +106,7 @@ const DEFAULT_SETTINGS: BusinessSettings = {
   rates: DEFAULT_RATES,
   paint_products: DEFAULT_PAINT_PRODUCTS,
   ai_api_key: '',
+  weather_location: '',
 }
 
 export function useBusinessSettings() {
@@ -142,6 +148,64 @@ function Field({ label, value, onChange, type = 'text', placeholder = '' }: {
       <label className="text-xs font-medium text-gray-500">{label}</label>
       <input type={type} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
         className="bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-1 focus:ring-blue-500 placeholder-gray-600" />
+    </div>
+  )
+}
+
+/**
+ * The town the calendar's weather comes from. Looked up on demand rather than
+ * geocoded silently from the address — a stored point nobody confirmed is worse
+ * than none, because a wrong one looks exactly like a right one on the calendar.
+ */
+function WeatherLocationField({ biz, setBiz, placeholder }: {
+  biz: BusinessSettings
+  setBiz: (patch: Partial<BusinessSettings>) => void
+  placeholder: string
+}) {
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+
+  const find = async () => {
+    setErr(''); setBusy(true)
+    try {
+      const hit = await geocode(biz.weather_location ?? '')
+      if (!hit) {
+        setErr('Nothing found. Try the town on its own — "Lismore NSW" rather than a postcode or a street.')
+        return
+      }
+      setBiz({ weather_location: hit.label, weather_lat: hit.lat, weather_lon: hit.lon })
+    } catch (e: any) {
+      setErr(e?.message || 'Lookup failed')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const located = biz.weather_lat != null && biz.weather_lon != null
+
+  return (
+    <div className="flex flex-col gap-1">
+      <label className="text-xs font-medium text-gray-500">Weather location (calendar forecast)</label>
+      <div className="flex gap-2">
+        <input value={biz.weather_location ?? ''} placeholder={placeholder}
+          onChange={e => setBiz({ weather_location: e.target.value, weather_lat: undefined, weather_lon: undefined })}
+          onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); find() } }}
+          className="flex-1 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-1 focus:ring-blue-500 placeholder-gray-600" />
+        <button type="button" onClick={find} disabled={busy || !(biz.weather_location ?? '').trim()}
+          className="shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-lg bg-gray-100 hover:bg-gray-200 text-sm text-gray-700 disabled:opacity-40">
+          {busy ? <Loader2 size={14} className="animate-spin" /> : <MapPin size={14} />}
+          Find
+        </button>
+      </div>
+      {err
+        ? <span className="text-xs text-red-600">{err}</span>
+        : located
+          ? <span className="text-xs text-green-700">
+              Found — {biz.weather_lat!.toFixed(3)}, {biz.weather_lon!.toFixed(3)}. Save to use it.
+            </span>
+          : <span className="text-xs text-gray-500">
+              Type a town and press Find. The calendar shows 16 days ahead once this is saved.
+            </span>}
     </div>
   )
 }
@@ -275,6 +339,8 @@ export default function SettingsPage() {
             <Field label="Website" value={biz.website} onChange={set('website')} placeholder="www.example.com.au" />
           </div>
           <Field label="Address" value={biz.address} onChange={set('address')} placeholder="123 Street, City NSW 2000" />
+          <WeatherLocationField biz={biz} placeholder={biz.address || 'Lismore NSW'}
+            setBiz={patch => setBiz(p => ({ ...p, ...patch }))} />
         </div>
 
         <div className="space-y-3 pt-2 border-t border-gray-200">
