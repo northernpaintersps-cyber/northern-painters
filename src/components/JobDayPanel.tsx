@@ -6,6 +6,7 @@ import { Modal } from '@/components/ui/Modal'
 import { genId, findCrew, isWorkDay } from '@/lib/utils'
 import { Check, Loader2, MessageSquare } from 'lucide-react'
 import { invalidateTable } from '../lib/queryKeys'
+import ExposureMark from '@/components/ExposureMark'
 
 type Row = Record<string, any>
 
@@ -191,7 +192,10 @@ export default function JobDayPanel({ jobId, date, onClose }: {
   return (
     <Modal open onClose={onClose} title={`Crew — ${prettyDate}`}>
       <div className="bg-[#f0fdf4] border border-[#86efac] rounded-lg px-3.5 py-2.5 mb-3.5 text-xs">
-        <strong>{job?.id}</strong> — {job?.client}<br />
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <strong>{job?.id}</strong> — {job?.client}
+          {job && <ExposureMark job={job} />}
+        </div>
         <span className="text-[#666]">{job?.address || ''}{job?.type ? ` · ${job.type}` : ''}</span>
       </div>
 

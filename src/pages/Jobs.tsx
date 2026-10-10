@@ -16,6 +16,7 @@ import {
   Receipt, BookmarkCheck,
 } from 'lucide-react'
 import { invalidateTable } from '../lib/queryKeys'
+import ExposureMark from '@/components/ExposureMark'
 import { SyncedInput } from '@/components/ui/SyncedInput'
 
 
@@ -321,7 +322,7 @@ export default function Jobs() {
               <table className="w-full border-collapse text-[12.5px]">
                 <thead>
                   <tr>
-                    {['ID','Client','Address','Agreed ex GST','Quote status','Job status','Start','Days',''].map((h, i) => (
+                    {['ID','Client','Address','Agreed ex GST','Quote status','Job status','Start','Days','Weather',''].map((h, i) => (
                       <th key={i} className="text-left px-2.5 py-[7px] border-b border-black/[0.12] text-[#666] font-medium whitespace-nowrap bg-[#fafaf8] sticky top-0 z-[2]">{h}</th>
                     ))}
                   </tr>
@@ -376,6 +377,7 @@ export default function Jobs() {
                               if (v !== (j.est_days ?? null)) quickEdit.mutate({ job: j, field: 'est_days', value: v })
                             }} />
                         </td>
+                        <td className="px-2.5 py-[7px]"><ExposureMark job={j} /></td>
                         <td className="px-2.5 py-[7px] whitespace-nowrap">
                           <button onClick={() => newSiteVisit(j)} title="New site visit for this job" className={BTN}><Camera size={13} /></button>
                           <button onClick={() => setCrewDay({ jobId: j.id, date: normaliseDate(j.sched_start) || today() })}
@@ -395,7 +397,7 @@ export default function Jobs() {
                     )
                   })}
                   {filtered.length === 0 && (
-                    <tr><td colSpan={9} className="text-center py-16 text-[#666]">No jobs found</td></tr>
+                    <tr><td colSpan={10} className="text-center py-16 text-[#666]">No jobs found</td></tr>
                   )}
                 </tbody>
               </table>

@@ -18,6 +18,7 @@ import {
 } from '@/lib/utils'
 import { Plus, Loader2, Trash2, Edit2, Users, Clock } from 'lucide-react'
 import { invalidateTable } from '@/lib/queryKeys'
+import { EXPOSURE_OPTIONS, EXPOSURE_LABELS, deriveExposure, normalise } from '@/lib/exposure'
 
 const TABS = ['details','schedule','crew','financials','costs','billing','variations','activity'] as const
 type Tab = typeof TABS[number]
@@ -168,7 +169,9 @@ export const QUOTE_STATUSES = [
 export const TERMS = ['Labour only','Labour and materials','Hourly rate','Estimate']
 export const LEAD_SOURCES = ['Website/Google','Facebook/Instagram','Builder/Trade','Referral','Existing Client','Other']
 export const ON_BOOKS = ['Invoiced','Cash']
-export const WEATHER = ['None','High - exterior']
+/** Kept as an alias: the levels now live in lib/exposure.ts, which also reads
+ *  the two values this column used to hold. */
+export const WEATHER = EXPOSURE_OPTIONS
 
 function useJobsList() {
   const { user } = useAuth()
@@ -223,7 +226,8 @@ export function emptyForm(): Job {
   return {
     status: 'Not Started', quote_status: 'Info Collected',
     type: 'Interior repaint', terms: 'Labour and materials',
-    on_books: 'Invoiced', weather: 'None', lead_source: '',
+    // weather left blank on purpose: it follows the job type until set.
+    on_books: 'Invoiced', weather: '', lead_source: '',
   }
 }
 
@@ -685,7 +689,11 @@ export default function JobModal({ open, jobId, initial, onClose }: {
             <Select label="Quote status" value={form.quote_status || ''} onChange={fld('quote_status')} options={QUOTE_STATUSES} placeholder="—" />
             <Select label="Lead source" value={form.lead_source || ''} onChange={fld('lead_source')} options={LEAD_SOURCES} placeholder="—" />
             <Select label="On books" value={form.on_books || ''} onChange={fld('on_books')} options={ON_BOOKS} />
-            <Select label="Weather" value={form.weather || ''} onChange={fld('weather')} options={WEATHER} />
+            {/* Blank follows the job type, so changing the type keeps the
+                exposure honest without anyone remembering to update it. */}
+            <Select label="Weather exposure" value={normalise(form.weather) ? form.weather : ''}
+              onChange={fld('weather')} options={WEATHER}
+              placeholder={`From job type — ${EXPOSURE_LABELS[deriveExposure(form.type)]}`} />
             <Input label="Quote number" value={form.quote_no || ''} onChange={fld('quote_no')} placeholder="Auto-generated" />
             <Input label="Drive link" value={form.drive_link || ''} onChange={fld('drive_link')} wrapperClassName="col-span-2" />
             <TextArea label="Description" value={form.job_desc || ''} onChange={fld('job_desc')} wrapperClassName="col-span-2" />

@@ -5,6 +5,7 @@ import { supabase, selectAll } from '@/lib/supabase'
 import { useAuth } from '@/lib/auth'
 import { Modal } from '@/components/ui/Modal'
 import JobDayPanel from '@/components/JobDayPanel'
+import { ExposureIcon } from '@/components/ExposureMark'
 import { Input } from '@/components/ui/Field'
 import { getJobScheduledDates, genId, findCrew, crewLabel } from '@/lib/utils'
 import {
@@ -323,7 +324,10 @@ export default function Crew() {
               {weekJobs.map(j => (
                 <tr key={j.id}>
                   <td className="px-2.5 py-1.5 border border-black/[0.12] bg-white sticky left-0 z-[2] align-top" style={{ minWidth: 130 }}>
-                    <div className="text-[11px] font-bold text-[#2563eb]">{j.id}</div>
+                    <div className="flex items-center gap-1">
+                      <ExposureIcon job={j} size={11} />
+                      <span className="text-[11px] font-bold text-[#2563eb]">{j.id}</span>
+                    </div>
                     <div className="text-[11px] font-medium">{j.client}</div>
                     {j.address && <div className="text-[10px] text-[#666] truncate" style={{ maxWidth: 120 }}>{j.address.split(',')[0]}</div>}
                   </td>

@@ -11,6 +11,8 @@ import { ChevronLeft, ChevronRight, Plus, Loader2, Trash2, X } from 'lucide-reac
 import { invalidateTable } from '@/lib/queryKeys'
 import { useWeather, isWet } from '@/lib/weather'
 import WeatherBadge from '@/components/WeatherBadge'
+import { ExposureIcon } from '@/components/ExposureMark'
+import { jobExposure, isExposed } from '@/lib/exposure'
 import { useBusinessSettings } from '@/pages/SettingsPage'
 
 const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December']
@@ -274,8 +276,10 @@ export default function CalendarPage() {
               const items = itemsByDate[date] || []
               const isToday = date === todayStr
               const wx = weather[date]
-              // Rain only matters where there is work to lose to it.
-              const rainedOn = items.length > 0 && !!wx && isWet(wx)
+              // Rain only matters where there is work it can actually stop:
+              // 20mm over a cabinet respray costs nothing.
+              const atRisk = items.some(it => it.type === 'job' && isExposed(jobExposure(it.data)))
+              const rainedOn = atRisk && !!wx && isWet(wx)
               return (
                 <div key={date} onClick={() => openCell(date)}
                   className={`rounded-lg p-1.5 cursor-pointer flex flex-col transition-colors
@@ -286,7 +290,7 @@ export default function CalendarPage() {
                       : rainedOn ? 'border border-amber-300' : 'border border-gray-200'}`}>
                   <div className={`flex items-center justify-between gap-1 text-xs font-medium mb-1 ${isToday ? 'text-blue-600' : isCurrentMonth ? 'text-gray-600' : 'text-gray-600'}`}>
                     <span>{parseLocal(date).getDate()}</span>
-                    <WeatherBadge wx={wx} booked={items.length > 0} />
+                    <WeatherBadge wx={wx} booked={atRisk} />
                   </div>
                   {/* Every item shows: a day with a job and two quote visits was
                       being cut off at three with no way to reach the rest. The
@@ -295,6 +299,7 @@ export default function CalendarPage() {
                     {items.map((item, i) => (
                       <div key={i}
                         className={`group flex items-center gap-1 text-[10px] px-1 py-0.5 rounded leading-tight ${item.color}`}>
+                        {item.type === 'job' && <ExposureIcon job={item.data} />}
                         <span className="flex-1 truncate cursor-pointer"
                           onClick={item.type === 'event'
                             ? (e) => openEvent(item.data, e)
