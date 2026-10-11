@@ -11,6 +11,10 @@ import { useAuth } from '@/lib/auth'
 import { fmtCurrency, fmtDate, invStatus } from '@/lib/utils'
 import { computeJobBilling, billingBreakdown, unbilledSummary } from '@/lib/jobBilling'
 import { useBusinessSettings } from '@/pages/SettingsPage'
+import { useNavigate } from 'react-router-dom'
+import { useState } from 'react'
+import { DEPOSIT_PCT, jobValueEx, depositAmount, depositPath, hasDepositInvoice } from '@/lib/deposit'
+import { BookmarkCheck } from 'lucide-react'
 
 function Tile({ label, value, color, sub }: {
   label: string; value: string; color?: string; sub?: string
@@ -20,6 +24,54 @@ function Tile({ label, value, color, sub }: {
       <div className="text-[10px] font-bold uppercase text-[#666] tracking-wide mb-0.5">{label}</div>
       <div className="text-[15px] font-bold" style={color ? { color } : undefined}>{value}</div>
       {sub && <div className="text-[10px] text-[#666] mt-0.5">{sub}</div>}
+    </div>
+  )
+}
+
+/**
+ * Raise the booking deposit. It lives here because this is the job's money
+ * screen and it already lists the invoices a deposit becomes one of — and
+ * because the modal is reached from the Jobs list and the Pipeline alike, so
+ * one button covers both.
+ *
+ * The percentage is a field rather than a prompt() so the amount is visible
+ * before anything is created.
+ */
+function DepositRow({ job, invoices }: { job: any; invoices: Array<any> }) {
+  const nav = useNavigate()
+  const [pct, setPct] = useState(String(DEPOSIT_PCT))
+  const value = jobValueEx(job)
+  const n = parseFloat(pct)
+  const valid = n > 0 && n <= 100
+  const amount = valid ? depositAmount(job, n) : 0
+  const already = hasDepositInvoice(invoices)
+
+  if (!value) return (
+    <div className="rounded-lg border border-black/[0.12] px-3 py-2 text-[11px] text-[#666]">
+      No quoted or agreed amount on this job yet, so there is nothing to take a deposit on.
+    </div>
+  )
+
+  return (
+    <div className="rounded-lg border border-black/[0.12] px-3 py-2.5 flex items-center gap-2 flex-wrap">
+      <BookmarkCheck size={14} className="text-[#2563eb] shrink-0" />
+      <span className="text-xs font-semibold">Booking deposit</span>
+      <input type="number" min={1} max={100} value={pct}
+        onChange={e => setPct(e.target.value)}
+        className="w-14 bg-white border border-black/20 rounded px-1.5 py-1 text-[12px] text-right" />
+      <span className="text-[11px] text-[#666]">% of {fmtCurrency(value)} ex GST</span>
+      <span className="text-[13px] font-bold font-mono">
+        {valid ? fmtCurrency(amount) : '—'}
+      </span>
+      <button onClick={() => nav(depositPath(job, n))} disabled={!valid}
+        className="ml-auto text-xs font-semibold px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-40">
+        {already ? 'Raise another' : 'Create deposit invoice'}
+      </button>
+      <div className="basis-full text-[10px] text-[#666]">
+        {already
+          ? 'A deposit invoice already exists on this job.'
+          : 'Opens a new invoice with the deposit filled in. Marking it paid moves the job to Booked.'}
+      </div>
     </div>
   )
 }
@@ -170,6 +222,8 @@ export default function JobBillingTab({ job, jobId }: { job: any; jobId: string 
           </div>
         </div>
       )}
+
+      <DepositRow job={{ ...job, id: jobId }} invoices={b.invoices} />
 
       <div>
         <div className="text-xs font-semibold mb-1.5">Invoices</div>

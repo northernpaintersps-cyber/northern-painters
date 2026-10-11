@@ -17,6 +17,7 @@ import {
 } from 'lucide-react'
 import { invalidateTable } from '../lib/queryKeys'
 import ExposureMark from '@/components/ExposureMark'
+import { DEPOSIT_PCT, jobValueEx, depositPath } from '@/lib/deposit'
 import { SyncedInput } from '@/components/ui/SyncedInput'
 
 
@@ -26,7 +27,7 @@ type Job = Record<string, any>
 const II = 'border-none bg-transparent text-[12.5px] font-inherit text-inherit w-full focus:outline-none focus:bg-blue-50/60 rounded px-0.5'
 const IS = 'border-none bg-transparent text-xs font-inherit text-inherit cursor-pointer focus:outline-none'
 /** Default booking deposit, matching the Payments page's own default. */
-const DEPOSIT_PCT = 20
+
 
 const BTN = 'ml-1 px-1.5 py-1 rounded-md bg-white border border-black/20 hover:bg-[#f5f4f0] align-middle'
 
@@ -182,7 +183,6 @@ export default function Jobs() {
   const openEdit = (j: Job) => setOpenJob({ id: j.id })
 
   /** Value of the job ex GST — what is agreed if it is, else what was quoted. */
-  const jobValueEx = (j: Job) => Number(j.agreed_ex_gst || j.quote_ex_gst) || 0
 
   function newSiteVisit(j: Job) {
     nav('/visits' + handOff('np_prefill_visit', {
@@ -201,24 +201,15 @@ export default function Jobs() {
    * Booked when the deposit is actually paid, which the Invoices page does on
    * the unpaid to paid transition. Until then it is quoted work like any other.
    */
+  // The deposit itself lives in lib/deposit, shared with the job's Billing
+  // tab, which has the proper control. This stays as the one-click path from
+  // the list, at the default percentage.
   function bookJob(j: Job) {
-    const value = jobValueEx(j)
-    if (!value) {
+    if (!jobValueEx(j)) {
       alert(`${j.id} has no quoted or agreed amount yet, so there is nothing to take a deposit on.`)
       return
     }
-    const raw = prompt(`Booking deposit for ${j.id} — percentage of ${fmtCurrency(value)} ex GST:`, String(DEPOSIT_PCT))
-    if (raw === null) return
-    const pct = parseFloat(raw)
-    if (!(pct > 0 && pct <= 100)) { alert('Enter a percentage between 0 and 100.'); return }
-    nav('/invoices' + handOff('np_prefill_invoice', {
-      job_id: j.id,
-      client: j.client ?? '',
-      date: today(),
-      notes: 'Booking deposit',
-      depositExGST: Math.round(value * pct) / 100,
-      bookingDeposit: true,
-    }))
+    nav(depositPath(j, DEPOSIT_PCT))
   }
 
   return (
