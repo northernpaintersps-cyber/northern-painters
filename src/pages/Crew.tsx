@@ -130,8 +130,23 @@ export default function Crew() {
    */
   const conflicts = useMemo(() => {
     const clashes = (a: SlotKey, b: SlotKey) => a === 'full' || b === 'full' || a === b
+    const jobById = new Map(jobs.map(j => [j.id, j]))
+    const liveDates = new Map<string, Set<string>>(
+      jobs.map(j => [j.id, new Set(getJobScheduledDates(j))]))
+    /**
+     * A booking only counts if the work is still really on that day. An
+     * assignment outlives the day it was made for: change a job's dates or
+     * drop a day and the row stays behind, and the grid does not draw it
+     * because the cell is no longer scheduled. Those invisible leftovers were
+     * being counted, so the banner fired with nothing wrong on screen. Same
+     * for a job that has since been finished, lost or cancelled.
+     */
+    const live = (a: Row) => {
+      const j = jobById.get(a.job_id)
+      return !!j && CONFIRMED.includes(j.status) && !!liveDates.get(a.job_id)?.has(a.date)
+    }
     const byPersonDay = new Map<string, Row[]>()
-    assignments.forEach(a => {
+    assignments.filter(live).forEach(a => {
       const who = crewLabel(crew, a.crew_name)
       if (!a.date || !who) return
       const key = `${a.date}|${who}`
@@ -154,7 +169,7 @@ export default function Crew() {
       if (a && slotMissing(a)) unset++
     })
     return { ids, unset }
-  }, [assignments, crew])
+  }, [assignments, crew, jobs])
   const conflictIds = conflicts.ids
 
   const schedOf = useMemo(() => {
