@@ -155,7 +155,7 @@ export default function CalendarPage() {
   // ── Items per day ────────────────────────────────────────────
   const CONFIRMED_STATUSES = ['Not Started','Scheduled','In Progress','Hourly Rate Accepted','Booked']
   const itemsByDate = useMemo(() => {
-    const map: Record<string, Array<{ type: 'job' | 'event'; label: string; color: string; id: string; data: any }>> = {}
+    const map: Record<string, Array<{ type: 'job' | 'event'; label: string; color: string; id: string; data: any; full?: string }>> = {}
     const add = (date: string, item: any) => {
       if (!map[date]) map[date] = []
       map[date].push(item)
@@ -167,7 +167,17 @@ export default function CalendarPage() {
         const isFirst = i === 0, isLast = i === dates.length - 1
         const color = j.status === 'In Progress' ? JOB_ACTIVE_COLOR : JOB_SCHEDULED_COLOR
         const prefix = isFirst ? '▶ ' : isLast ? '⏹ ' : ''
-        add(d, { type: 'job', label: `${prefix}${j.id} ${j.client || ''}`, color, id: j.id, data: j })
+        // Client and street, not the job number. In a cell this narrow the
+        // number ate the half of the label that says which job this is; it is
+        // on the hover and on the panel the chip opens. The street number and
+        // name alone identify the site — the suburb repeats across a whole
+        // day's work and never fits anyway.
+        const street = (j.address || '').split(',')[0].trim()
+        const label = [j.client, street].filter(Boolean).join(' · ') || j.id
+        add(d, {
+          type: 'job', label: `${prefix}${label}`, color, id: j.id, data: j,
+          full: [j.id, j.client, j.address].filter(Boolean).join(' — '),
+        })
       })
     })
     // Calendar events
@@ -328,7 +338,7 @@ export default function CalendarPage() {
                           onClick={item.type === 'event'
                             ? (e) => openEvent(item.data, e)
                             : (e) => { e.stopPropagation(); setPanel({ jobId: item.data.id, date }) }}
-                          title={item.type === 'event' ? undefined : 'Assign crew for this day'}>
+                          title={item.type === 'event' ? undefined : `${item.full} · click to assign crew`}>
                           {item.label}
                         </span>
                         {item.type === 'job' && (
