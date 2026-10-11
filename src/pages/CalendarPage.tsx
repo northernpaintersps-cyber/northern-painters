@@ -7,7 +7,8 @@ import JobDayPanel from '@/components/JobDayPanel'
 import JobPicker from '@/components/JobPicker'
 import { Input, Select, TextArea } from '@/components/ui/Field'
 import { fmtDate, genId, today, addDays, getJobScheduledDates, localDate, parseLocal } from '@/lib/utils'
-import { ChevronLeft, ChevronRight, Plus, Loader2, Trash2, X } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Plus, Loader2, Trash2, X, CloudOff, CloudSun } from 'lucide-react'
+import { Link } from 'react-router-dom'
 import { invalidateTable } from '@/lib/queryKeys'
 import { useWeather, isWet } from '@/lib/weather'
 import WeatherBadge from '@/components/WeatherBadge'
@@ -111,7 +112,10 @@ export default function CalendarPage() {
   const deleteEvent = useDeleteEvent()
   const setJobDates = useSetJobDates()
   const { data: biz } = useBusinessSettings()
-  const { data: weather = {} } = useWeather(biz?.weather_lat, biz?.weather_lon)
+  const { data: weather = {}, isError: wxError, isLoading: wxLoading } =
+    useWeather(biz?.weather_lat, biz?.weather_lon)
+  const wxLocated = biz?.weather_lat != null && biz?.weather_lon != null
+  const wxDays = Object.keys(weather).length
 
   const now = new Date()
   const [year, setYear] = useState(now.getFullYear())
@@ -258,6 +262,26 @@ export default function CalendarPage() {
             <div className={`w-3 h-3 rounded-sm ${v.split(' ')[0]}`} />{k}
           </div>
         ))}
+        {/* Why there is or is not a forecast. Without this the three failure
+            states all look like an ordinary calendar. */}
+        <div className="flex items-center gap-1.5 text-xs ml-auto">
+          {!wxLocated ? (
+            <Link to="/settings" className="flex items-center gap-1 text-amber-700 hover:underline">
+              <CloudOff size={13} /> No weather location set — add one in Settings
+            </Link>
+          ) : wxLoading ? (
+            <span className="flex items-center gap-1 text-gray-500"><Loader2 size={13} className="animate-spin" /> Loading forecast…</span>
+          ) : wxError || !wxDays ? (
+            <span className="flex items-center gap-1 text-amber-700" title="Open-Meteo could not be reached. The calendar is unaffected.">
+              <CloudOff size={13} /> Forecast unavailable
+            </span>
+          ) : (
+            <span className="flex items-center gap-1 text-gray-500"
+              title={`Open-Meteo, ${wxDays} days ahead. Days beyond that show no icon.`}>
+              <CloudSun size={13} /> {biz?.weather_location || 'Forecast'} · {wxDays} days
+            </span>
+          )}
+        </div>
       </div>
 
       {/* Grid header */}

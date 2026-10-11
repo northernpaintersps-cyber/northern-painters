@@ -176,13 +176,18 @@ export async function fetchForecast(lat: number, lon: number): Promise<Forecast>
 
 /**
  * Keyed on the location, not on the month in view, so paging through the
- * calendar costs nothing. A failed fetch resolves to an empty map — a forecast
- * outage must not take the calendar down with it.
+ * calendar costs nothing.
+ *
+ * A failure is reported rather than swallowed. Returning an empty map on error
+ * kept the calendar up, which was the point, but it made "no location set",
+ * "the API is down" and "it is working, there is just no rain" look identical —
+ * three different problems with one blank screen. The caller renders the
+ * difference and the grid still never depends on the forecast arriving.
  */
 export function useWeather(lat?: number | null, lon?: number | null) {
   return useQuery<Forecast>({
     queryKey: ['weather', lat ?? null, lon ?? null],
-    queryFn: () => fetchForecast(lat!, lon!).catch(() => ({})),
+    queryFn: () => fetchForecast(lat!, lon!),
     enabled: lat != null && lon != null,
     staleTime: 30 * 60 * 1000,
     gcTime: 6 * 60 * 60 * 1000,
