@@ -104,11 +104,18 @@ if (MISSING.length) {
 
 export const SUB_KEYS: string[] = SUBSTRATES.map(s => s.key)
 
+/** The same list plus '' — a row may belong to no substrate. */
+const SUB_KEYS_OPT: string[] = [...SUB_KEYS, '']
+
 export const subLineDoc = (s: Substrate) =>
   `${s.key} | ${s.label} | ${s.group} | unit: ${s.unit} (${unitLabel(s.unit)}) | ${COUNT_DEFS[s.key]}`
 
-/** The authoritative substrate table, pasted into the system prompt. */
-export const SUBSTRATE_DOC = [
+/**
+ * The authoritative substrate table, pasted into the system prompt. A function
+ * rather than a constant because a custom substrate added in Settings has to
+ * appear in it, and this module was loaded long before the settings arrived.
+ */
+export const substrateDoc = () => [
   'key | label | group | unit | what the number counts',
   ...SUBSTRATES.map(subLineDoc),
 ].join('\n')
@@ -201,7 +208,7 @@ export const TAKEOFF_TOOL = {
             area: { type: 'string', description: 'The room or surface as the schedule names it.' },
             substrate_key: {
               type: 'string',
-              enum: [...SUB_KEYS, ''],
+              enum: SUB_KEYS_OPT,
               description: 'The substrate this row applies to, or "" when it is not clear.',
             },
             product: { type: 'string', description: 'Brand and product as specified, verbatim.' },
@@ -228,4 +235,18 @@ export const TAKEOFF_TOOL = {
       confidence: { type: 'string', description: 'high, medium, or "low — <specific reason>".' },
     },
   },
+}
+
+
+/**
+ * Re-derive what this module computed from SUBSTRATES at load time. Called
+ * after custom substrates are registered. SUB_KEYS is refilled in place rather
+ * than reassigned, because the tool schemas hold a reference to that exact
+ * array — including one in ai.ts.
+ */
+export function rebuildTakeoffSchema(): void {
+  SUB_KEYS.length = 0
+  SUB_KEYS.push(...SUBSTRATES.map(s => s.key))
+  SUB_KEYS_OPT.length = 0
+  SUB_KEYS_OPT.push(...SUB_KEYS, '')
 }

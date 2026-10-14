@@ -1,8 +1,10 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { NavLink, Outlet } from 'react-router-dom'
 import { useAuth } from '@/lib/auth'
 import { useRealtime } from '@/lib/useRealtime'
 import { useInstall } from '@/lib/useInstall'
+import { useBusinessSettings } from '@/pages/SettingsPage'
+import { registerCustomSubstrates } from '@/lib/customSubstrates'
 import {
   LayoutDashboard, Briefcase, FileText, Users, Calendar,
   ClipboardList, Settings, LogOut, Phone,
@@ -50,7 +52,21 @@ const nav = [
   ]},
 ]
 
+/**
+ * Merge your own substrates into the catalogue as soon as the settings land.
+ * It belongs here rather than in the quote builder because the site visit, the
+ * paint calculator and the AI takeoff all read the same list, and a substrate
+ * that exists on one screen and not another is worse than one that exists
+ * nowhere.
+ */
+function useCustomSubstrates() {
+  const { data: biz } = useBusinessSettings()
+  const raw = biz?.custom_substrates
+  useEffect(() => { if (biz) registerCustomSubstrates(raw ?? []) }, [biz, raw])
+}
+
 export default function Layout() {
+  useCustomSubstrates()
   const { signOut } = useAuth()
   const [mobileOpen, setMobileOpen] = useState(false)
   const { canPrompt, install } = useInstall()

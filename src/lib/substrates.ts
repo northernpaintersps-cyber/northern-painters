@@ -215,8 +215,31 @@ export const SUBSTRATES: Substrate[] = [
     typeOpts: [] },
 ]
 
+/**
+ * The list as shipped. SUBSTRATES itself is mutated when your own substrates
+ * are registered from Settings, so this is what it is rebuilt from — otherwise
+ * registering twice would append the customs twice.
+ */
+export const BUILTIN_SUBSTRATES: readonly Substrate[] = Object.freeze([...SUBSTRATES])
+
 export const SUB_BY_KEY: Record<string, Substrate> =
   Object.fromEntries(SUBSTRATES.map(s => [s.key, s]))
+
+/**
+ * Bumped whenever the catalogue changes, as a dependency for anything that
+ * memoises over it. Exported as `let`, which ES modules bind live, so an
+ * importer sees the new value.
+ */
+export let substrateVersion = 0
+
+/** Put SUBSTRATES and SUB_BY_KEY back in step after the list is rebuilt. */
+export function reindexSubstrates(list: Substrate[]): void {
+  SUBSTRATES.length = 0
+  SUBSTRATES.push(...list)
+  for (const k of Object.keys(SUB_BY_KEY)) delete SUB_BY_KEY[k]
+  for (const sub of SUBSTRATES) SUB_BY_KEY[sub.key] = sub
+  substrateVersion++
+}
 
 export const unitLabel = (u: SubUnit) => (u === 'sqm' ? 'm²' : u === 'lm' ? 'lin.m' : 'items')
 

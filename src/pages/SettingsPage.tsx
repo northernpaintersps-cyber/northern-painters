@@ -6,6 +6,8 @@ import { supabase } from '@/lib/supabase'
 import { importBackup } from '@/lib/importData'
 import type { ImportResult } from '@/lib/importData'
 import { geocode } from '@/lib/weather'
+import CustomSubstrates from '@/components/CustomSubstrates'
+import { registerCustomSubstrates, cleanCustoms, type CustomSubstrate } from '@/lib/customSubstrates'
 import { Upload, CheckCircle, AlertCircle, Loader2, ChevronDown, ChevronRight, Save, Plus, Trash2, Key, MapPin } from 'lucide-react'
 
 // ── Business settings hook ────────────────────────────────────
@@ -53,6 +55,8 @@ export interface BusinessSettings {
   rates: LabourRates
   paint_products: PaintProduct[]
   ai_api_key: string
+  /** Substrates you added yourself — see lib/customSubstrates. */
+  custom_substrates?: CustomSubstrate[]
   /** Town the calendar's forecast is for, and the point it resolved to. */
   weather_location?: string
   weather_lat?: number
@@ -109,6 +113,7 @@ const DEFAULT_SETTINGS: BusinessSettings = {
   paint_products: DEFAULT_PAINT_PRODUCTS,
   ai_api_key: '',
   weather_location: '',
+  custom_substrates: [],
 }
 
 export function useBusinessSettings() {
@@ -274,6 +279,10 @@ export default function SettingsPage() {
     setBizSaving(true)
     try {
       await saveSettings.mutateAsync(biz)
+      // Merge them into the live catalogue straight away: waiting for a reload
+      // would mean a substrate you just added is missing from the quote you
+      // added it for.
+      registerCustomSubstrates(biz.custom_substrates ?? [])
       setBizSaved(true)
       setTimeout(() => setBizSaved(false), 2500)
     } finally { setBizSaving(false) }
@@ -411,6 +420,26 @@ export default function SettingsPage() {
             {bizSaving ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />} Save
           </button>
         </div>
+      </section>
+
+      {/* ── Your own substrates ──────────────────────────────── */}
+      <section className="bg-white rounded-xl border border-gray-200 p-6 space-y-4">
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <div>
+            <h2 className="text-base font-semibold text-gray-900">Your substrates</h2>
+            <p className="text-xs text-gray-500 mt-0.5">
+              Anything the built-in list does not cover. These sit alongside the 62 that ship
+              with the app, in the same groups.
+            </p>
+          </div>
+          <button onClick={handleSaveBiz} disabled={bizSaving}
+            className="flex items-center gap-1.5 text-sm bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-semibold px-4 py-2 rounded-lg">
+            {bizSaving ? <Loader2 size={13} className="animate-spin" /> : bizSaved ? <CheckCircle size={13} /> : <Save size={13} />}
+            Save
+          </button>
+        </div>
+        <CustomSubstrates list={biz.custom_substrates ?? []}
+          onChange={next => setBiz(p => ({ ...p, custom_substrates: next }))} />
       </section>
 
       {/* ── Paint products ───────────────────────────────────── */}

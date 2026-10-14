@@ -2,7 +2,7 @@
 // using the key stored in business settings (np_settings key='business')
 
 import {
-  TAKEOFF_TOOL, SUBSTRATE_DOC, SUB_KEYS,
+  TAKEOFF_TOOL, substrateDoc, SUB_KEYS,
   type TakeoffRow, type FinishRow, type RowConfidence,
 } from './takeoffSchema'
 import { SUB_BY_KEY, type SubUnit } from './substrates'
@@ -534,7 +534,7 @@ BEFORE YOU ANSWER, CHECK
 List what you could not determine, and why, in scopeNotes. Do not pad the takeoff with guesses to look complete.`
 
 /** The system prompt with the generated substrate table spliced in. */
-const takeoffSystem = () => TAKEOFF_SYSTEM.replace('{SUBSTRATE_DOC}', SUBSTRATE_DOC)
+const takeoffSystem = () => TAKEOFF_SYSTEM.replace('{SUBSTRATE_DOC}', substrateDoc())
 
 
 async function fileToB64(file: File): Promise<string> {
@@ -770,7 +770,7 @@ export async function photosToScope(
   let usage: CallUsage | undefined
   const call = (model: string) =>
     callClaude(apiKey, [{ role: 'user', content }],
-      PHOTO_SCOPE_SYSTEM.replace('{SUBSTRATE_DOC}', SUBSTRATE_DOC), {
+      PHOTO_SCOPE_SYSTEM.replace('{SUBSTRATE_DOC}', substrateDoc()), {
         model,
         maxTokens: 16000,
         thinking: { budgetTokens: 4000 },
