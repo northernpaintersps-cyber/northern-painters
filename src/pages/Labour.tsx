@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase, selectAll } from '@/lib/supabase'
 import { useAuth } from '@/lib/auth'
 import { hoursBetween } from '@/lib/derive'
+import { jobPhases, findPhaseByName } from '@/lib/phases'
 import { Modal } from '@/components/ui/Modal'
 import JobPicker from '@/components/JobPicker'
 import { Input, Select } from '@/components/ui/Field'
@@ -44,16 +45,22 @@ function useUpsert() {
       const payload: Row = { ...row, user_id: user!.id, updated_at: new Date().toISOString() }
       const { error } = await (supabase.from('np_labour') as any).upsert(payload)
       if (!error) return
-      // period_start / period_end are new. Until they are added in Supabase the
-      // rest of the entry must still save, so drop them and retry once.
-      const missing = error.message?.match(/Could not find the '(\w+)' column/)?.[1]
-      if (missing && (missing === 'period_start' || missing === 'period_end')) {
-        delete payload.period_start; delete payload.period_end
+      // Some columns are newer than some databases: period_start/period_end,
+      // and phase_name/phase_id from np-labour-phase.sql. Until they are added
+      // the rest of the entry must still save, so drop whichever is missing
+      // and retry. Loops, because there is more than one of them now and the
+      // error only ever names the first.
+      const OPTIONAL = ['period_start', 'period_end', 'phase_name', 'phase_id']
+      let err = error
+      for (let i = 0; i < OPTIONAL.length; i++) {
+        const missing = err.message?.match(/Could not find the '(\w+)' column/)?.[1]
+        if (!missing || !OPTIONAL.includes(missing)) break
+        delete payload[missing]
         const retry = await (supabase.from('np_labour') as any).upsert(payload)
-        if (retry.error) throw retry.error
-        return
+        if (!retry.error) return
+        err = retry.error
       }
-      throw error
+      throw err
     },
     onSuccess: () => invalidateTable(qc, 'np_labour'),
   })
@@ -114,6 +121,11 @@ export default function Labour() {
       return asc ? (da < db ? -1 : da > db ? 1 : 0) : (da > db ? -1 : da < db ? 1 : 0)
     })
   }, [rows, q, jobId, billing, asc])
+
+  /** The quoted phases of the job on the form, for the picker below. */
+  const formPhases = useMemo(
+    () => jobPhases(jobs.find(j => j.id === form.job_id)),
+    [jobs, form.job_id])
 
   const totCost = labs.reduce((a, b) => a + labCost(b), 0)
   const totBill = labs.reduce((a, b) => a + labBillable(b), 0)
@@ -176,6 +188,8 @@ export default function Labour() {
       clock_out: mode === 'clock' ? form.clock_out : null,
       period_start: form.period_start || null,
       period_end: form.period_end || form.period_start || null,
+      phase_name: (form.phase_name || '').trim() || null,
+      phase_id: form.phase_id || null,
       created_at: form.created_at || new Date().toISOString(),
     })
     setModal(false)
@@ -242,7 +256,8 @@ export default function Labour() {
             <thead>
               <tr>
                 {[
-                  { h: 'Date' }, { h: 'Job / Client' }, { h: 'Sub / Worker' }, { h: 'Hrs' },
+                  { h: 'Date' }, { h: 'Job / Client' }, { h: 'Sub / Worker' }, { h: 'Phase' },
+                  { h: 'Hrs' },
                   { h: 'Cost/hr', c: '#64748b' }, { h: 'Cost', c: '#64748b' },
                   { h: 'Charge/hr', c: '#2563eb' }, { h: 'Billable', c: '#2563eb' },
                   { h: 'Billing' }, { h: 'W.Pay' }, { h: 'Paid?' }, { h: 'Notes' }, { h: '' },
@@ -279,6 +294,23 @@ export default function Labour() {
                     <td className="px-2.5 py-[7px]">
                       <SyncedInput value={l.sub ?? ''} className={II} style={{ width: 90 }}
                         onBlur={e => { if (e.target.value !== (l.sub ?? '')) upsert.mutate({ ...l, sub: e.target.value }) }} />
+                    </td>
+                    <td className="px-2.5 py-[7px]" style={{ minWidth: 120 }}>
+                      <SyncedInput list={`ph-${l.id}`} value={l.phase_name ?? ''} placeholder="—"
+                        className={II} style={{ maxWidth: 150 }}
+                        onBlur={e => {
+                          const name = e.target.value.trim()
+                          if (name === (l.phase_name ?? '')) return
+                          const hit = findPhaseByName(jobPhases(job), name)
+                          upsert.mutate({ ...l, phase_name: name || null, phase_id: hit?.id ?? null })
+                        }} />
+                      <datalist id={`ph-${l.id}`}>
+                        {jobPhases(job).map(ph => <option key={ph.id} value={ph.name} />)}
+                      </datalist>
+                      {l.labour_desc && (
+                        <div className="text-[10px] text-[#666] truncate" style={{ maxWidth: 150 }}
+                          title={l.labour_desc}>{l.labour_desc}</div>
+                      )}
                     </td>
                     <td className="px-2.5 py-[7px]">
                       <SyncedInput type="number" step="0.5" value={l.hours ?? 0} className={II} style={{ width: 44 }}
@@ -339,13 +371,13 @@ export default function Labour() {
                 )
               })}
               {labs.length === 0 && (
-                <tr><td colSpan={13} className="text-center text-[#666] py-6">No labour entries match your filters.</td></tr>
+                <tr><td colSpan={14} className="text-center text-[#666] py-6">No labour entries match your filters.</td></tr>
               )}
             </tbody>
             {labs.length > 0 && (
               <tfoot>
                 <tr className="bg-[#fafaf8] font-semibold">
-                  <td colSpan={5} className="px-2.5 py-2 text-right">Totals</td>
+                  <td colSpan={6} className="px-2.5 py-2 text-right">Totals</td>
                   <td className="px-2.5 py-2" style={{ color: '#64748b' }}>{fmtCurrency(totCost)}</td>
                   <td className="px-2.5 py-2" />
                   <td className="px-2.5 py-2" style={{ color: '#2563eb' }}>{fmtCurrency(totBill)}</td>
@@ -416,6 +448,33 @@ export default function Labour() {
           </div>
           <Select label="Worker payment type" value={form.worker_payment_type || 'ABN'}
             onChange={e => setForm(p => ({ ...p, worker_payment_type: e.target.value }))} options={['ABN', 'Cash']} />
+
+          {/* The phase of the job these hours went to. Optional, and an
+              untagged entry still counts in full toward what the job cost —
+              but it is the one field that makes per-task rates possible, and
+              it is only answerable now, while you remember. */}
+          <div className="col-span-2">
+            <label className="block text-xs font-medium text-gray-500 mb-1">
+              Phase <span className="font-normal text-[#999]">
+                — optional, but it is what turns these hours into a real rate
+              </span>
+            </label>
+            <input list="job-phases" value={form.phase_name || ''}
+              placeholder={formPhases.length
+                ? 'Pick a phase from the quote, or type one'
+                : 'This job has no quoted phases — type what the hours were for'}
+              onChange={e => {
+                const name = e.target.value
+                const hit = findPhaseByName(formPhases, name)
+                // The id is stored alongside for an exact match while it
+                // lasts; the name is what survives a reload of the steps.
+                setForm(p => ({ ...p, phase_name: name, phase_id: hit?.id ?? null }))
+              }}
+              className="w-full bg-white border border-black/20 rounded-lg px-3 py-2 text-[13px] focus:outline-none focus:ring-1 focus:ring-blue-500" />
+            <datalist id="job-phases">
+              {formPhases.map(ph => <option key={ph.id} value={ph.name} />)}
+            </datalist>
+          </div>
 
           {mode === 'clock' ? (
             <>

@@ -20,6 +20,7 @@ import {
   deriveScheduledDates, getJobScheduledDates, findCrew, crewLabel,
 } from '@/lib/utils'
 import { workingDatesFrom } from '@/lib/derive'
+import { jobPhases, findPhaseByName } from '@/lib/phases'
 import { JOB_STATUSES, QUOTE_STATUSES } from '@/components/JobModal'
 
 type Row = Record<string, any>
@@ -125,6 +126,8 @@ export interface LabourRequest {
   charge_rate?: number
   description?: string
   notes?: string
+  /** The phase of the job, matched against its quoted steps by name. */
+  phase?: string
 }
 
 /**
@@ -146,6 +149,7 @@ export function buildLabour(ctx: WriteContext, r: LabourRequest): Change {
   if (r.job_id && !job) c.errors.push(`No job ${r.job_id}.`)
   if (error) c.errors.push(error)
 
+  const phase = r.phase ? findPhaseByName(jobPhases(job), r.phase) : null
   const rate = num(r.rate ?? member?.rate ?? ctx.biz?.rates?.standard ?? 65)
   const chargeRate = num(r.charge_rate ?? member?.charge_rate ?? rate)
   const cost = hours * rate
@@ -165,6 +169,11 @@ export function buildLabour(ctx: WriteContext, r: LabourRequest): Change {
     billing_type: jobBillingType(job),
     labour_desc: r.description ?? null,
     notes: r.notes ?? null,
+    // Matched by name against the job's quoted phases: the model will say
+    // "second coat", not an id. An unmatched name is still stored, because a
+    // phase nobody quoted is better recorded than dropped.
+    phase_name: phase?.name ?? ((r.phase ?? '').trim() || null),
+    phase_id: phase?.id ?? null,
     // No period_start/period_end: those columns do not exist yet, and for a
     // single day's work they would only repeat `date`. Labour.tsx writes them
     // and carries a retry that drops them again.
@@ -192,6 +201,7 @@ export function buildLabour(ctx: WriteContext, r: LabourRequest): Change {
     { label: 'Cost', to: money(cost) },
     { label: 'Charge rate', to: `${money(chargeRate)}/hr` },
     { label: 'Billable', to: money(billable) },
+    ...(c.row.phase_name ? [{ label: 'Phase', to: c.row.phase_name }] : []),
   ]
   return c
 }

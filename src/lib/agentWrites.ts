@@ -103,6 +103,12 @@ export function buildWriteTools(ctx: WriteToolContext): AgentTool[] {
           rate: { type: 'number', description: 'Only if the owner stated a different cost rate.' },
           charge_rate: { type: 'number', description: 'Only if the owner stated one.' },
           description: { type: 'string', description: 'What was done.' },
+          phase: {
+            type: 'string',
+            description: 'The phase of the job, if they said one — "second coat", "prep". '
+              + 'Matched against the job\'s quoted phases. Worth asking for when it is '
+              + 'not obvious, because it is what turns the hours into a usable rate.',
+          },
         },
       },
       run: one(buildLabour),

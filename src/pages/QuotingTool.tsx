@@ -54,9 +54,21 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   )
 }
 
-/** np = painters on this step. V16 defaults it to the crew size but lets each
- *  step differ, so a two-painter job can still have one painter on touch-ups. */
-type Process = { id: string; name: string; hours: number; np: number }
+/**
+ * np = painters on this step. V16 defaults it to the crew size but lets each
+ * step differ, so a two-painter job can still have one painter on touch-ups.
+ *
+ * `covers` is the load-bearing one for rates. The AI returns which substrates
+ * each phase works on and this used to throw it away. Kept, it means an hour
+ * tagged with a PHASE becomes an hour attributable to SURFACES, without anyone
+ * ever picking a surface — which is the difference between blended job rates
+ * for ever and real per-task rates once a few jobs have been logged.
+ */
+type Process = {
+  id: string; name: string; hours: number; np: number
+  covers?: string[]
+  service?: string
+}
 type Equip = { id: string; name: string; cost: number }
 type ExtraMat = { id: string; name: string; cost: number }
 type Painter = { id: string; name: string; role: string; rate: number }
@@ -828,6 +840,10 @@ export default function QuotingTool() {
         name: st.name,
         hours: 0,
         np: painters.length,
+        // Carried through, not dropped: this is what makes phase-tagged hours
+        // resolve to substrates later.
+        covers: st.covers,
+        service: st.service,
       })))
       setProcNotes(notes)
     } catch (e: any) {
