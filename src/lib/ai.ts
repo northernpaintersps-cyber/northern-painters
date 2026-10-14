@@ -1267,3 +1267,111 @@ Keep it concise — around 100–150 words. No bullet points, use short paragrap
 
   return text.trim()
 }
+
+
+// ── Sorting a spoken photo note into prep / access / painting ─
+
+const NOTE_TOOL = {
+  name: 'sort_notes',
+  description: 'The spoken note for each photo, split into preparation, access and painting.',
+  input_schema: {
+    type: 'object' as const,
+    additionalProperties: false,
+    required: ['photos'],
+    properties: {
+      photos: {
+        type: 'array',
+        description: 'One entry per photo given, in the same order, using the same id.',
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['id', 'prep', 'access', 'painting'],
+          properties: {
+            id: { type: 'string', description: 'The photo id exactly as given.' },
+            prep: {
+              type: 'string',
+              description: 'Preparation and repairs: washing, sanding, filling, gapping, stripping, '
+                + 'rust treatment, priming of bare or patched areas, and the condition that calls for it. '
+                + 'Empty string if the note says nothing about prep.',
+            },
+            access: {
+              type: 'string',
+              description: 'Getting to the surface: ladders, trestles, scaffold, planks, roof anchors, '
+                + 'EWP or scissor lift, height, ground conditions, pets, parking, keys. '
+                + 'Empty string if the note says nothing about access.',
+            },
+            painting: {
+              type: 'string',
+              description: 'The coating itself: product, finish or sheen, colour, number of coats, '
+                + 'brush/roll/spray, masking. Empty string if the note says nothing about painting.',
+            },
+          },
+        },
+      },
+    },
+  },
+}
+
+const NOTE_SYSTEM = `You sort an Australian painter's spoken site-visit notes into three headings, one photo at a time.
+
+The notes are dictated on site, in front of the surface, so they are fragments and not sentences: "south wall, paint's shot, needs a full sand and spot prime, trestles'll do, two coats low sheen".
+
+THE THREE HEADINGS
+- prep — the condition and what must be done before any finish coat goes on.
+- access — how the painter physically reaches the surface, and anything about the site that affects getting to it.
+- painting — the coating: product, sheen, colour, coats, application method.
+
+RULES
+Use only what was said. You are sorting words, not estimating — never add a product, a coat count, a scaffold or a prep step the note does not mention, and never infer them from the trade. If the note says nothing about a heading, return an empty string for it. An empty heading is the correct answer and is more useful than a guess, because the estimator reads these as fact.
+
+Keep the painter's own words and units. Tidy only what dictation got wrong: obvious mis-hearings, missing punctuation, a dropped word. Do not translate trade shorthand into formal English — "sugar soap", "gapping", "cutting in", "shot", "chalky" and "blown" all stay.
+
+A fragment that belongs to two headings goes in the one it is mostly about, not both. Priming is prep. Masking is painting. A note about a surface being too high to reach is access, even if it also says what to paint it with.
+
+Each photo is independent. Do not carry a product or an access method from one photo to the next, however obvious it seems — the painter moved to a different part of the building.
+
+Return one entry per photo, with the id exactly as given, using the sort_notes tool.`
+
+export interface SortedNote { id: string; prep: string; access: string; painting: string }
+
+/**
+ * Split each photo's dictated note into the three headings. The transcript is
+ * never replaced by this — it is kept verbatim alongside, so a bad split costs
+ * nothing and can be re-run.
+ */
+export async function sortPhotoNotes(
+  apiKey: string,
+  photos: Array<{ id: string; caption?: string; note: string }>,
+): Promise<SortedNote[]> {
+  const live = photos.filter(p => p.note.trim())
+  if (!live.length) return []
+
+  const user = live.map(p => [
+    `PHOTO ${p.id}`,
+    p.caption?.trim() ? `Caption: ${p.caption.trim()}` : null,
+    `Spoken note: ${p.note.trim()}`,
+  ].filter(Boolean).join('\n')).join('\n\n')
+
+  const raw = await callClaude(
+    apiKey,
+    [{ role: 'user', content: `${user}\n\nSort each one with the sort_notes tool.` }],
+    NOTE_SYSTEM,
+    { model: 'claude-sonnet-5', maxTokens: 4000, tool: NOTE_TOOL },
+  )
+
+  let parsed: any
+  try { parsed = JSON.parse(raw) } catch {
+    throw new Error('AI returned unexpected format while sorting the notes.')
+  }
+
+  const byId = new Map(live.map(p => [p.id, true]))
+  return (Array.isArray(parsed.photos) ? parsed.photos : [])
+    // An id that was not sent back would write a note onto the wrong photo.
+    .filter((r: any) => byId.has(String(r?.id ?? '')))
+    .map((r: any): SortedNote => ({
+      id: String(r.id),
+      prep: String(r.prep ?? '').trim(),
+      access: String(r.access ?? '').trim(),
+      painting: String(r.painting ?? '').trim(),
+    }))
+}

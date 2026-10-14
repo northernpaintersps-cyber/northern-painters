@@ -11,6 +11,8 @@ import {
 import { shrinkToDataUrl } from '@/lib/image'
 import { uploadPhoto, signPhotos } from '@/lib/photoStore'
 import { useDictation, appendPhrase } from '@/lib/useDictation'
+import { sortPhotoNotes } from '@/lib/ai'
+import { useBusinessSettings } from '@/pages/SettingsPage'
 
 type Row = Record<string, any>
 
@@ -20,7 +22,18 @@ export type SVArea = { id: string; name: string; condition: string; prep: string
  * `data` is the inline data URL older visits still carry, and the local
  * preview shown while an upload is in flight — the renderer takes either.
  */
-export type SVPhoto = { id: string; data?: string; path?: string; tag: string; label: string }
+export type SVPhoto = {
+  id: string; data?: string; path?: string; tag: string
+  /** The short typed label. */
+  label: string
+  /** The dictated note, kept verbatim. Never overwritten by the sort. */
+  voice?: string
+  /** The note sorted under the three headings. All optional: older visits
+   *  have none, and a note that says nothing about a heading leaves it empty. */
+  prep?: string
+  access?: string
+  painting?: string
+}
 export type SVVoice = { id: string; text: string }
 
 export type SVState = {
@@ -183,6 +196,10 @@ export default function SiteVisitEditor({ initial, jobs, visitId, userId, isNew,
   aiBusy?: boolean
 }) {
   const [sv, setSv] = useState<SVState>(initial)
+  const { data: biz } = useBusinessSettings()
+  const apiKey = biz?.ai_api_key?.trim() ?? ''
+  const [sorting, setSorting] = useState('')
+  const [sortErr, setSortErr] = useState('')
   const dict = useDictation()
   // Which field the microphone is feeding: the visit's voice notes, or one
   // photo's caption. Only one can be dictating at a time.
@@ -270,8 +287,12 @@ export default function SiteVisitEditor({ initial, jobs, visitId, userId, isNew,
     })
   }
 
-  /** Dictate into one photo's caption. */
-  function recordCaption(photoId: string) {
+  /**
+   * Dictate this photo's note. It goes to its own field rather than the
+   * caption: the caption is the two words the grid shows, and a paragraph
+   * spoken over the top of it would bury them.
+   */
+  function recordVoice(photoId: string) {
     if (!dict.supported) {
       alert('Voice input is not supported in this browser. Chrome or Edge on Android, or Safari on iOS.')
       return
@@ -281,9 +302,42 @@ export default function SiteVisitEditor({ initial, jobs, visitId, userId, isNew,
     dict.start(phrase => {
       setSv(s => ({
         ...s,
-        photos: s.photos.map(x => x.id === photoId ? { ...x, label: appendPhrase(x.label, phrase) } : x),
+        photos: s.photos.map(x => x.id === photoId ? { ...x, voice: appendPhrase(x.voice ?? '', phrase) } : x),
       }))
     })
+  }
+
+  const setPhoto = (id: string, patch: Partial<SVPhoto>) =>
+    setSv(s => ({ ...s, photos: s.photos.map(x => x.id === id ? { ...x, ...patch } : x) }))
+
+  /**
+   * Sort the spoken notes under prep / access / painting. The transcript is
+   * left exactly as dictated, so a poor split costs nothing and the button can
+   * be pressed again. `only` sorts one photo; without it, every photo that has
+   * a note is sent in one request.
+   */
+  async function sortNotes(only?: string) {
+    if (!apiKey) { setSortErr('Add your Anthropic API key in Settings to sort the notes.'); return }
+    const pool = (only ? sv.photos.filter(p => p.id === only) : sv.photos)
+      .filter(p => (p.voice ?? '').trim())
+    if (!pool.length) { setSortErr('No spoken notes to sort yet.'); return }
+    setSortErr(''); setSorting(only || 'all')
+    try {
+      const out = await sortPhotoNotes(apiKey, pool.map(p => ({
+        id: p.id, caption: p.label, note: p.voice ?? '',
+      })))
+      if (!out.length) { setSortErr('Nothing came back. Try again.'); return }
+      const by = new Map(out.map(r => [r.id, r]))
+      setSv(s => ({
+        ...s,
+        photos: s.photos.map(x => {
+          const r = by.get(x.id)
+          return r ? { ...x, prep: r.prep, access: r.access, painting: r.painting } : x
+        }),
+      }))
+    } catch (e: any) {
+      setSortErr(e?.message || 'Could not sort the notes.')
+    } finally { setSorting('') }
   }
 
   return (
@@ -461,15 +515,27 @@ export default function SiteVisitEditor({ initial, jobs, visitId, userId, isNew,
               <button onClick={() => upRef.current?.click()} className={BTN}><Upload size={13} /> Upload</button>
               <input ref={upRef} type="file" accept="image/*" multiple className="hidden"
                 onChange={e => addPhotos(e, 'reference')} />
+              {/* One request for the lot: ten photos dictated on a walkthrough
+                  should not be ten taps and ten calls. */}
+              {sv.photos.some(p => (p.voice ?? '').trim()) && (
+                <button onClick={() => sortNotes()} disabled={!!sorting} className={BTN}>
+                  <Sparkles size={13} /> {sorting === 'all' ? 'Sorting…' : 'Sort all notes'}
+                </button>
+              )}
             </div>
           </div>
+          {sortErr && (
+            <div className="mb-2 text-[11px] text-[#991b1b] bg-[#fee2e2] border border-[#fca5a5] rounded px-2 py-1.5">
+              {sortErr}
+            </div>
+          )}
           {sv.photos.length === 0 ? (
             <div className="text-center py-6 text-[#666] text-[13px]">
               <Camera size={32} className="mx-auto mb-2 opacity-30" />
               No photos yet — tap "Take photo" to use your camera
             </div>
           ) : (
-            <div className="grid gap-2.5" style={{ gridTemplateColumns: 'repeat(auto-fill,minmax(160px,1fr))' }}>
+            <div className="grid gap-2.5" style={{ gridTemplateColumns: 'repeat(auto-fill,minmax(230px,1fr))' }}>
               {sv.photos.map(p => (
                 <div key={p.id} className="border border-black/[0.12] rounded-[10px] overflow-hidden relative">
                   <img src={srcOf(p)} alt={p.label} className="w-full h-[130px] object-cover block" />
@@ -483,21 +549,63 @@ export default function SiteVisitEditor({ initial, jobs, visitId, userId, isNew,
                       style={{ background: SV_TAG_BG[p.tag] ?? SV_TAG_BG.reference, color: SV_TAG_FG[p.tag] ?? SV_TAG_FG.reference }}>
                       {(p.tag || 'reference').toUpperCase()}
                     </div>
-                    <div className="flex items-center gap-1 border-t border-black/[0.12] mt-1">
-                      <input value={p.label} placeholder="Caption or say it…"
-                        onChange={e => setSv(s => ({ ...s, photos: s.photos.map(x => x.id === p.id ? { ...x, label: e.target.value } : x) }))}
-                        className="flex-1 text-[11px] border-0 py-1 bg-transparent outline-none" />
-                      {dict.supported && (
-                        <button onClick={() => recordCaption(p.id)}
-                          title={dict.listening && dictTarget === p.id ? 'Stop' : 'Describe this photo'}
-                          className={dict.listening && dictTarget === p.id ? 'text-[#dc2626]' : 'text-[#2563eb]'}>
-                          <Mic size={12} />
+                    <div className="border-t border-black/[0.12] mt-1 pt-1">
+                      <input value={p.label} placeholder="Caption — e.g. south wall"
+                        onChange={e => setPhoto(p.id, { label: e.target.value })}
+                        className="w-full text-[11px] border-0 py-0.5 bg-transparent outline-none font-medium" />
+                    </div>
+
+                    {/* The spoken note, kept exactly as dictated. */}
+                    <div className="mt-1">
+                      <div className="flex items-center justify-between gap-1">
+                        <span className="text-[9px] font-bold uppercase tracking-wide text-[#666]">Spoken note</span>
+                        {dict.supported && (
+                          <button onClick={() => recordVoice(p.id)}
+                            title={dict.listening && dictTarget === p.id ? 'Stop' : 'Record a note for this photo'}
+                            className={`flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded ${
+                              dict.listening && dictTarget === p.id
+                                ? 'bg-[#fee2e2] text-[#dc2626]'
+                                : 'bg-[#dbeafe] text-[#2563eb]'}`}>
+                            <Mic size={11} />
+                            {dict.listening && dictTarget === p.id ? 'Stop' : 'Record'}
+                          </button>
+                        )}
+                      </div>
+                      <textarea value={p.voice ?? ''} rows={2}
+                        placeholder="Prep, access and painting — say it all in one go"
+                        onChange={e => setPhoto(p.id, { voice: e.target.value })}
+                        className="w-full text-[11px] mt-0.5 px-1.5 py-1 border border-black/[0.12] rounded bg-white outline-none resize-y" />
+                      {dict.listening && dictTarget === p.id && (
+                        <div className="text-[10px] text-[#dc2626]">
+                          ● Listening{dict.interim ? ` — ${dict.interim}` : '…'}
+                        </div>
+                      )}
+                      {(p.voice ?? '').trim() && (
+                        <button onClick={() => sortNotes(p.id)} disabled={!!sorting}
+                          className="mt-1 w-full text-[10px] font-semibold py-1 rounded bg-[#f5f4f0] border border-black/[0.12] hover:bg-white disabled:opacity-50">
+                          {sorting === p.id ? 'Sorting…' : 'Sort into prep / access / painting'}
                         </button>
                       )}
                     </div>
-                    {dict.listening && dictTarget === p.id && (
-                      <div className="text-[10px] text-[#dc2626]">
-                        ● Listening{dict.interim ? ` — ${dict.interim}` : '…'}
+
+                    {/* The three headings. Shown once there is something in
+                        them, or once a note exists to sort — an empty heading
+                        is a real answer, so it stays visible and editable. */}
+                    {((p.voice ?? '').trim() || p.prep || p.access || p.painting) && (
+                      <div className="mt-1.5 flex flex-col gap-1">
+                        {([
+                          ['Prep', 'prep', '#92400e', '#fef3c7'],
+                          ['Access', 'access', '#1e40af', '#dbeafe'],
+                          ['Painting', 'painting', '#166534', '#dcfce7'],
+                        ] as const).map(([label, key, fg, bg]) => (
+                          <div key={key}>
+                            <span className="text-[9px] font-bold uppercase tracking-wide px-1 rounded"
+                              style={{ color: fg, background: bg }}>{label}</span>
+                            <textarea value={(p as any)[key] ?? ''} rows={2} placeholder="—"
+                              onChange={e => setPhoto(p.id, { [key]: e.target.value } as Partial<SVPhoto>)}
+                              className="w-full text-[11px] mt-0.5 px-1.5 py-1 border border-black/[0.12] rounded bg-white outline-none resize-y" />
+                          </div>
+                        ))}
                       </div>
                     )}
                   </div>

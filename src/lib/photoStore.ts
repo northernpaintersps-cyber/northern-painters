@@ -27,6 +27,11 @@ export interface StoredPhoto {
   data?: string
   tag?: string
   label?: string
+  /** The dictated note and its sorted headings — see SVPhoto. */
+  voice?: string
+  prep?: string
+  access?: string
+  painting?: string
 }
 
 export const photoPath = (userId: string, visitId: string, photoId: string) =>
@@ -116,4 +121,36 @@ export async function photoDataUrls(photos: StoredPhoto[]): Promise<Record<strin
     } catch { /* skipped */ }
   }))
   return out
+}
+
+
+// ── A photo's note, as words ─────────────────────────────────
+// Lives here with StoredPhoto so the site visit, the quote handoff and the AI
+// scope pass all read a photo's note the same way.
+
+type NotedPhoto = Pick<StoredPhoto, 'label' | 'voice' | 'prep' | 'access' | 'painting'>
+
+const HEADINGS: Array<[keyof NotedPhoto, string]> = [
+  ['prep', 'Prep'], ['access', 'Access'], ['painting', 'Painting'],
+]
+
+/**
+ * The sorted headings where they exist, else the raw transcript. The sort is
+ * the better text, but an unsorted note must never be silently dropped.
+ */
+export function photoNoteText(p: NotedPhoto): string {
+  const sorted = HEADINGS
+    .map(([k, label]) => [label, (p[k] ?? '').trim()] as const)
+    .filter(([, v]) => v)
+    .map(([label, v]) => `${label}: ${v}`)
+  if (sorted.length) return sorted.join('. ')
+  return (p.voice ?? '').trim() || (p.label ?? '').trim()
+}
+
+/** The same, prefixed with the caption, for a notes field listing every photo. */
+export function photoNoteLines(p: NotedPhoto): string[] {
+  const body = photoNoteText(p)
+  if (!body) return []
+  const caption = (p.label ?? '').trim()
+  return [caption && body !== caption ? `${caption} — ${body}` : body]
 }

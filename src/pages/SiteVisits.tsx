@@ -10,7 +10,7 @@ import {
   Plus, Loader2, Trash2, Edit2, Calculator, ArrowUpDown, X, Camera, MapPin,
 } from 'lucide-react'
 import { takeHandoff } from '@/lib/handoff'
-import { photoDataUrls } from '@/lib/photoStore'
+import { photoDataUrls, photoNoteText, photoNoteLines } from '@/lib/photoStore'
 import { photosToScope } from '@/lib/ai'
 import { useBusinessSettings } from '@/pages/SettingsPage'
 import { SUB_BY_KEY, newSubLine } from '@/lib/substrates'
@@ -139,7 +139,7 @@ export default function SiteVisits() {
       const urls = await photoDataUrls(state.photos)
       const photos = state.photos
         .filter(ph => urls[ph.id])
-        .map(ph => ({ dataUrl: urls[ph.id], note: ph.label, tag: ph.tag }))
+        .map(ph => ({ dataUrl: urls[ph.id], note: photoNoteText(ph), tag: ph.tag }))
       if (!photos.length) throw new Error('None of the photos could be loaded.')
 
       const notes = [state.notes, ...state.voiceNotes.map(v => v.text)].filter(Boolean).join('\n')
@@ -219,10 +219,20 @@ export default function SiteVisits() {
           // Width travels too. Without it the quoting tool seeded every room
           // at w = 0, so a prefilled room contributed no ceiling at all.
           length: a.l, width: a.w, height: a.h,
-          prep_level: a.condition === 'Poor' ? 'heavy' : a.condition === 'Fair' ? 'moderate' : 'light',
+          // CONS_PREP's own values: 'moderate' was not one of them, so a Fair
+          // room arrived at the quote with a level nothing recognised.
+          prep_level: a.condition === 'Poor' ? 'heavy'
+            : a.condition === 'Fair' ? 'medium'
+            : a.condition === 'New' ? 'new_build' : 'light',
           notes: [a.prep, a.notes].filter(Boolean).join(' · '),
         })),
-        siteNotes: [d.notes, ...d.voiceNotes.map(v => v.text)].filter(Boolean).join('\n'),
+        // Per-photo notes travel too. They were being left behind, so a
+        // walkthrough dictated photo by photo reached the quote as nothing.
+        siteNotes: [
+          d.notes,
+          ...d.voiceNotes.map(v => v.text),
+          ...d.photos.flatMap(photoNoteLines),
+        ].filter(Boolean).join('\n'),
         // The id, not the images. Photos in sessionStorage would blow the
         // quota, and the setItem below is wrapped in a bare catch — an
         // overflow would silently lose the whole prefill, client and all.
