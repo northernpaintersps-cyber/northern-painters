@@ -57,6 +57,8 @@ export interface JobRate {
 
   /** Hours the production rates predict for these quantities. */
   bookHours: number
+  /** Whether the quantities above are what was painted, or only what was quoted. */
+  takeoffKind: TakeoffKind
   /**
    * Actual hours over book hours. This is the useful number: it says what
    * your crew really does against the standard rates, and it applies to
@@ -88,6 +90,42 @@ export function median(xs: number[]): number | null {
   if (!v.length) return null
   const mid = Math.floor(v.length / 2)
   return v.length % 2 ? v[mid] : (v[mid - 1] + v[mid]) / 2
+}
+
+/**
+ * The two takeoffs a job can carry.
+ *
+ * `extra.substrates` is what was QUOTED, written once when the quote became
+ * the job. `extra.actual_substrates` is what was PAINTED, entered afterwards.
+ * They used to share the one slot, so entering actuals destroyed the quote's
+ * figures — and with them the only comparison a real rate needs.
+ */
+export type TakeoffKind = 'quoted' | 'actual'
+
+const readTakeoff = (raw: unknown): Record<string, number> => {
+  if (!raw || typeof raw !== 'object') return {}
+  try {
+    const totals = substrateTotals(raw as any)
+    return Object.fromEntries(
+      Object.entries(totals).filter(([, q]) => Number(q) > 0).map(([k, q]) => [k, Number(q)]))
+  } catch { return {} }
+}
+
+export const quotedQuantities = (job: Row): Record<string, number> =>
+  readTakeoff(job?.extra?.substrates)
+
+export const actualQuantities = (job: Row): Record<string, number> =>
+  readTakeoff(job?.extra?.actual_substrates)
+
+/**
+ * What to measure the job against: what was painted if it was recorded, else
+ * what was quoted. The caller is told which, because a rate built on a quote
+ * is a different claim from one built on the finished job.
+ */
+export function takeoffFor(job: Row): { quantities: Record<string, number>; kind: TakeoffKind } {
+  const actual = actualQuantities(job)
+  if (Object.keys(actual).length) return { quantities: actual, kind: 'actual' }
+  return { quantities: quotedQuantities(job), kind: 'quoted' }
 }
 
 /** The takeoff stored on a job, in whatever shape it was written. */
@@ -131,7 +169,12 @@ export function buildJobRates(input: {
   return jobs
     .filter(j => j.status === 'Finished')
     .map<JobRate>(j => {
-      const quantities = quantitiesOf(j)
+      // Area rates measure the finished job, so they use what was painted
+      // where that was recorded. Book hours measure the ESTIMATE, so they must
+      // come from what was quoted — using actuals there would compare the
+      // crew against a figure written after they had finished.
+      const { quantities, kind: takeoffKind } = takeoffFor(j)
+      const quoted = quotedQuantities(j)
       const labs = labByJob.get(j.id) ?? []
       const mats = matByJob.get(j.id) ?? []
       const vars = (varByJob.get(j.id) ?? []).filter(v => v.var_status === 'Approved')
@@ -144,18 +187,21 @@ export function buildJobRates(input: {
       const revenueExGST = (Number(j.agreed_ex_gst) || Number(j.quote_ex_gst) || 0)
         + sum(vars.map(v => Number(v.amount_ex_gst) || 0))
 
-      let sqm = 0, lm = 0, counts = 0, bookHours = 0, sqmBookHours = 0
+      let sqm = 0, lm = 0, counts = 0, sqmBookHours = 0
       for (const [key, qty] of Object.entries(quantities)) {
         const sub = SUB_BY_KEY[key]
         if (!sub) continue
-        const bh = qty * (PROD_RATES[key] ?? 0)
-        bookHours += bh
-        if (sub.unit === 'sqm') { sqm += qty; sqmBookHours += bh }
+        if (sub.unit === 'sqm') { sqm += qty; sqmBookHours += qty * (PROD_RATES[key] ?? 0) }
         else if (sub.unit === 'lm') lm += qty
         else counts += qty
       }
+      // From the quoted takeoff, always — see the note above.
+      const bookHours = Object.entries(quoted).reduce(
+        (t, [key, qty]) => t + (SUB_BY_KEY[key] ? qty * (PROD_RATES[key] ?? 0) : 0), 0)
+      const areaBookHours = Object.entries(quantities).reduce(
+        (t, [key, qty]) => t + (SUB_BY_KEY[key] ? qty * (PROD_RATES[key] ?? 0) : 0), 0)
 
-      const sqmShare = bookHours > 0 ? sqmBookHours / bookHours : 0
+      const sqmShare = areaBookHours > 0 ? sqmBookHours / areaBookHours : 0
       const totalCost = labourCost + materialCost
       const calibration = bookHours > 0 && hours > 0 ? hours / bookHours : null
 
@@ -188,6 +234,7 @@ export function buildJobRates(input: {
         sqm: r1(sqm), lm: r1(lm), counts: r1(counts),
         sqmShare: Math.round(sqmShare * 100) / 100,
         bookHours: r1(bookHours),
+        takeoffKind,
         calibration: calibration != null ? Math.round(calibration * 100) / 100 : null,
         costPerSqm: usableArea && totalCost > 0 ? r1(totalCost / sqm) : null,
         hoursPerSqm: usableArea && hours > 0 ? Math.round((hours / sqm) * 1000) / 1000 : null,

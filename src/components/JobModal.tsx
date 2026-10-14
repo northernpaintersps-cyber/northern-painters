@@ -239,9 +239,14 @@ export function emptyForm(): Job {
  * the Rates page divides costs by. A job typed in by hand or imported has
  * none, so it can never produce a rate — this is where those get filled in.
  */
-function QuantitiesPanel({ value, onChange }: {
+function QuantitiesPanel({ value, onChange, quotedOnly, onRestore, canRestore }: {
   value: Record<string, SubEntry>
   onChange: (next: Record<string, SubEntry>) => void
+  /** True while these are still the quote's figures, not confirmed actuals. */
+  quotedOnly?: boolean
+  /** Put the quote's takeoff back, for a job whose actuals overwrote it. */
+  onRestore?: () => void
+  canRestore?: boolean
 }) {
   const [open, setOpen] = useState(false)
   const totals = substrateTotals(value)
@@ -251,7 +256,13 @@ function QuantitiesPanel({ value, onChange }: {
     <div className="mt-4 pt-4 border-t border-gray-200">
       <div className="flex justify-between items-center gap-2 flex-wrap mb-1.5">
         <div className="text-[13px] font-bold">
-          Quantities {keys.length > 0 && <span className="text-[#666] font-normal">· {keys.length} substrates</span>}
+          What was painted
+          {keys.length > 0 && <span className="text-[#666] font-normal"> · {keys.length} substrates</span>}
+          {keys.length > 0 && quotedOnly && (
+            <span className="ml-1.5 text-[10px] font-normal px-1.5 py-0.5 rounded bg-[#f5f4f0] text-[#666]">
+              from the quote — not confirmed
+            </span>
+          )}
         </div>
         <button onClick={() => setOpen(v => !v)} className="text-[11px] text-[#2563eb]">
           {open ? 'Done' : keys.length ? 'Edit' : 'Add quantities'}
@@ -279,8 +290,15 @@ function QuantitiesPanel({ value, onChange }: {
         <>
           <div className="text-[11px] text-[#666] mb-2">
             What was actually painted. Close enough is useful — a rate built on roughly
-            the right area beats no rate at all.
+            the right area beats no rate at all. Saved separately from the quote's
+            figures, so the two can be compared.
           </div>
+          {canRestore && (
+            <button onClick={onRestore}
+              className="mb-2 text-[11px] text-[#2563eb] hover:underline">
+              Start from the quote's takeoff
+            </button>
+          )}
           <SubstratePicker value={value} onChange={onChange} />
         </>
       )}
@@ -288,12 +306,30 @@ function QuantitiesPanel({ value, onChange }: {
   )
 }
 
-function CostTrackerTab({ job, jobId, substrates, onSubstrates }: {
+function CostTrackerTab({ job, jobId, substrates, onSubstrates, quotedOnly }: {
   job: any; jobId: string | null
   substrates: Record<string, SubEntry>
   onSubstrates: (next: Record<string, SubEntry>) => void
+  quotedOnly?: boolean
 }) {
   const { user } = useAuth()
+
+  /**
+   * The takeoff the quote was built from. A job created through the quoting
+   * tool carries extra.quote_id, and the locked quote keeps its whole state —
+   * so for those jobs the quoted figures survive even where this job's own
+   * copy was overwritten before the two were separated.
+   */
+  const { data: quotedTakeoff } = useQuery<any>({
+    queryKey: ['np_quotes', job?.extra?.quote_id, user?.id],
+    queryFn: async () => {
+      const { data } = await (supabase.from('np_quotes') as any)
+        .select('state').eq('user_id', user!.id).eq('id', job.extra.quote_id).maybeSingle()
+      const subs = data?.state?.substrates
+      return subs && Object.keys(subs).length ? subs : null
+    },
+    enabled: !!user && !!job?.extra?.quote_id,
+  })
 
   const { data: labourEntries = [] } = useQuery<any[]>({
     queryKey: ['np_labour_job', jobId, user?.id],
@@ -436,7 +472,10 @@ function CostTrackerTab({ job, jobId, substrates, onSubstrates }: {
           </div>
         </div>
       )}
-      <QuantitiesPanel value={substrates} onChange={onSubstrates} />
+      <QuantitiesPanel value={substrates} onChange={onSubstrates}
+        quotedOnly={quotedOnly}
+        canRestore={!!quotedTakeoff}
+        onRestore={() => quotedTakeoff && onSubstrates(normaliseSubstrates(quotedTakeoff))} />
     </div>
   )
 }
@@ -628,9 +667,19 @@ export default function JobModal({ open, jobId, initial, onClose }: {
   }, [open, jobId, stored?.updated_at])
 
   // Whatever shape the takeoff was stored in, edited as the shared record.
-  const jobSubstrates = useMemo<Record<string, SubEntry>>(
-    () => form.extra?.substrates ? normaliseSubstrates(form.extra.substrates) : emptySubstrates(),
-    [form.extra?.substrates])
+  /**
+   * What was PAINTED, which is what the Cost Tracker edits. It seeds from the
+   * quoted takeoff the first time, because the quote is the best starting
+   * guess — but it is written to its own key, so editing it can no longer
+   * destroy the quote's figures the way it used to.
+   */
+  const jobSubstrates = useMemo<Record<string, SubEntry>>(() => {
+    const raw = form.extra?.actual_substrates ?? form.extra?.substrates
+    return raw ? normaliseSubstrates(raw) : emptySubstrates()
+  }, [form.extra?.actual_substrates, form.extra?.substrates])
+
+  /** True once actuals exist in their own right. */
+  const hasActuals = !!form.extra?.actual_substrates
 
   function set(k: string, v: any) { setForm(prev => ({ ...prev, [k]: v })) }
   const fld = (k: string) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => set(k, e.target.value)
@@ -757,8 +806,11 @@ export default function JobModal({ open, jobId, initial, onClose }: {
         {tab === 'costs' && (
           <CostTrackerTab job={form} jobId={selectedId}
             substrates={jobSubstrates}
+            quotedOnly={!hasActuals}
             onSubstrates={next => setForm(f => ({
-              ...f, extra: { ...(f.extra ?? {}), substrates: next },
+              // actual_substrates, never substrates. The quoted takeoff is the
+              // other half of every rate this app will ever work out.
+              ...f, extra: { ...(f.extra ?? {}), actual_substrates: next },
             }))} />
         )}
         {tab === 'billing' && <JobBillingTab job={form} jobId={selectedId} />}

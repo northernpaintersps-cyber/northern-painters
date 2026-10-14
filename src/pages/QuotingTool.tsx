@@ -157,6 +157,18 @@ export default function QuotingTool() {
     },
     enabled: !!user,
   })
+  // Approved variations add revenue with no quantity, which is why a job
+  // carrying them is flagged rather than trusted. Without this query the flag
+  // never fires on this page.
+  const { data: pastVariations = [] } = useQuery({
+    queryKey: ['np_variations', user?.id],
+    queryFn: async () => {
+      const { data } = await supabase.from('np_variations')
+        .select('job_id, amount_ex_gst, var_status').eq('user_id', user!.id)
+      return (data ?? []) as any[]
+    },
+    enabled: !!user,
+  })
 
   // Drafts live in np_settings, so no migration is needed
   const { data: drafts = [] } = useQuery({
@@ -229,7 +241,6 @@ export default function QuotingTool() {
   /** Substrate key -> dollars per unit, ex GST. Blank means use the default. */
   const [unitRates, setUnitRates] = useState<Record<string, number>>({})
   /** Scale the standard rates by what this kind of job actually took. */
-  const [useHistory, setUseHistory] = useState(false)
   const imgRef = useRef<HTMLInputElement>(null)
   const pdfRef = useRef<HTMLInputElement>(null)
 
@@ -406,14 +417,28 @@ export default function QuotingTool() {
    * It is the one history figure that applies to every substrate, because a
    * labour entry records hours against the job and not against a surface.
    */
+  // Variations travel too: without them hasVariations is always false here,
+  // which Rates.tsx does not suffer from because it passes them.
   const history = useMemo(
-    () => serviceRates(buildJobRates({ jobs, labour: pastLabour, materials: pastMaterials })),
-    [jobs, pastLabour, pastMaterials])
+    () => serviceRates(buildJobRates({
+      jobs, labour: pastLabour, materials: pastMaterials, variations: pastVariations,
+    })),
+    [jobs, pastLabour, pastMaterials, pastVariations])
   const serviceHistory = history.find(h => h.type === jobType)
   const calibration = serviceHistory?.calibration ?? null
 
+  /**
+   * Hours per unit at the crew's average rate, and nothing else.
+   *
+   * This used to multiply by `calibration` — the median of actual hours over
+   * book hours across finished jobs. It moved the money while leaving the
+   * hours and the day count on the book figure, so a quote read as 62.5 hrs at
+   * $65 = $6,533, and est_days went onto the job understated by the same
+   * factor. The ratio is still on the Rates page as information; it will come
+   * back into pricing through a reviewed rate card, not as a hidden factor.
+   */
   const defaultUnitRate = (key: string) =>
-    Math.round((PROD_RATES[key] ?? 0) * avgRate * (useHistory && calibration ? calibration : 1) * 100) / 100
+    Math.round((PROD_RATES[key] ?? 0) * avgRate * 100) / 100
   const unitRateFor = (key: string) =>
     unitRates[key] != null ? unitRates[key] : defaultUnitRate(key)
 
@@ -966,7 +991,13 @@ export default function QuotingTool() {
         notes: siteNotes,
         quote_no: quoteNo || null,
         // substrate_keys lets a future quote score substrate overlap against this job
-        extra: { quote_estimate: estimate, substrates, substrate_keys: Object.keys(totals), processes, painters, quote_id: quoteId },
+        // Spread what is already there: this used to replace the whole object,
+        // so re-saving a quote over a job dropped its follow-up snooze.
+        extra: {
+          ...(jobs.find(j => j.id === id)?.extra ?? {}),
+          quote_estimate: estimate, substrates, substrate_keys: Object.keys(totals),
+          processes, painters, quote_id: quoteId,
+        },
         created_at: new Date().toISOString(),
       })
       if (error) throw error
@@ -992,7 +1023,7 @@ export default function QuotingTool() {
       client, address, jobType, terms, substrates, prep, ceilingHeight, access,
       method, coats, processes, prepLevels, consPrep, consTotal, consNotes, extraMats,
       painters, travelKm, equip, siteNotes, logisticsNotes, estimate, lockedPrice, rooms,
-      finishSpecs, priceMode, unitRates, useHistory, extraServices,
+      finishSpecs, priceMode, unitRates, extraServices,
       // The scope panel is mostly evidence. Without this a reopened quote
       // shows a bare list of numbers with nothing behind them.
       takeoff: extractRes && {
@@ -1022,7 +1053,6 @@ export default function QuotingTool() {
     setSubstrates(normaliseSubstrates(d.substrates ?? d.qty))
     setFinishSpecs(d.finishSpecs ?? {})
     setPriceMode(d.priceMode === 'quantity' ? 'quantity' : 'process')
-    setUseHistory(!!d.useHistory)
     setExtraServices(Array.isArray(d.extraServices) ? d.extraServices : [])
     setUnitRates(d.unitRates ?? {})
     setExtractRes(d.takeoff ?? null)
@@ -1616,20 +1646,19 @@ export default function QuotingTool() {
                 ))}
               </div>
             )}
+            {/* Information, not a factor. It used to be a checkbox that scaled
+                the rates below, which moved the money and left the hours and
+                the day count alone. */}
             {byQty && calibration != null && (
-              <label className="flex items-start gap-2 mb-2.5 px-3 py-2 bg-[#f0fdf4] border border-[#86efac] rounded-lg cursor-pointer">
-                <input type="checkbox" checked={useHistory} onChange={e => setUseHistory(e.target.checked)}
-                  className="w-4 h-4 accent-green-700 mt-0.5 shrink-0" />
-                <span className="text-[11px] text-[#166534]">
-                  Scale by what {jobType.toLowerCase()} actually takes you:{' '}
-                  <b>{calibration.toFixed(2)}×</b> the standard rates
-                  {serviceHistory && <> — from {serviceHistory.samples} finished job{serviceHistory.samples === 1 ? '' : 's'}</>}.
-                  {serviceHistory && serviceHistory.samples < 3 && (
-                    <span className="text-[#92400e]"> Too few jobs to lean on yet.</span>
-                  )}
+              <div className="mb-2.5 px-3 py-2 bg-[#f5f4f0] border border-black/[0.12] rounded-lg">
+                <span className="text-[11px] text-[#666]">
+                  For reference: {jobType.toLowerCase()} has taken you{' '}
+                  <b>{calibration.toFixed(2)}×</b> the standard hours
+                  {serviceHistory && <> across {serviceHistory.samples} finished job{serviceHistory.samples === 1 ? '' : 's'}</>}.
+                  {' '}The rates below are the standard ones — this figure does not change them.
                   {' '}<Link to="/rates" className="underline">See the numbers</Link>
                 </span>
-              </label>
+              </div>
             )}
 
             {byQty && (
