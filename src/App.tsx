@@ -23,7 +23,7 @@ import LegalDocs from '@/pages/LegalDocs'
 import Costs from '@/pages/Costs'
 import Profitability from '@/pages/Profitability'
 import Rates from '@/pages/Rates'
-import Insights from '@/pages/Insights'
+import Assistant from '@/pages/Assistant'
 import PaintCalc from '@/pages/PaintCalc'
 import Payments from '@/pages/Payments'
 import Tax from '@/pages/Tax'
@@ -67,7 +67,10 @@ export default function App() {
         <Route path="/costs" element={<Costs />} />
         <Route path="/profitability" element={<Profitability />} />
         <Route path="/rates" element={<Rates />} />
-        <Route path="/insights" element={<Insights />} />
+        <Route path="/assistant" element={<Assistant />} />
+        {/* The AI chat lived here. It is the assistant now, which does the
+            same job properly, so the old link still lands somewhere. */}
+        <Route path="/insights" element={<Navigate to="/assistant" replace />} />
         <Route path="/paintcalc" element={<PaintCalc />} />
         <Route path="/payments" element={<Payments />} />
         <Route path="/tax" element={<Tax />} />

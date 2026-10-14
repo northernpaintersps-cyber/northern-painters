@@ -186,22 +186,6 @@ async function fileToBase64(file: File): Promise<{ base64: string; mediaType: st
   })
 }
 
-// ── Business chat (V16 askInsights) ──────────────────────────
-export type ChatTurn = { role: 'user' | 'assistant'; content: string }
-
-export async function askBusiness(apiKey: string, history: ChatTurn[], context: string): Promise<string> {
-  const system = `You are an expert business analyst and painting industry consultant for Northern Painters, a painting company based in Byron Bay, NSW, Australia. You have access to all their real business data below.
-
-Answer questions about their jobs, costs, margins, profitability, and business performance. Be specific — use real numbers from the data. Calculate averages, rates per m², best/worst performers, trends. Format answers clearly with numbers highlighted. If you spot anything worth flagging (e.g. low-margin jobs, high material spend) mention it.
-
-When calculating rate per m², note that substrate areas aren't always logged — work with what's available (agreed price ÷ estimated days as a proxy if needed).
-
-${context}`
-
-  return callClaude(apiKey, history, system, { model: 'claude-sonnet-4-6', maxTokens: 1500 })
-}
-
-// ── Quote builder AI (V16 runQuote / suggestProcesses / runConsAI) ──
 export interface QuoteInput {
   client: string
   address: string

@@ -17,6 +17,8 @@ import {
 } from 'lucide-react'
 import { invalidateTable } from '../lib/queryKeys'
 import ExposureMark from '@/components/ExposureMark'
+import { quoteFollowUp } from '@/lib/messages'
+import { needsFollowUp, snoozedUntil } from '@/lib/attention'
 import { DEPOSIT_PCT, jobValueEx, depositPath } from '@/lib/deposit'
 import { SyncedInput } from '@/components/ui/SyncedInput'
 
@@ -80,12 +82,6 @@ function useQuickEdit() {
   })
 }
 
-const snoozedUntil = (j: any) => j?.extra?.follow_up_snoozed_until ?? null
-
-// V16 copyFollowUpMsg()
-function followUpMessage(j: any) {
-  return `Hi ${j.client},\n\nJust following up on the quote we sent for ${j.job_desc || j.type || 'your painting project'} at ${j.address}.\n\nQuote: ${fmtCurrency(j.quote_ex_gst)} ex GST (${fmtCurrency((j.quote_ex_gst || 0) * 1.1)} inc GST)\n\nHappy to answer any questions or adjust the scope if needed.\n\nLooking forward to hearing from you!\n\nNorthern Painters`
-}
 
 export default function Jobs() {
   const { data: jobs = [], isLoading } = useJobs()
@@ -141,14 +137,9 @@ export default function Jobs() {
 
   // V16 needFollowUp — quotes sent 7+ days ago, not snoozed
   const todayStr = today()
-  const needFollowUp = useMemo(() => jobs.filter(j => {
-    if (j.quote_status !== 'Sent' || !j.quote_sent) return false
-    const snz = snoozedUntil(j)
-    if (snz && snz > todayStr) return false
-    const sent = normaliseDate(j.quote_sent)
-    if (!sent) return false
-    return Math.floor((Date.now() - new Date(sent).getTime()) / 864e5) >= 7
-  }), [jobs, todayStr])
+  // The rule lives in lib/attention, shared with the Dashboard — the two
+  // copies had already drifted over whether a snooze counts.
+  const needFollowUp = useMemo(() => needsFollowUp(jobs, todayStr), [jobs, todayStr])
 
   const varCount = useMemo(() => {
     const m: Record<string, number> = {}
@@ -157,7 +148,7 @@ export default function Jobs() {
   }, [allVariations])
 
   async function copyFollowUp(j: any) {
-    const msg = followUpMessage(j)
+    const msg = quoteFollowUp(j)
     try {
       await navigator.clipboard.writeText(msg)
       alert('Follow-up message copied!')

@@ -4,6 +4,7 @@ import { supabase, selectAll } from '@/lib/supabase'
 import { useAuth } from '@/lib/auth'
 import { Modal } from '@/components/ui/Modal'
 import JobPicker from '@/components/JobPicker'
+import { crewPaymentReminder } from '@/lib/messages'
 import { Input } from '@/components/ui/Field'
 import {
   fmtCurrency, genId, parseMilestones, today,
@@ -220,9 +221,7 @@ export default function Payments() {
     const ms = msOf(s)
     const next = ms.find(m => !m.received)
     if (!next) { alert('All received!'); return }
-    const bsb = biz?.bsb || ''
-    const acc = biz?.account_no || ''
-    const msg = `Hi ${s.worker},\n\nPayment reminder:\n${next.label}: ${fmtCurrency(next.amount)} inc GST${next.dueDate ? `\nDue: ${next.dueDate}` : ''}\n\n${bsb ? `BSB: ${bsb}\n` : ''}${acc ? `Acc: ${acc}\n` : ''}Ref: ${s.id}\n\nThanks,\n${biz?.company_name || 'Northern Painters'}${biz?.licence ? `\nLic ${biz.licence}` : ''}${biz?.abn ? ` | ABN ${biz.abn}` : ''}`
+    const msg = crewPaymentReminder(s, next, biz)
     try { await navigator.clipboard.writeText(msg); alert('Copied!') }
     catch { prompt('Copy:', msg) }
   }

@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '@/lib/auth'
+import { attentionList, overdueInvoices, needsFollowUp, type AttentionKind } from '@/lib/attention'
 import { supabase, selectAll } from '@/lib/supabase'
 import { fmtCurrency, calcOwed, invStatus, normaliseDate, genId, crewLabel } from '@/lib/utils'
 import {
@@ -138,6 +139,8 @@ export default function Dashboard() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['np_todos'] }),
   })
 
+  const [showAllAlerts, setShowAllAlerts] = useState(false)
+
   const now = new Date()
   const todayStr = localStr(now)
   const yr = now.getFullYear()
@@ -145,7 +148,7 @@ export default function Dashboard() {
 
   // ── Finance KPIs ──────────────────────────────────────────
   const owed = invoices.reduce((a, b) => a + calcOwed(b), 0)
-  const overdueInvs = invoices.filter(i => calcOwed(i) > 0 && i.due_date && i.due_date < todayStr)
+  const overdueInvs = overdueInvoices(invoices, todayStr)
 
   const qMonth = now.getMonth()
   const qStart = new Date(yr, Math.floor(qMonth / 3) * 3, 1)
@@ -202,39 +205,26 @@ export default function Dashboard() {
 
   const todayEvs = calEvents.filter(e => e.date === todayStr)
 
-  // Quote follow-ups: sent 7+ days ago
-  const followUps = jobs.filter(j => {
-    if (j.quote_status !== 'Sent' || !j.quote_sent) return false
-    const sent = normaliseDate(j.quote_sent)
-    if (!sent) return false
-    return Math.floor((now.getTime() - new Date(sent).getTime()) / 864e5) >= 7
-  })
+  // The shared rule, which respects a snooze. This copy did not, so
+  // snoozing a chase on the Jobs page never quieted the Dashboard.
+  const followUps = needsFollowUp(jobs, todayStr)
 
-  // ── Smart alerts ──────────────────────────────────────────
-  type Alert = { label: string; color: string; icon: React.ReactNode; onClick: () => void }
-  const alerts: Alert[] = []
-  overdueInvs.forEach(i => alerts.push({
-    label: `Invoice overdue — ${i.client} (${i.id || i.job_id}) · ${fmtCurrency(calcOwed(i))} owed`,
-    color: '#dc2626', icon: <AlertCircle size={13} />, onClick: () => nav('/invoices'),
-  }))
-  newEnquiries.slice(0, 3).forEach(e => alerts.push({
-    label: `New enquiry — ${e.client || 'Unknown'}${e.source ? ' · ' + e.source : ''}`,
-    color: '#d97706', icon: <UserPlus size={13} />, onClick: () => nav('/enquiries'),
-  }))
-  followUps.slice(0, 2).forEach(j => alerts.push({
-    label: `Follow up quote — ${j.client} (${j.id}) sent ${j.quote_sent}`,
-    color: '#7c3aed', icon: <Clock size={13} />, onClick: () => nav('/jobs'),
-  }))
-  jobs.filter(j => {
-    const sd = normaliseDate(j.sched_start); if (!sd) return false
-    const days = Math.ceil((new Date(sd).getTime() - now.getTime()) / 864e5)
-    if (days < 0 || days > 3) return false
-    if (!['Scheduled', 'Not Started'].includes(j.status)) return false
-    return !assignments.some(a => a.job_id === j.id)
-  }).slice(0, 2).forEach(j => alerts.push({
-    label: `No crew assigned — ${j.client} starts ${j.sched_start}`,
-    color: '#0369a1', icon: <Users size={13} />, onClick: () => nav('/crew'),
-  }))
+  // ── What needs attention ──────────────────────────────────
+  // The rules and the ranking live in lib/attention, shared with the
+  // assistant. Ranked by money rather than by category, because an overdue
+  // $80 invoice does not outrank a $14,000 job starting tomorrow with nobody
+  // booked on it — which the old hardcoded order did.
+  const ICONS: Record<AttentionKind, React.ReactNode> = {
+    invoice_overdue: <AlertCircle size={13} />,
+    new_enquiry: <UserPlus size={13} />,
+    quote_follow_up: <Clock size={13} />,
+    no_crew: <Users size={13} />,
+  }
+  const COLORS: Record<AttentionKind, string> = {
+    invoice_overdue: '#dc2626', new_enquiry: '#d97706',
+    quote_follow_up: '#7c3aed', no_crew: '#0369a1',
+  }
+  const alerts = attentionList({ jobs, invoices, enquiries, assignments }, todayStr)
 
   // ── Monthly revenue chart (last 8 months) ─────────────────
   const chartData = []
@@ -368,14 +358,21 @@ export default function Dashboard() {
 
           {alerts.length > 0 && (
             <div className="mb-2">
-              {alerts.slice(0, 4).map((a, i) => (
-                <div key={i} onClick={a.onClick}
-                  style={{ background: a.color + '11', borderLeft: `3px solid ${a.color}` }}
+              {alerts.slice(0, showAllAlerts ? alerts.length : 4).map((a, i) => (
+                <div key={i} onClick={() => nav(a.route)}
+                  style={{ background: COLORS[a.kind] + '11', borderLeft: `3px solid ${COLORS[a.kind]}` }}
                   className="flex items-start gap-2 px-2.5 py-1.5 rounded-r-md mb-1.5 cursor-pointer">
-                  <span style={{ color: a.color }} className="mt-px shrink-0">{a.icon}</span>
+                  <span style={{ color: COLORS[a.kind] }} className="mt-px shrink-0">{ICONS[a.kind]}</span>
                   <span className="text-xs leading-snug">{a.label}</span>
                 </div>
               ))}
+              {/* The cap used to hide the rest silently. */}
+              {alerts.length > 4 && (
+                <button onClick={() => setShowAllAlerts(v => !v)}
+                  className="text-[11px] text-[#2563eb] hover:underline mb-1.5">
+                  {showAllAlerts ? 'Show fewer' : `Show ${alerts.length - 4} more`}
+                </button>
+              )}
             </div>
           )}
 

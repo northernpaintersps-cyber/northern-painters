@@ -45,7 +45,7 @@ const nav = [
     { to: '/quotes/build', label: 'Quote Builder', icon: Calculator },
     { to: '/quotes',     label: 'Saved Quotes',  icon: FileCheck },
     { to: '/paintcalc',  label: 'Paint Calc',    icon: Paintbrush },
-    { to: '/insights',   label: 'AI Chat',       icon: MessageCircle },
+    { to: '/assistant',  label: 'Assistant',     icon: MessageCircle },
     { to: '/todos',      label: 'To‑do',         icon: ClipboardList },
     { to: '/legal',      label: 'Legal Docs',    icon: Shield },
     { to: '/ads',        label: 'Ads Spend',     icon: Megaphone },
