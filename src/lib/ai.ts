@@ -48,29 +48,36 @@ export interface CallUsage {
   stopReason: string
 }
 
-async function callClaude(
-  apiKey: string, messages: any[], system?: string,
-  opts?: {
-    model?: string; maxTokens?: number; temperature?: number
-    /** Forces the reply through a schema, so the result is always valid JSON. */
-    tool?: { name: string; description: string; input_schema: any }
-    /**
-     * Let the model reason before answering. Forcing a tool is rejected
-     * alongside extended thinking, so a thinking call declares its tool and
-     * leaves the choice automatic — with one tool and a system prompt that
-     * demands it, it is called. `toolOptional` covers the case where it is not.
-     */
-    thinking?: { budgetTokens: number }
-    /** Return the text instead of throwing when no tool block comes back. */
-    toolOptional?: boolean
-    /** Cache the system prompt — worth it when it is long and byte-stable. */
-    cacheSystem?: boolean
-    onUsage?: (u: CallUsage) => void
-  },
-): Promise<string> {
+export interface Tool { name: string; description: string; input_schema: any }
+
+export interface RequestOpts {
+  model?: string
+  maxTokens?: number
+  temperature?: number
+  /** Every tool the model may call this turn. */
+  tools?: Tool[]
+  /** Omitted means `auto` when tools are present. */
+  toolChoice?: { type: 'tool'; name: string } | { type: 'auto' }
+  thinking?: { budgetTokens: number }
+  /** Cache the system prompt — worth it when it is long and byte-stable. */
+  cacheSystem?: boolean
+  onUsage?: (u: CallUsage) => void
+}
+
+/**
+ * One trip to the Messages API, returning the raw reply.
+ *
+ * Everything that must not be duplicated lives here: the direct-from-browser
+ * header, the error message the takeoff's model ladder parses, the Claude 5
+ * temperature rule, and the usage callback. `callClaude` is the single-tool,
+ * string-returning wrapper the extraction calls use; the agent loop needs the
+ * content blocks and several tools, so it calls this instead.
+ */
+export async function request(
+  apiKey: string, messages: any[], system?: string, opts?: RequestOpts,
+): Promise<any> {
   const model = opts?.model ?? 'claude-haiku-4-5-20251001'
   const sysText = system ?? 'You are a helpful assistant for a painting business in Australia.'
-  const forceTool = !!opts?.tool && !opts?.thinking
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
@@ -96,10 +103,10 @@ async function callClaude(
       ...(opts?.thinking
         ? { thinking: { type: 'enabled', budget_tokens: opts.thinking.budgetTokens } }
         : {}),
-      ...(opts?.tool
+      ...(opts?.tools?.length
         ? {
-            tools: [opts.tool],
-            tool_choice: forceTool ? { type: 'tool', name: opts.tool.name } : { type: 'auto' },
+            tools: opts.tools,
+            tool_choice: opts.toolChoice ?? { type: 'auto' },
           }
         : {}),
     }),
@@ -124,16 +131,44 @@ async function callClaude(
     stopReason: data.stop_reason ?? '',
   })
 
-  const text = () =>
-    data.content?.find((c: any) => c.type === 'text')?.text ?? data.content?.[0]?.text ?? ''
+  return data
+}
+
+/** The text of a reply, whichever block it arrived in. */
+export const replyText = (data: any): string =>
+  data?.content?.find((c: any) => c.type === 'text')?.text ?? data?.content?.[0]?.text ?? ''
+
+async function callClaude(
+  apiKey: string, messages: any[], system?: string,
+  opts?: Omit<RequestOpts, 'tools' | 'toolChoice'> & {
+    /** Forces the reply through a schema, so the result is always valid JSON. */
+    tool?: Tool
+    /** Return the text instead of throwing when no tool block comes back. */
+    toolOptional?: boolean
+  },
+): Promise<string> {
+  /**
+   * Forcing a tool is rejected alongside extended thinking, so a thinking call
+   * declares its tool and leaves the choice automatic — with one tool and a
+   * system prompt that demands it, it is called. `toolOptional` covers the
+   * case where it is not.
+   */
+  const forceTool = !!opts?.tool && !opts?.thinking
+  const data = await request(apiKey, messages, system, {
+    ...opts,
+    tools: opts?.tool ? [opts.tool] : undefined,
+    toolChoice: opts?.tool
+      ? (forceTool ? { type: 'tool', name: opts.tool.name } : { type: 'auto' })
+      : undefined,
+  })
 
   if (opts?.tool) {
     const block = data.content?.find((c: any) => c.type === 'tool_use')
     if (block) return JSON.stringify(block.input ?? {})
-    if (opts.toolOptional) return text()
+    if (opts.toolOptional) return replyText(data)
     throw new Error('AI did not return structured data. Try again.')
   }
-  return text()
+  return replyText(data)
 }
 
 // Convert a File (image or PDF first-page) to base64 data URL parts
