@@ -30,6 +30,7 @@ import { shrinkToDataUrl } from '@/lib/image'
 import { uploadPhoto, signPhotos, type StoredPhoto } from '@/lib/photoStore'
 import { checkTakeoff, hasError, type Warning } from '@/lib/takeoffChecks'
 import { applyFinishRows, finishScheduleText } from '@/lib/finishes'
+import { useRateCard, cardHoursPerUnit, cardSummary } from '@/lib/rateCard'
 import {
   Plus, Trash2, Loader2, Sparkles, Save, ClipboardList, Settings2,
   FileText, Image as ImageIcon, Ruler, Hammer, RefreshCw,
@@ -143,6 +144,7 @@ export default function QuotingTool() {
   const apiKey = biz?.ai_api_key?.trim() ?? ''
   const rates = biz?.rates ?? { standard: 65, lead: 75, sub: 70, overhead: 12, hpd: 8, charge_rate: 65 }
 
+  const { data: rateCard } = useRateCard()
   const { data: jobs = [] } = useQuery({
     queryKey: ['np_jobs', user?.id],
     queryFn: async () => {
@@ -449,8 +451,18 @@ export default function QuotingTool() {
    * factor. The ratio is still on the Rates page as information; it will come
    * back into pricing through a reviewed rate card, not as a hidden factor.
    */
-  const defaultUnitRate = (key: string) =>
-    Math.round((PROD_RATES[key] ?? 0) * avgRate * 100) / 100
+  const defaultUnitRate = (key: string) => {
+    // Your own figure where the accepted card has one it is confident in,
+    // otherwise the standard rate. Never a fresh AI call, and never a hidden
+    // multiplier — the card is a thing you read and agreed to.
+    const mine = cardHoursPerUnit(rateCard?.current, key, jobType)
+    const hoursPerUnit = mine?.hours ?? PROD_RATES[key] ?? 0
+    return Math.round(hoursPerUnit * avgRate * 100) / 100
+  }
+  /** Which substrates are priced from the card rather than the book. */
+  const cardKeys = useMemo(
+    () => Object.keys(totals).filter(k => cardHoursPerUnit(rateCard?.current, k, jobType)),
+    [totals, rateCard, jobType])
   const unitRateFor = (key: string) =>
     unitRates[key] != null ? unitRates[key] : defaultUnitRate(key)
 
@@ -1665,7 +1677,15 @@ export default function QuotingTool() {
             {/* Information, not a factor. It used to be a checkbox that scaled
                 the rates below, which moved the money and left the hours and
                 the day count alone. */}
-            {byQty && calibration != null && (
+            {byQty && cardKeys.length > 0 && (
+              <div className="mb-2.5 px-3 py-2 bg-[#f0fdf4] border border-[#86efac] rounded-lg">
+                <span className="text-[11px] text-[#166534]">
+                  {cardSummary(rateCard?.current)}{' '}
+                  <Link to="/rates" className="underline">See the card</Link>
+                </span>
+              </div>
+            )}
+            {byQty && calibration != null && cardKeys.length === 0 && (
               <div className="mb-2.5 px-3 py-2 bg-[#f5f4f0] border border-black/[0.12] rounded-lg">
                 <span className="text-[11px] text-[#666]">
                   For reference: {jobType.toLowerCase()} has taken you{' '}

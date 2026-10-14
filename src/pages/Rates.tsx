@@ -14,6 +14,7 @@ import {
 import { SUBSTRATES } from '@/lib/substrates'
 import { Loader2, Info, TrendingUp } from 'lucide-react'
 import { Link } from 'react-router-dom'
+import RateCardPanel from '@/components/RateCardPanel'
 
 type Row = Record<string, any>
 
@@ -55,6 +56,8 @@ export default function Rates() {
         Built from finished jobs that have both a recorded takeoff and logged costs.
         {' '}{usable.length} of {rates.length} finished jobs qualify.
       </div>
+
+      <RateCardPanel jobs={jobs} labour={labour} materials={materials} variations={variations} />
 
       {/* ── Per service ── */}
       <div className={CARD}>

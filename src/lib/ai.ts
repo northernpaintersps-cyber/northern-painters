@@ -1394,3 +1394,191 @@ export async function sortPhotoNotes(
       painting: String(r.painting ?? '').trim(),
     }))
 }
+
+
+// ── Reading your own jobs for rates ─────────────────────────
+
+const RATES_TOOL = {
+  name: 'record_rates',
+  description: 'Rates per service and per substrate, with what each one rests on.',
+  input_schema: {
+    type: 'object' as const,
+    additionalProperties: false,
+    required: ['services', 'substrates', 'cannot_determine', 'notes'],
+    properties: {
+      services: {
+        type: 'array',
+        description: 'One per service there is enough data for. Omit a service entirely rather than guessing at it.',
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['service', 'jobs', 'confidence', 'basis'],
+          properties: {
+            service: { type: 'string', description: 'The job type, exactly as given.' },
+            cost_per_sqm: { type: 'number', description: 'Real cost, labour and materials, per m2. Omit if not supportable.' },
+            price_per_sqm: { type: 'number', description: 'What was charged per m2. Omit if not supportable.' },
+            hours_per_sqm: { type: 'number' },
+            margin_pct: { type: 'number' },
+            jobs: { type: 'array', items: { type: 'string' }, description: 'The job ids behind these figures.' },
+            confidence: { type: 'string', enum: ['high', 'medium', 'low'] },
+            basis: { type: 'string', description: 'One sentence: what these rest on and what would change them.' },
+          },
+        },
+      },
+      substrates: {
+        type: 'array',
+        description: 'Only where phase-tagged hours support it. An empty list is the right answer when nothing does.',
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['key', 'hours_per_unit', 'jobs', 'confidence', 'basis'],
+          properties: {
+            key: { type: 'string', description: 'The substrate key, from the list given.' },
+            service: { type: 'string', description: 'The service this applies to, where it differs by service.' },
+            hours_per_unit: { type: 'number', description: 'Logged hours divided by quantity.' },
+            jobs: { type: 'array', items: { type: 'string' } },
+            confidence: { type: 'string', enum: ['high', 'medium', 'low'] },
+            basis: { type: 'string' },
+          },
+        },
+      },
+      cannot_determine: {
+        type: 'array',
+        description: 'What was asked of this data that it cannot answer, and what would be needed.',
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['what', 'why'],
+          properties: {
+            what: { type: 'string' },
+            why: { type: 'string', description: 'What is missing, in terms of what to record.' },
+          },
+        },
+      },
+      notes: { type: 'string', description: 'Anything about the data worth the estimator knowing.' },
+    },
+  },
+}
+
+const RATES_SYSTEM = `You read a painting business's own finished jobs and work out what its work actually costs, per service and where possible per surface.
+
+Every number in the data has already been added up. You are not here to do arithmetic — you are here to judge which jobs are comparable, which are outliers and why, how much weight a figure can carry, and what this data cannot answer.
+
+WHAT YOU ARE GIVEN
+One record per finished job: what was quoted, what was painted where that was recorded, what was charged, the real labour and material cost, the hours logged, and the book hours the standard production rates predict. Where hours were tagged with a phase, each substrate carries the hours attributed to it.
+
+READ THESE CAREFULLY
+- quantities_are: "actual" means someone recorded what was painted. "quoted" means nobody did, and the quantity is the estimate — a rate built on it is softer and you should say so.
+- logged_hours on a substrate is null when no tagged hours reach it. Null means UNKNOWN. It does not mean zero, and a substrate rate cannot be derived from it.
+- untagged_hours are hours against the job with no phase. They are real hours and belong in a service rate; they cannot be attributed to a surface.
+- variations_ex_gst adds revenue with no extra quantity. A job carrying them reads richer per m2 than the work was, and that distorts a price rate more than a cost rate.
+
+MEDIANS, NOT MEANS
+One job with three weeks of scaffold hire drags a mean somewhere useless. Where you give a figure across several jobs it should be the middle of them, and you should say when one job is doing all the work.
+
+WHAT NOT TO DO
+Do not give a substrate rate that no phase-tagged hours support. An empty substrates list is the correct answer on data that has not been tagged yet, and it is far more useful than a plausible number — the estimator will price work on whatever you return.
+
+Do not average across services that are not the same work. Interior repaint and roof coating share nothing.
+
+Do not report a rate from one job as though it were a rate. Say it is one job.
+
+Below three jobs, confidence is low, and say which jobs.
+
+CANNOT_DETERMINE IS THE IMPORTANT FIELD
+List plainly what this data cannot tell them and what they would have to record to change that. That list is worth more than a soft number, because it is actionable: if hours were tagged by phase on the next five jobs, the thing they want becomes answerable.
+
+Record it all with the record_rates tool.`
+
+export interface ServiceRateProposal {
+  service: string
+  costPerSqm?: number
+  pricePerSqm?: number
+  hoursPerSqm?: number
+  marginPct?: number
+  jobs: string[]
+  confidence: 'high' | 'medium' | 'low'
+  basis: string
+}
+
+export interface SubstrateRateProposal {
+  key: string
+  service?: string
+  hoursPerUnit: number
+  jobs: string[]
+  confidence: 'high' | 'medium' | 'low'
+  basis: string
+}
+
+export interface RateProposal {
+  generatedAt: string
+  model: string
+  services: ServiceRateProposal[]
+  substrates: SubstrateRateProposal[]
+  cannotDetermine: Array<{ what: string; why: string }>
+  notes: string
+}
+
+/** The dataset in, a proposed rate card out. Nothing is stored by this. */
+export async function analyseRates(
+  apiKey: string, dataset: unknown, opts?: { service?: string },
+): Promise<RateProposal> {
+  const model = 'claude-sonnet-5'
+  const user = `THE SUBSTRATE KEYS, and what each number counts:
+${substrateDoc()}
+
+THE JOBS:
+${JSON.stringify(dataset, null, 1)}
+
+${opts?.service ? `Focus on ${opts.service}.` : 'Cover every service with enough behind it.'}
+Record your findings with the record_rates tool.`
+
+  const raw = await callClaude(apiKey, [{ role: 'user', content: user }], RATES_SYSTEM, {
+    model,
+    maxTokens: 8000,
+    tool: RATES_TOOL,
+    cacheSystem: true,
+  })
+
+  let parsed: any
+  try { parsed = JSON.parse(raw) } catch {
+    throw new Error('AI returned unexpected format while working out the rates.')
+  }
+
+  const conf = (c: any): 'high' | 'medium' | 'low' =>
+    (c === 'high' || c === 'medium' ? c : 'low')
+  const nOrU = (v: any) => (Number.isFinite(Number(v)) ? Number(v) : undefined)
+  const ids = (v: any) => (Array.isArray(v) ? v.map(String) : [])
+
+  return {
+    generatedAt: new Date().toISOString().slice(0, 10),
+    model,
+    services: (Array.isArray(parsed.services) ? parsed.services : [])
+      .map((s: any): ServiceRateProposal => ({
+        service: String(s?.service ?? ''),
+        costPerSqm: nOrU(s?.cost_per_sqm),
+        pricePerSqm: nOrU(s?.price_per_sqm),
+        hoursPerSqm: nOrU(s?.hours_per_sqm),
+        marginPct: nOrU(s?.margin_pct),
+        jobs: ids(s?.jobs),
+        confidence: conf(s?.confidence),
+        basis: String(s?.basis ?? ''),
+      }))
+      .filter((s: ServiceRateProposal) => s.service),
+    substrates: (Array.isArray(parsed.substrates) ? parsed.substrates : [])
+      .map((s: any): SubstrateRateProposal => ({
+        key: String(s?.key ?? ''),
+        service: s?.service ? String(s.service) : undefined,
+        hoursPerUnit: Number(s?.hours_per_unit) || 0,
+        jobs: ids(s?.jobs),
+        confidence: conf(s?.confidence),
+        basis: String(s?.basis ?? ''),
+      }))
+      // A key the model invented would price a substrate from nothing.
+      .filter((s: SubstrateRateProposal) => SUB_BY_KEY[s.key] && s.hoursPerUnit > 0),
+    cannotDetermine: (Array.isArray(parsed.cannot_determine) ? parsed.cannot_determine : [])
+      .map((c: any) => ({ what: String(c?.what ?? ''), why: String(c?.why ?? '') }))
+      .filter((c: any) => c.what),
+    notes: String(parsed.notes ?? ''),
+  }
+}
