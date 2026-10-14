@@ -18,6 +18,9 @@ import { useBusinessSettings } from '@/pages/SettingsPage'
 
 const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December']
 const DAYS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat']
+/** The first thing the day modal asks. A job on this day is not an event. */
+const ADD_JOB = 'Job on this day'
+
 const EVENT_TYPES = ['Quote Visit','Client Meeting','Builder Meeting','Follow Up','Site Visit','Other']
 const EVENT_COLORS: Record<string, string> = {
   'Quote Visit':     'bg-blue-100 text-blue-800 border-l-2 border-blue-500',
@@ -127,6 +130,8 @@ export default function CalendarPage() {
   const [saving, setSaving] = useState(false)
   const [panel, setPanel] = useState<{ jobId: string; date: string } | null>(null)
   const [addJobId, setAddJobId] = useState('')
+  /** ADD_JOB, or one of EVENT_TYPES. Decides what Save is allowed to write. */
+  const [kind, setKind] = useState<string>(ADD_JOB)
 
   const todayStr = today()
 
@@ -167,13 +172,13 @@ export default function CalendarPage() {
         const isFirst = i === 0, isLast = i === dates.length - 1
         const color = j.status === 'In Progress' ? JOB_ACTIVE_COLOR : JOB_SCHEDULED_COLOR
         const prefix = isFirst ? '▶ ' : isLast ? '⏹ ' : ''
-        // Client and street, not the job number. In a cell this narrow the
-        // number ate the half of the label that says which job this is; it is
-        // on the hover and on the panel the chip opens. The street number and
-        // name alone identify the site — the suburb repeats across a whole
-        // day's work and never fits anyway.
+        // The street, and nothing else. A cell this narrow truncated anything
+        // longer, so client and number both read as half a word; the street
+        // number and name are what tells you where the crew is going. The job
+        // number, the client and the full address are all on the hover and on
+        // the panel the chip opens.
         const street = (j.address || '').split(',')[0].trim()
-        const label = [j.client, street].filter(Boolean).join(' · ') || j.id
+        const label = street || j.client || j.id
         add(d, {
           type: 'job', label: `${prefix}${label}`, color, id: j.id, data: j,
           full: [j.id, j.client, j.address].filter(Boolean).join(' — '),
@@ -215,15 +220,19 @@ export default function CalendarPage() {
 
   function openCell(date: string) {
     setAddJobId('')
+    setKind(ADD_JOB)
     setSelectedDate(date)
     setSelectedEvent(null)
-    setForm({ date, color: 'Other' })
+    // No colour is pre-set any more: 'Other' here was what the phantom events
+    // were saved as.
+    setForm({ date })
     setModalOpen(true)
   }
 
   function openEvent(ev: any, e: React.MouseEvent) {
     e.stopPropagation()
     setSelectedEvent(ev)
+    setKind(EVENT_TYPES.includes(ev.color) ? ev.color : 'Other')
     setForm({ ...ev })
     setSelectedDate(ev.date)
     setModalOpen(true)
@@ -232,10 +241,25 @@ export default function CalendarPage() {
   const ef = (k: string) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) =>
     setForm((prev: any) => ({ ...prev, [k]: e.target.value }))
 
+  /**
+   * The bug this fixes: picking a job scheduled it straight away, but the
+   * modal stayed open and Save was the only obvious way to finish — so Save
+   * then wrote a second, titleless event of type Other against the same day.
+   * Save now refuses to write anything unless an event type was chosen, and
+   * on the job path the footer says Done and writes nothing at all.
+   */
+  const isJob = kind === ADD_JOB
+
   async function saveEvent() {
+    if (kind === ADD_JOB) { setModalOpen(false); return }
     setSaving(true)
     try {
-      await upsertEvent.mutateAsync({ ...form, id: selectedEvent?.id || genId('ev'), created_at: form.created_at || new Date().toISOString() })
+      await upsertEvent.mutateAsync({
+        ...form,
+        color: kind,
+        id: selectedEvent?.id || genId('ev'),
+        created_at: form.created_at || new Date().toISOString(),
+      })
       setModalOpen(false)
     } finally { setSaving(false) }
   }
@@ -256,7 +280,7 @@ export default function CalendarPage() {
           <button onClick={prev} className="p-1.5 rounded-lg bg-gray-50 text-gray-500 hover:text-gray-900 transition-colors"><ChevronLeft size={16} /></button>
           <span className="text-sm font-semibold text-gray-900 w-36 text-center">{MONTHS[month]} {year}</span>
           <button onClick={next} className="p-1.5 rounded-lg bg-gray-50 text-gray-500 hover:text-gray-900 transition-colors"><ChevronRight size={16} /></button>
-          <button onClick={() => { setForm({ date: todayStr, color: 'Other' }); setSelectedEvent(null); setSelectedDate(todayStr); setModalOpen(true) }}
+          <button onClick={() => { setForm({ date: todayStr }); setKind('Quote Visit'); setSelectedEvent(null); setSelectedDate(todayStr); setModalOpen(true) }}
             className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-gray-900 font-semibold text-sm px-3 py-1.5 rounded-lg transition-colors ml-2">
             <Plus size={14} /> Add event
           </button>
@@ -367,32 +391,41 @@ export default function CalendarPage() {
       />
 
       <Modal open={modalOpen} onClose={() => setModalOpen(false)}
-        title={selectedEvent ? 'Edit event' : `Add event — ${fmtDate(selectedDate || '')}`}>
+        title={selectedEvent ? 'Edit event' : `${fmtDate(selectedDate || '')}`}>
         <div className="space-y-3">
-          <Input label="Title" value={form.title || ''} onChange={ef('title')} placeholder="e.g. Quote visit — Smith" />
-          <div className="grid grid-cols-2 gap-3">
-            <Input label="Date" type="date" value={form.date || ''} onChange={ef('date')} />
-            <Input label="Time" type="time" value={form.time || ''} onChange={ef('time')} />
-          </div>
-          <Select label="Event type / colour" value={form.color || ''} onChange={ef('color')} options={EVENT_TYPES} placeholder="—" />
-          <Input label="End date (optional)" type="date" value={form.end_date || ''} onChange={ef('end_date')} />
-          <TextArea label="Notes" value={form.notes || ''} onChange={ef('notes')} />
+          {/* First, because it decides what the rest of the modal is for. */}
+          <Select label="What are you adding?" value={kind} onChange={e => setKind(e.target.value)}
+            options={selectedEvent ? EVENT_TYPES : [ADD_JOB, ...EVENT_TYPES]} />
+
+          {!isJob && (
+            <>
+              <Input label="Title" value={form.title || ''} onChange={ef('title')}
+                placeholder={kind === 'Quote Visit' ? 'e.g. Quote visit — Smith' : `e.g. ${kind}`} />
+              <div className="grid grid-cols-2 gap-3">
+                <Input label="Date" type="date" value={form.date || ''} onChange={ef('date')} />
+                <Input label="Time" type="time" value={form.time || ''} onChange={ef('time')} />
+              </div>
+              <Input label="End date (optional)" type="date" value={form.end_date || ''} onChange={ef('end_date')} />
+              <TextArea label="Notes" value={form.notes || ''} onChange={ef('notes')} />
+            </>
+          )}
         </div>
 
-        {/* Scheduling a job on this day is a different thing from booking an
-            event on it, so it sits below the event fields rather than among
-            them. Only when adding, not when editing an existing event. */}
-        {!selectedEvent && selectedDate && (
-          <div className="mt-4 pt-4 border-t border-gray-200">
-            <div className="text-[13px] font-bold mb-2">Jobs on this day</div>
+        {/* Only on the job path. It used to sit below the event fields, which
+            is how one trip through this modal could create both. */}
+        {isJob && !selectedEvent && selectedDate && (
+          <div className="mt-4">
+            <div className="text-[13px] font-bold mb-2">Jobs on {fmtDate(selectedDate)}</div>
             {(itemsByDate[selectedDate] ?? []).filter(i => i.type === 'job').length === 0 ? (
               <div className="text-[11px] text-[#666] mb-2">None scheduled.</div>
             ) : (
               <div className="flex flex-col gap-1 mb-2">
                 {(itemsByDate[selectedDate] ?? []).filter(i => i.type === 'job').map(i => (
                   <div key={i.id} className="flex items-center gap-2 bg-[#f5f4f0] rounded-lg px-2.5 py-1.5">
-                    <span className="flex-1 text-[12px] truncate">
-                      {i.data.id} — {i.data.client || ''}
+                    <span className="flex-1 text-[12px] truncate"
+                      title={[i.data.id, i.data.client, i.data.address].filter(Boolean).join(' — ')}>
+                      {(i.data.address || '').split(',')[0] || i.data.client || i.data.id}
+                      <span className="text-[#666]"> · {i.data.id}</span>
                     </span>
                     <button onClick={() => removeJobDay(i.data.id, selectedDate)}
                       className="text-[#c0392b] text-[11px] hover:underline">Remove</button>
@@ -412,9 +445,14 @@ export default function CalendarPage() {
         <div className="flex justify-between mt-5 pt-4 border-t border-gray-200">
           <div>{selectedEvent && <button onClick={handleDeleteEvent} className="flex items-center gap-1.5 text-sm text-red-400 hover:text-red-300"><Trash2 size={14} /> Delete</button>}</div>
           <div className="flex gap-2">
-            <button onClick={() => setModalOpen(false)} className="text-sm px-4 py-2 rounded-lg bg-gray-50 text-gray-500 hover:text-gray-900">Cancel</button>
-            <button onClick={saveEvent} disabled={saving} className="flex items-center gap-1.5 text-sm px-5 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-gray-900 font-semibold disabled:opacity-50">
-              {saving && <Loader2 size={13} className="animate-spin" />} Save
+            {!isJob && (
+              <button onClick={() => setModalOpen(false)} className="text-sm px-4 py-2 rounded-lg bg-gray-50 text-gray-500 hover:text-gray-900">Cancel</button>
+            )}
+            <button onClick={saveEvent} disabled={saving || (!isJob && !(form.title || '').trim())}
+              title={!isJob && !(form.title || '').trim() ? 'Give the event a title first' : undefined}
+              className="flex items-center gap-1.5 text-sm px-5 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-semibold disabled:opacity-50">
+              {saving && <Loader2 size={13} className="animate-spin" />}
+              {isJob ? 'Done' : 'Save'}
             </button>
           </div>
         </div>
