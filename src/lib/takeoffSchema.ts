@@ -60,6 +60,40 @@ export const COUNT_DEFS: Record<string, string> = {
   cabinets: 'Number of cabinet DOORS and drawer fronts, counted individually. Not carcasses and not square metres.',
   timber_stain: 'Square metres of timber finished with stain or clear coat rather than paint.',
   firecoat: 'Square metres requiring a fire-rated coating in a BAL-rated area.',
+
+  // â”€â”€ Interior, added â”€â”€
+  beams: 'Lineal metres of exposed beam, rafter or purlin, measured along the member. Add the lengths of every member, not the floor area beneath them. A raked ceiling with eight exposed rafters of 4m is 32.',
+  lining: 'Square metres of timber lining board or panelling, where a wall or ceiling is lined rather than plastered. Counted here instead of walls or ceilings, not as well as.',
+  stairs_i: 'Number of FLIGHTS of stairs, not steps and not square metres. A straight run between two floors is 1; a run with a landing turning back on itself is 2.',
+  balustrades_i: 'Lineal metres of interior balustrade or handrail, measured along the top rail. Count the run once, not once per side.',
+  rails: 'Lineal metres of picture rail, dado rail or chair rail.',
+  bulkheads: 'Lineal metres of bulkhead, measured along its face, where one is drawn over cabinetry or in a hallway.',
+  brick_i: 'Square metres of exposed interior brick or blockwork to be painted. Counted here instead of walls, not as well as.',
+  garage_i: 'Square metres of garage interior wall and ceiling, where the drawings or scope call for the garage to be painted. Counted here, never folded into walls or ceilings.',
+  sills: 'Number of window SILLS or reveals to be painted. One per window opening, not lineal metres.',
+  shelving: 'Number of shelf runs, linen cupboards or pantry interiors to be painted. One per cupboard or run, not per shelf and not square metres.',
+
+  // â”€â”€ Exterior, added â”€â”€
+  pergola: 'Square metres of pergola, patio or carport structure, measured as the plan area it covers. Do not add the members up separately.',
+  verandah_ceil: 'Square metres of verandah, porch or balcony ceiling. Counted here instead of eaves, not as well as.',
+  screens: 'Square metres of privacy screen or batten screen, measured as the face area of the screen, not the sum of the battens.',
+  lattice: 'Square metres of lattice, measured as the panel face area.',
+  gates: 'Number of GATES. A double gate is 1.',
+  shutters: 'Number of shutters or awning frames. A pair of shutters on one window is 2.',
+  retaining: 'Square metres of retaining wall or blockwork face to be painted.',
+  stumps: 'Number of stumps or piers. For bearers and joists, count the stumps and note the subfloor in the scope rather than guessing lineal metres.',
+  sheds: 'Square metres of shed or outbuilding wall and roof to be painted.',
+  steel_e: 'Lineal metres of structural steel post, beam or metalwork, measured along the member.',
+
+  // â”€â”€ Specialty, added â”€â”€
+  epoxy: 'Square metres of floor to be epoxy coated. Counted here instead of driveway, not as well as.',
+  texture: 'Square metres to receive texture coating.',
+  waterproof: 'Square metres of waterproofing membrane, including upturns where they are drawn.',
+  rust: 'Square metres of metal needing rust treatment or priming. This is the treated area, not the whole element.',
+  venetian: 'Square metres of venetian plaster, microcement or polished finish.',
+  antigraffiti: 'Square metres to receive anti-graffiti clear coat.',
+  linemark: 'Lineal metres of line marking. A standard car bay is about 16 lineal metres.',
+  leadpaint: 'Square metres of lead paint to be encapsulated or sealed. Only where the drawings or scope say so.',
 }
 
 // Coverage guard: a substrate with no definition would be quoted blind.

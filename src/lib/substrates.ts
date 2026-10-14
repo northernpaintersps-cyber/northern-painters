@@ -58,6 +58,37 @@ export const SUBSTRATES: Substrate[] = [
   { key: "laundry", label: "Laundry full room", unit: "sqm", group: "Interior",
     paint: "Wash and Wear Low Sheen", defMethod: "Cut & Roll", defFinish: "Low Sheen (Wet Areas)",
     typeOpts: [] },
+  // ── Interior, added ──
+  { key: "beams", label: "Exposed beams and rafters", unit: "lm", group: "Interior",
+    paint: "Wash and Wear Low Sheen", defMethod: "Brush", defFinish: "Low Sheen",
+    typeOpts: ["Timber", "Steel", "Dressed", "Rough sawn", "Stained"] },
+  { key: "lining", label: "Lining boards and VJ panelling", unit: "sqm", group: "Interior",
+    paint: "Wash and Wear Low Sheen", defMethod: "Cut & Roll", defFinish: "Low Sheen",
+    typeOpts: ["VJ", "T&G", "Shiplap", "Beadboard", "Plywood"] },
+  { key: "stairs_i", label: "Stairs interior", unit: "qty", group: "Interior",
+    paint: "Dulux Aquanamel Semi-Gloss", defMethod: "Brush", defFinish: "Semi-Gloss",
+    typeOpts: ["Timber", "Closed riser", "Open riser", "Carpeted treads", "Painted stringer only"] },
+  { key: "balustrades_i", label: "Balustrades and handrails interior", unit: "lm", group: "Interior",
+    paint: "Dulux Aquanamel Semi-Gloss", defMethod: "Brush", defFinish: "Semi-Gloss",
+    typeOpts: ["Timber", "Steel", "Wire", "Glass with timber rail"] },
+  { key: "rails", label: "Picture and dado rails", unit: "lm", group: "Interior",
+    paint: "Dulux Aquanamel Semi-Gloss", defMethod: "Brush", defFinish: "Semi-Gloss",
+    typeOpts: [] },
+  { key: "bulkheads", label: "Bulkheads", unit: "lm", group: "Interior",
+    paint: "Wash and Wear Low Sheen", defMethod: "Cut & Roll", defFinish: "Low Sheen",
+    typeOpts: [] },
+  { key: "brick_i", label: "Exposed brick interior", unit: "sqm", group: "Interior",
+    paint: "Wash and Wear Low Sheen", defMethod: "Cut & Roll", defFinish: "Low Sheen",
+    typeOpts: ["Painted previously", "Bare brick", "Besser block"] },
+  { key: "garage_i", label: "Garage interior walls and ceiling", unit: "sqm", group: "Interior",
+    paint: "Wash and Wear Low Sheen", defMethod: "Cut & Roll", defFinish: "Low Sheen",
+    typeOpts: [] },
+  { key: "sills", label: "Window sills and reveals", unit: "qty", group: "Interior",
+    paint: "Dulux Aquanamel Semi-Gloss", defMethod: "Brush", defFinish: "Semi-Gloss",
+    typeOpts: [] },
+  { key: "shelving", label: "Shelving and linen cupboards", unit: "qty", group: "Interior",
+    paint: "Dulux Aquanamel Semi-Gloss", defMethod: "Brush", defFinish: "Semi-Gloss",
+    typeOpts: [] },
   // ── Exterior ──
   { key: "weatherboards", label: "Weatherboards", unit: "sqm", group: "Exterior",
     paint: "Weathershield Low Sheen", defMethod: "Brush", defFinish: "Weathershield Low Sheen",
@@ -113,6 +144,37 @@ export const SUBSTRATES: Substrate[] = [
   { key: "architraves_e", label: "Architraves exterior", unit: "qty", group: "Exterior",
     paint: "Weathershield Semi-Gloss", defMethod: "Brush", defFinish: "Weathershield Semi-Gloss",
     typeOpts: ["Timber", "MDF", "Colonial", "Bar", "Bullnose", "Pencil Round"] },
+  // ── Exterior, added ──
+  { key: "pergola", label: "Pergolas, patios and carports", unit: "sqm", group: "Exterior",
+    paint: "Weathershield Low Sheen", defMethod: "Brush", defFinish: "Weathershield Low Sheen",
+    typeOpts: ["Timber", "Steel", "Colorbond", "Aluminium"] },
+  { key: "verandah_ceil", label: "Verandah and porch ceilings", unit: "sqm", group: "Exterior",
+    paint: "Weathershield Low Sheen", defMethod: "Cut & Roll", defFinish: "Weathershield Low Sheen",
+    typeOpts: ["Lining boards", "Fibre cement", "Plywood", "Exposed rafters"] },
+  { key: "screens", label: "Privacy screens and battens", unit: "sqm", group: "Exterior",
+    paint: "Weathershield Low Sheen", defMethod: "Brush", defFinish: "Weathershield Low Sheen",
+    typeOpts: ["Timber batten", "Aluminium", "Steel", "Laser cut"] },
+  { key: "lattice", label: "Lattice", unit: "sqm", group: "Exterior",
+    paint: "Weathershield Low Sheen", defMethod: "Spray", defFinish: "Weathershield Low Sheen",
+    typeOpts: ["Timber", "PVC"] },
+  { key: "gates", label: "Gates", unit: "qty", group: "Exterior",
+    paint: "Weathershield Semi-Gloss", defMethod: "Brush", defFinish: "Weathershield Semi-Gloss",
+    typeOpts: ["Timber", "Steel", "Colorbond", "Aluminium", "Double"] },
+  { key: "shutters", label: "Shutters and awnings", unit: "qty", group: "Exterior",
+    paint: "Weathershield Semi-Gloss", defMethod: "Brush", defFinish: "Weathershield Semi-Gloss",
+    typeOpts: ["Timber shutter", "Aluminium shutter", "Canvas awning frame", "Bahama"] },
+  { key: "retaining", label: "Retaining walls and blockwork", unit: "sqm", group: "Exterior",
+    paint: "Weathershield Low Sheen", defMethod: "Cut & Roll", defFinish: "Weathershield Low Sheen",
+    typeOpts: ["Besser block", "Brick", "Concrete", "Render", "Timber sleeper"] },
+  { key: "stumps", label: "Stumps, bearers and subfloor", unit: "qty", group: "Exterior",
+    paint: "Weathershield Low Sheen", defMethod: "Brush", defFinish: "Weathershield Low Sheen",
+    typeOpts: ["Timber stump", "Steel stump", "Concrete", "Bearer and joist"] },
+  { key: "sheds", label: "Sheds and outbuildings", unit: "sqm", group: "Exterior",
+    paint: "Weathershield Low Sheen", defMethod: "Spray", defFinish: "Weathershield Low Sheen",
+    typeOpts: ["Colorbond", "Timber", "Fibre cement", "Besser block"] },
+  { key: "steel_e", label: "Steel posts, beams and metalwork", unit: "lm", group: "Exterior",
+    paint: "Weathershield Semi-Gloss", defMethod: "Brush", defFinish: "Weathershield Semi-Gloss",
+    typeOpts: ["Painted previously", "Galvanised", "Rusted", "Bare steel"] },
   // ── Specialty ──
   { key: "limewash", label: "Limewash Bauwerk", unit: "sqm", group: "Specialty",
     paint: "Bauwerk Limewash", defMethod: "Brush", defFinish: "Special",
@@ -125,6 +187,31 @@ export const SUBSTRATES: Substrate[] = [
     typeOpts: [] },
   { key: "firecoat", label: "Fire-rated BAL areas", unit: "sqm", group: "Specialty",
     paint: "Dulux Firecoat", defMethod: "Cut & Roll", defFinish: "Special",
+    typeOpts: [] },
+  // ── Specialty, added ──
+  { key: "epoxy", label: "Epoxy floor coating", unit: "sqm", group: "Specialty",
+    paint: "Dulux Luxafloor Epoxy", defMethod: "Cut & Roll", defFinish: "Special",
+    typeOpts: ["Clear", "Solid colour", "Flake"] },
+  { key: "texture", label: "Texture coating", unit: "sqm", group: "Specialty",
+    paint: "Dulux Acratex", defMethod: "Spray", defFinish: "Special",
+    typeOpts: ["Fine", "Medium", "Coarse", "Roll-on"] },
+  { key: "waterproof", label: "Waterproofing membrane", unit: "sqm", group: "Specialty",
+    paint: "Dulux Construction Wet Area Membrane", defMethod: "Cut & Roll", defFinish: "Special",
+    typeOpts: ["Balcony", "Wet area", "Planter box", "Retaining wall"] },
+  { key: "rust", label: "Rust treatment and metal primer", unit: "sqm", group: "Specialty",
+    paint: "Dulux Metalshield Zinc Primer", defMethod: "Brush", defFinish: "Special",
+    typeOpts: ["Spot treatment", "Full prime", "Converter"] },
+  { key: "venetian", label: "Venetian plaster and microcement", unit: "sqm", group: "Specialty",
+    paint: "Venetian Plaster", defMethod: "Brush", defFinish: "Special",
+    typeOpts: ["Venetian", "Microcement", "Tadelakt", "Polished"] },
+  { key: "antigraffiti", label: "Anti-graffiti coating", unit: "sqm", group: "Specialty",
+    paint: "Dulux Anti-Graffiti Clear", defMethod: "Cut & Roll", defFinish: "Special",
+    typeOpts: [] },
+  { key: "linemark", label: "Line marking", unit: "lm", group: "Specialty",
+    paint: "Dulux Line Marking Paint", defMethod: "Brush", defFinish: "Special",
+    typeOpts: ["Car park bay", "Kerb", "Hatching", "Disabled bay"] },
+  { key: "leadpaint", label: "Lead paint encapsulation", unit: "sqm", group: "Specialty",
+    paint: "Dulux Sealer Binder", defMethod: "Cut & Roll", defFinish: "Special",
     typeOpts: [] },
 ]
 
@@ -270,7 +357,10 @@ export function substrateLines(
  * for roughly three times the semi-gloss it needed.
  *
  * An area substrate is 1.0 by definition and is listed so the guard below can
- * check every key is accounted for.
+ * check every key is accounted for. Two break that: a privacy screen and a
+ * lattice panel are measured as the face area you can see, but painted on both
+ * faces and around every batten or slat edge, so a square metre of lattice
+ * really does take a bit over two square metres of paint.
  */
 export const AREA_PER_UNIT: Record<string, number> = {
   // ── Interior ──
@@ -299,6 +389,29 @@ export const AREA_PER_UNIT: Record<string, number> = {
   // ── Specialty ──
   limewash: 1, timber_stain: 1, firecoat: 1,
   cabinets: 0.9,        // per door or drawer front, both faces
+
+  // ── Interior, added ──
+  lining: 1, brick_i: 1, garage_i: 1,
+  beams: 0.55,          // per lineal metre: a 190x45 dressed beam, three faces
+  balustrades_i: 1.0,   // per lineal metre, rails and balusters both sides
+  rails: 0.1,           // a 65mm moulding, face and edges
+  bulkheads: 0.4,       // per lineal metre: a 300mm face plus its soffit
+  stairs_i: 12,         // per flight: treads, risers, stringers and the underside
+  sills: 0.4,           // per sill, face, nose and reveal
+  shelving: 2.0,        // per cupboard or shelf run
+
+  // ── Exterior, added ──
+  pergola: 1, verandah_ceil: 1, retaining: 1, sheds: 1,
+  screens: 1.8,         // per m2 of screen face: both sides and every batten edge
+  lattice: 2.2,         // per m2 of lattice: both sides, and all four edges of every slat
+  gates: 3.0,           // per gate, both faces and the frame
+  shutters: 2.0,        // per shutter or awning frame, both faces
+  stumps: 1.2,          // per stump, four faces of a 100x100 above ground
+  steel_e: 0.6,         // per lineal metre of post or beam, all faces
+
+  // ── Specialty, added ──
+  epoxy: 1, texture: 1, waterproof: 1, rust: 1, venetian: 1, antigraffiti: 1, leadpaint: 1,
+  linemark: 0.15,       // per lineal metre of a 100mm line
 }
 
 const AREA_MISSING = SUBSTRATES.filter(s => AREA_PER_UNIT[s.key] == null).map(s => s.key)

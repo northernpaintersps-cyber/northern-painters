@@ -76,6 +76,12 @@ export const PROD_RATES: Record<string, number> = {
   garage_e: 2.00, fences: 0.080, decks: 0.100, deck_paint: 0.100, driveway: 0.060,
   roof: 0.080, win_e: 1.00, architraves_e: 0.50,
   limewash: 0.150, cabinets: 1.00, timber_stain: 0.100, firecoat: 0.080,
+  beams: 0.130, lining: 0.090, stairs_i: 3.00, balustrades_i: 0.100, rails: 0.050,
+  bulkheads: 0.060, brick_i: 0.090, garage_i: 0.055, sills: 0.250, shelving: 0.800,
+  pergola: 0.130, verandah_ceil: 0.090, screens: 0.180, lattice: 0.220, gates: 0.800,
+  shutters: 0.600, retaining: 0.070, stumps: 0.300, sheds: 0.090, steel_e: 0.120,
+  epoxy: 0.080, texture: 0.120, waterproof: 0.100, rust: 0.150, venetian: 0.250,
+  antigraffiti: 0.050, linemark: 0.050, leadpaint: 0.200,
 }
 
 /**
