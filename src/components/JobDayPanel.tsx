@@ -3,7 +3,8 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase, selectAll, upsertRows } from '@/lib/supabase'
 import { useAuth } from '@/lib/auth'
 import { Modal } from '@/components/ui/Modal'
-import { genId, findCrew, isWorkDay } from '@/lib/utils'
+import { workingDatesFrom } from '@/lib/derive'
+import { genId, findCrew, isWorkDay, localDate } from '@/lib/utils'
 import { Check, Loader2, MessageSquare } from 'lucide-react'
 import { invalidateTable } from '../lib/queryKeys'
 import ExposureMark from '@/components/ExposureMark'
@@ -16,23 +17,6 @@ const SLOTS = [
   { v: 'afternoon', l: 'Afternoon PM', bg: '#fef3c7', fg: '#92400e', brd: '#fde68a' },
 ] as const
 
-const localStr = (d: Date) =>
-  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-
-// V16 _saveJobDayPanel — N working days from the start date
-function workingDatesFrom(start: string, days: number): string[] {
-  const out: string[] = []
-  const d0 = new Date(start + 'T00:00')
-  let wd = 0, cal = 0
-  while (wd < days && cal < 365) {
-    const dt = new Date(d0)
-    dt.setDate(dt.getDate() + cal)
-    const key = localStr(dt)
-    if (isWorkDay(key)) { out.push(key); wd++ }
-    cal++
-  }
-  return out
-}
 
 function useTable(table: string) {
   const { user } = useAuth()

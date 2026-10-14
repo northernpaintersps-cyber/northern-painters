@@ -5,6 +5,7 @@ import { supabase, selectAll } from '@/lib/supabase'
 import { useAuth } from '@/lib/auth'
 import { Modal } from '@/components/ui/Modal'
 import JobPicker from '@/components/JobPicker'
+import { amountFields as amountFieldsFor } from '@/lib/derive'
 import { Input, TextArea } from '@/components/ui/Field'
 import {
   fmtCurrency, fmtDate, calcOwed, invStatus, genId, today,
@@ -208,15 +209,9 @@ export default function Invoices() {
 
   const pickedTotal = selectedTotal(lines, picked)
 
-  /** Money fields for an ex-GST figure, respecting a cash job carrying no GST. */
-  function amountFields(ex: number, jobId?: string | null) {
-    const rate = jobGstRate(jobs.find(j => j.id === (jobId ?? form.job_id)))
-    return {
-      agreed_ex_gst: ex,
-      gst: +(ex * rate).toFixed(2),
-      total_inc_gst: +(ex * (1 + rate)).toFixed(2),
-    }
-  }
+  /** The shared derivation, with this page's job lookup in front of it. */
+  const amountFields = (ex: number, jobId?: string | null) =>
+    amountFieldsFor(ex, jobs.find(j => j.id === (jobId ?? form.job_id)))
 
   /**
    * Change a pricing field and re-total the picked lines in the same update.

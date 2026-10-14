@@ -2,6 +2,7 @@ import { useState, useMemo, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase, selectAll } from '@/lib/supabase'
 import { useAuth } from '@/lib/auth'
+import { nextReceiptNo } from '@/lib/derive'
 import { Modal } from '@/components/ui/Modal'
 import JobPicker from '@/components/JobPicker'
 import { Input, Select, TextArea } from '@/components/ui/Field'
@@ -52,15 +53,6 @@ function useDel() {
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['np_receipts'] }),
   })
-}
-
-// V16 nextReceiptNo()
-function nextReceiptNo(existing: Row[]) {
-  const nums = existing
-    .map(r => parseInt(String(r.id ?? '').replace(/\D/g, ''), 10))
-    .filter(n => !isNaN(n))
-  const max = nums.length ? Math.max(...nums) : 0
-  return `R-${String(max + 1).padStart(4, '0')}`
 }
 
 // V16 copyReceiptMsg()

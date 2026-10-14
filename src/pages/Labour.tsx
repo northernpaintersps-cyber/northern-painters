@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase, selectAll } from '@/lib/supabase'
 import { useAuth } from '@/lib/auth'
+import { hoursBetween } from '@/lib/derive'
 import { Modal } from '@/components/ui/Modal'
 import JobPicker from '@/components/JobPicker'
 import { Input, Select } from '@/components/ui/Field'
@@ -22,16 +23,6 @@ const IS = 'border-none bg-transparent text-xs cursor-pointer focus:outline-none
 // labBillable / labCost / isBillableLabour now live in lib/utils so the billing
 // calculation and this page cannot drift apart.
 const isBill = isBillableLabour
-
-// Hours between two HH:MM times, minus an optional break in minutes
-function hoursBetween(from: string, to: string, breakMins = 0) {
-  if (!from || !to) return 0
-  const [fh, fm] = from.split(':').map(Number)
-  const [th, tm] = to.split(':').map(Number)
-  let mins = (th * 60 + tm) - (fh * 60 + fm)
-  if (mins < 0) mins += 24 * 60
-  return Math.max(0, (mins - breakMins) / 60)
-}
 
 function useTable(table: string) {
   const { user } = useAuth()

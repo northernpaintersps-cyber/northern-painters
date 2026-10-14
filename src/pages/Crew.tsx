@@ -7,7 +7,7 @@ import { Modal } from '@/components/ui/Modal'
 import JobDayPanel from '@/components/JobDayPanel'
 import { ExposureIcon } from '@/components/ExposureMark'
 import { Input } from '@/components/ui/Field'
-import { getJobScheduledDates, genId, findCrew, crewLabel } from '@/lib/utils'
+import { getJobScheduledDates, genId, findCrew, crewLabel, localDate } from '@/lib/utils'
 import {
   Plus, Loader2, Trash2, Edit2, ChevronLeft, ChevronRight,
   MessageSquare, CalendarDays,
@@ -20,8 +20,6 @@ const CONFIRMED = ['Scheduled', 'In Progress', 'Hourly Rate Accepted']
 const DN = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 const II = 'border-none bg-transparent text-[12.5px] w-full focus:outline-none focus:bg-blue-50/60 rounded px-0.5'
 
-const localStr = (d: Date) =>
-  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 
 // Monday of the week, offset by N weeks
 function weekStart(offset: number) {
@@ -114,8 +112,8 @@ export default function Crew() {
   const days = useMemo(() => Array.from({ length: 7 }, (_, i) => {
     const d = new Date(ws); d.setDate(d.getDate() + i); return d
   }), [ws.getTime()])
-  const weekKeys = days.map(localStr)
-  const todayStr = localStr(new Date())
+  const weekKeys = days.map(localDate)
+  const todayStr = localDate(new Date())
 
   /**
    * One person, one day, two different jobs, on shifts they cannot both work.
@@ -319,7 +317,7 @@ export default function Crew() {
               <tr>
                 <th className="px-2.5 py-[7px] text-left border border-black/[0.12] bg-[#fafaf8] text-[11px] sticky left-0 z-[3]" style={{ minWidth: 130 }}>Job</th>
                 {days.map((d, i) => {
-                  const isToday = localStr(d) === todayStr
+                  const isToday = localDate(d) === todayStr
                   return (
                     <th key={i} className="text-center px-1 py-[7px] border"
                       style={{
