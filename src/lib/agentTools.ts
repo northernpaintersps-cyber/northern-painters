@@ -21,6 +21,8 @@ import { jobExposure, EXPOSURE_SHORT } from '@/lib/exposure'
 import { getJobScheduledDates, calcOwed, invStatus, today } from '@/lib/utils'
 import { attentionList } from '@/lib/attention'
 import { quoteFollowUp, invoiceReminder, bookingConfirmation, MESSAGE_KINDS } from '@/lib/messages'
+import { buildWriteTools, WRITE_PROMPT, type Propose } from '@/lib/agentWrites'
+import { emptyContext, type WriteContext } from '@/lib/writes'
 
 type Row = Record<string, any>
 
@@ -69,6 +71,12 @@ export interface ToolContext {
    * is the only part of this file that can be wrong quietly.
    */
   load?: (table: string) => Promise<Row[]>
+  /**
+   * Shows a proposed change and resolves once the owner decides. Supplying it
+   * is what turns the write tools on; without it the assistant is read-only,
+   * which is how it behaves in tests and anywhere the screen cannot ask.
+   */
+  propose?: Propose
 }
 
 // ── Row access, cached for the turn ─────────────────────────
@@ -437,13 +445,25 @@ export function buildTools(ctx: ToolContext): AgentTool[] {
     },
   ]
 
+  if (ctx.propose) {
+    // One load for the whole turn, through the same cache the read tools use.
+    const rows = async (): Promise<WriteContext> => {
+      const [jobs, crew, labour, materials, assignments, receipts] = await Promise.all([
+        load('np_jobs'), load('np_crew'), load('np_labour'),
+        load('np_materials'), load('np_assignments'), load('np_receipts'),
+      ])
+      return { ...emptyContext(), jobs, crew, labour, materials, assignments, receipts, biz: ctx.biz }
+    }
+    tools.push(...buildWriteTools({ propose: ctx.propose, rows }))
+  }
+
   return tools
 }
 
 // ── The system prompt ───────────────────────────────────────
 
 /** Built from the table list, so it cannot drift from what is readable. */
-export function systemPrompt(biz?: Row | null): string {
+export function systemPrompt(biz?: Row | null, canWrite = false): string {
   return `You are the assistant inside a painting business's own management app. The owner is a working painter in the Northern Rivers, New South Wales${biz?.company_name ? `, trading as ${biz.company_name}` : ''}. You are talking to them, not to their clients.
 
 You have tools that read their live data. Use them. You know nothing about this business except what a tool returns.
@@ -465,12 +485,14 @@ A job's id is its number, like 7142. Name the ids behind any claim so they can b
 Quantities: m2 for areas, lineal metres for runs, and a count for things like doors and windows.
 
 WHAT YOU CANNOT DO
-You cannot change, add or delete anything — you have no write access, by design. You cannot send a message; draft_message puts wording on the clipboard and they send it themselves. You cannot run in the background: you only exist while this screen is open.
+You cannot delete anything, and you cannot touch invoices, receipts, quotes or site visits. You cannot send a message; draft_message puts wording on the clipboard and they send it themselves. You cannot run in the background: you only exist while this screen is open.
 
-If asked to do one of those, say so plainly in a line and offer what you can do instead.
+If asked to do one of those, say so plainly in a line and offer what you can do instead.{WRITES}
 
 HOW TO ANSWER
 Lead with the answer. Short paragraphs, and a small markdown table when you are comparing more than about three things. No preamble, no restating the question.
 
 Say when the data is thin. "Three finished jobs" is an anecdote, not a rate, and you should name that rather than let a median off three jobs sound like a fact. If a tool comes back empty, say it came back empty — do not fill the gap.`
+    .replace('{WRITES}', canWrite ? `
+${WRITE_PROMPT}` : '')
 }

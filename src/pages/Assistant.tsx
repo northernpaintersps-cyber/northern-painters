@@ -13,13 +13,20 @@ import { useBusinessSettings } from '@/pages/SettingsPage'
 import { runAgent, totalTokens, type AgentStep } from '@/lib/agent'
 import { buildTools, systemPrompt } from '@/lib/agentTools'
 import { mdHTML } from '@/lib/markdown'
+import { useQueryClient } from '@tanstack/react-query'
+import ChangeCard from '@/components/ChangeCard'
+import { applyChange, type Change } from '@/lib/writes'
+import type { ProposeResult } from '@/lib/agentWrites'
+import { useDictation, appendPhrase } from '@/lib/useDictation'
 import {
   Send, Loader2, Sparkles, Trash2, Wrench, AlertCircle, ExternalLink,
-  ClipboardCheck, ChevronDown, ChevronRight, Key,
+  ClipboardCheck, ChevronDown, ChevronRight, Key, Mic, History, PencilLine,
 } from 'lucide-react'
 
 const QUICK = [
   'What needs my attention today?',
+  'Log 8 hours for Dave on the Pine St job today',
+  'Push job 7142 back to start Monday',
   'Which finished jobs made the least money, and why?',
   'How much is owed to me, and how late is it?',
   'What are my real rates per m² by service?',
@@ -38,7 +45,27 @@ interface Turn {
 }
 
 const HISTORY_TURNS = 20
+const LOG_ENTRIES = 200
+/** How long a card can sit unanswered before the turn gives up on it. */
+const DECISION_TIMEOUT_MS = 5 * 60 * 1000
+
 const key = (userId?: string) => `np_assistant_${userId ?? 'anon'}`
+const logKey = (userId?: string) => `np_assistant_log_${userId ?? 'anon'}`
+
+interface LogEntry { at: string; summary: string; table: string; id: string }
+
+function loadLog(userId?: string): LogEntry[] {
+  try {
+    const raw = localStorage.getItem(logKey(userId))
+    const parsed = raw ? JSON.parse(raw) : null
+    return Array.isArray(parsed) ? parsed : []
+  } catch { return [] }
+}
+function pushLog(userId: string | undefined, e: LogEntry): LogEntry[] {
+  const next = [e, ...loadLog(userId)].slice(0, LOG_ENTRIES)
+  try { localStorage.setItem(logKey(userId), JSON.stringify(next)) } catch { /* full quota */ }
+  return next
+}
 
 /** localStorage can throw and can come back empty. Neither may break the page. */
 function loadHistory(userId?: string): Turn[] {
@@ -102,10 +129,75 @@ export default function Assistant() {
   const [offer, setOffer] = useState<{ route: string; label: string } | null>(null)
   const [copied, setCopied] = useState('')
   const endRef = useRef<HTMLDivElement>(null)
+  const qc = useQueryClient()
+  const dict = useDictation()
+
+  /**
+   * Changes waiting on a decision. The agent's tool is parked on the promise
+   * at the head of this queue, so the turn literally cannot continue until the
+   * card is answered — which is the whole guarantee.
+   */
+  const [queue, setQueue] = useState<Array<{
+    change: Change
+    decide: (r: ProposeResult) => void
+  }>>([])
+  const [applying, setApplying] = useState(false)
+  const [log, setLog] = useState<LogEntry[]>(() => loadLog(user?.id))
+  const [showLog, setShowLog] = useState(false)
 
   useEffect(() => { setTurns(loadHistory(user?.id)) }, [user?.id])
   useEffect(() => { saveHistory(user?.id, turns) }, [turns, user?.id])
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [turns, live])
+
+  /** Handed to the write tools. Resolves when the card is answered. */
+  const propose = (change: Change): Promise<ProposeResult> =>
+    new Promise<ProposeResult>(resolve => {
+      let settled = false
+      const once = (r: ProposeResult) => {
+        if (settled) return
+        settled = true
+        setQueue(q => q.filter(item => item.change !== change))
+        resolve(r)
+      }
+      // A card nobody answers must not hold the turn open for ever.
+      const timer = setTimeout(() => once({ decision: 'timeout' }), DECISION_TIMEOUT_MS)
+      setQueue(q => [...q, {
+        change,
+        decide: r => { clearTimeout(timer); once(r) },
+      }])
+    })
+
+  async function decide(confirm: boolean) {
+    const head = queue[0]
+    if (!head) return
+    if (!confirm) { head.decide({ decision: 'declined' }); return }
+
+    setApplying(true)
+    try {
+      await applyChange(head.change, user!.id, qc)
+      setLog(pushLog(user?.id, {
+        at: new Date().toISOString(),
+        summary: head.change.summary,
+        table: head.change.table,
+        id: String(head.change.row.id),
+      }))
+      head.decide({ decision: 'confirmed' })
+    } catch (e: any) {
+      // Reported back so the assistant says it failed rather than "saved".
+      head.decide({ decision: 'confirmed', error: e?.message ?? String(e) })
+    } finally { setApplying(false) }
+  }
+
+  function dictate() {
+    if (!dict.supported) {
+      alert('Voice input is not supported in this browser. Chrome or Edge on Android, or Safari on iOS.')
+      return
+    }
+    if (dict.listening) { dict.stop(); return }
+    // Into the box, never straight to the model: a misheard job number should
+    // be caught before anything is proposed from it.
+    dict.start(phrase => setInput(prev => appendPhrase(prev, phrase)))
+  }
 
   async function ask(question: string) {
     const q = question.trim()
@@ -121,6 +213,7 @@ export default function Assistant() {
       const tools = buildTools({
         userId: user!.id,
         biz,
+        propose,
         onOpen: (route, label) => setOffer({ route, label }),
         onDraft: async (text, label) => {
           try { await navigator.clipboard.writeText(text); setCopied(label) }
@@ -138,7 +231,7 @@ export default function Assistant() {
 
       const run = await runAgent({
         apiKey,
-        system: systemPrompt(biz),
+        system: systemPrompt(biz, true),
         messages,
         tools,
         onStep: s => setLive(prev => [...prev, s]),
@@ -187,16 +280,43 @@ export default function Assistant() {
         <div>
           <h1 className="text-lg font-bold text-gray-900 mb-0.5">Assistant</h1>
           <p className="text-[12px] text-[#666]">
-            Reads your jobs, invoices, costs and crew. It cannot change anything.
+            Reads your jobs, invoices, costs and crew, and can log work or move a job —
+            you confirm every change before it is saved.
           </p>
         </div>
+        <div className="flex items-center gap-3">
+        {log.length > 0 && (
+          <button onClick={() => setShowLog(v => !v)}
+            className="flex items-center gap-1.5 text-[12px] text-[#666] hover:text-[#1a1a18]">
+            <History size={13} /> {showLog ? 'Hide changes' : `${log.length} changes`}
+          </button>
+        )}
         {turns.length > 0 && (
           <button onClick={() => { setTurns([]); saveHistory(user?.id, []) }}
             className="flex items-center gap-1.5 text-[12px] text-[#666] hover:text-[#c0392b]">
             <Trash2 size={13} /> Clear
           </button>
         )}
+        </div>
       </div>
+
+      {/* What it has actually changed, so there is a record beyond the chat. */}
+      {showLog && (
+        <div className="bg-white border border-black/[0.12] rounded-xl p-3 mb-2.5 max-h-48 overflow-y-auto shrink-0">
+          <div className="text-[11px] font-bold uppercase tracking-wide text-[#666] mb-1.5">
+            Changes made from here
+          </div>
+          {log.map((e, i) => (
+            <div key={i} className="flex items-baseline gap-2 text-[11.5px] py-0.5">
+              <PencilLine size={11} className="shrink-0 text-[#2563eb] mt-px" />
+              <span className="flex-1">{e.summary}</span>
+              <span className="text-[#999] tabular-nums whitespace-nowrap">
+                {new Date(e.at).toLocaleString('en-AU', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Conversation */}
       <div className="flex-1 overflow-y-auto bg-white border border-black/[0.12] rounded-xl p-4">
@@ -264,6 +384,15 @@ export default function Assistant() {
         <div ref={endRef} />
       </div>
 
+      {/* The decision. Outside the scroller so it cannot be scrolled past. */}
+      {queue[0] && (
+        <div className="mt-2.5 shrink-0">
+          <ChangeCard change={queue[0].change} busy={applying}
+            queued={queue.length - 1}
+            onConfirm={() => decide(true)} onCancel={() => decide(false)} />
+        </div>
+      )}
+
       {/* What it did for you, outside the conversation so it does not scroll away */}
       {(offer || copied) && (
         <div className="flex items-center gap-2 flex-wrap mt-2 shrink-0">
@@ -285,9 +414,20 @@ export default function Assistant() {
       <div className="flex gap-2 mt-2.5 shrink-0">
         <input value={input} onChange={e => setInput(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); ask(input) } }}
-          placeholder="Ask about your jobs, money, crew or rates…"
+          placeholder={dict.listening
+            ? (dict.interim || 'Listening…')
+            : 'Ask, or tell it to log something…'}
           disabled={busy}
           className="flex-1 bg-white border border-black/20 rounded-lg px-3 py-2 text-[13px] focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:opacity-60" />
+        {dict.supported && (
+          <button onClick={dictate} disabled={busy}
+            title={dict.listening ? 'Stop' : 'Say it instead'}
+            className={`shrink-0 px-3 rounded-lg border ${dict.listening
+              ? 'bg-[#fee2e2] border-[#fca5a5] text-[#dc2626]'
+              : 'bg-white border-black/20 text-[#2563eb] hover:bg-[#f5f4f0]'} disabled:opacity-40`}>
+            <Mic size={15} />
+          </button>
+        )}
         <button onClick={() => ask(input)} disabled={busy || !input.trim()}
           className="flex items-center gap-1.5 text-sm bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white font-semibold px-4 py-2 rounded-lg">
           {busy ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
