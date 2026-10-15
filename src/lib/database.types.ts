@@ -56,6 +56,11 @@ export interface Database {
           worker_payment_type: string | null
           labour_desc: string | null
           notes: string | null
+          /** Which phase of the job these hours went to — see
+           *  supabase/np-labour-phase.sql. The name is the real join key,
+           *  because a quote's step ids are regenerated on every reload. */
+          phase_name: string | null
+          phase_id: string | null
           clock_in: string | null
           clock_out: string | null
           break_mins: number | null
@@ -139,6 +144,8 @@ export interface Database {
           crew_name: string | null
           date: string | null
           hours: number | null
+          /** 'full' | 'morning' | 'afternoon'. */
+          time_slot: string | null
           notes: string | null
           updated_at: string | null
           created_at: string | null
