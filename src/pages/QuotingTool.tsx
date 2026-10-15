@@ -73,8 +73,9 @@ type Process = {
   covers?: string[]
   service?: string
 }
-type Equip = { id: string; name: string; cost: number }
-type ExtraMat = { id: string; name: string; cost: number }
+/** `part` names the priced group this belongs to. Blank means all of them. */
+type Equip = { id: string; name: string; cost: number; part?: string }
+type ExtraMat = { id: string; name: string; cost: number; part?: string }
 type Painter = { id: string; name: string; role: string; rate: number }
 const PAINTER_ROLES = ['Standard', 'Lead', 'Subcontractor', 'Custom']
 // V16 TIN_SIZES — the tin sizes the paint adjuster prices against
@@ -587,6 +588,18 @@ export default function QuotingTool() {
     ? Math.round(splitParts.reduce((t, d) => t + (consByPart[d.id] ?? 0), 0) * 100) / 100
     : consTotal
 
+  /** Rows tagged with a group, totalled per group. Untagged rows stay shared. */
+  const sumByPart = (rows: Array<{ cost: number; part?: string }>) => {
+    const out: Record<string, number> = {}
+    for (const r of rows) {
+      if (!r.part) continue
+      out[r.part] = (out[r.part] ?? 0) + (Number(r.cost) || 0)
+    }
+    return out
+  }
+  const equipByPart = useMemo(() => sumByPart(equip), [equip])
+  const extraMatByPart = useMemo(() => sumByPart(extraMats), [extraMats])
+
   const subtotal = labourCost + materials.total + consEffective + equipTotal
   const gst = subtotal * 0.1
 
@@ -611,7 +624,13 @@ export default function QuotingTool() {
   const labAdj = adjLab * (1 + contingency / 100)
   const matAdj = (adjMat + consEffective) * (1 + waste / 100)
   const adjSub = labAdj + matAdj
-  const adjTotalEx = adjSub * (1 + overheadPct / 100) + travelCost
+  /**
+   * Equipment hire is in the subtotal but was missing from the adjusted total,
+   * so the moment an estimate was generated a scaffold hire stopped being
+   * charged — $800 of hire simply left the price. It carries overhead like any
+   * other direct cost, and not waste, because you do not waste a scaffold.
+   */
+  const adjTotalEx = (adjSub + equipTotal) * (1 + overheadPct / 100) + travelCost
   const adjGst = adjTotalEx * 0.1
   /** What the quote is actually priced at: the locked price, else the adjusted
    *  total once an estimate exists, else the plain running subtotal. */
@@ -632,14 +651,17 @@ export default function QuotingTool() {
     pricing: {
       labourCost, materialsTotal: materials.total,
       adjLab, adjMat, contingency, waste, overheadPct,
-      consTotal: consEffective, consByPart, equipTotal, travelCost,
+      consTotal: consEffective, consByPart,
+      extraMatTotal, extraMatByPart,
+      equipTotal, equipByPart, travelCost,
       // The quote prices from the adjusted total once an estimate exists.
       adjusted: !!estimate,
     },
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }), [substrates, splitBy, jobType, extraServices, splitParts, byQty, labourByKey,
        materials.byKey, materials.total, processes, avgRate, bookWeight, labourCost,
-       adjLab, adjMat, contingency, waste, overheadPct, consEffective, consByPart, equipTotal,
+       adjLab, adjMat, contingency, waste, overheadPct, consEffective, consByPart,
+       extraMatTotal, extraMatByPart, equipTotal, equipByPart,
        travelCost, estimate])
 
   /** A locked price is for the whole job; the groups will not land on it. */
@@ -1982,59 +2004,7 @@ export default function QuotingTool() {
             )}
           </Card>
 
-          <Card>
-            <div className={CT}>5. Consumables</div>
-            <div className="text-[11px] text-[#666] mb-2.5">
-              AI estimates masking tape, plastic, sandpaper, caulk, cloths, thinners and other consumables
-              based on your substrates and prep level.
-            </div>
-            <div className="flex gap-2 items-end mb-2.5 flex-wrap">
-              <div className="flex-1 min-w-[180px]">
-                <label className="block text-[10px] uppercase font-bold text-[#666] mb-1">Prep Level</label>
-                <select value={consPrep} onChange={e => setConsPrep(e.target.value)} className={INP}>
-                  {CONS_PREP.map(c => <option key={c.v} value={c.v}>{c.l}</option>)}
-                </select>
-              </div>
-              <button onClick={runConsAI} disabled={consBusy} className={`${BTN_P} whitespace-nowrap disabled:opacity-50`}>
-                {consBusy ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />} Estimate
-              </button>
-            </div>
-            {consNotes && <div className="mb-2.5 px-3 py-2.5 bg-[#f5f4f0] rounded-lg text-xs text-[#666] leading-relaxed">{consNotes}</div>}
-            <div className="flex items-center gap-2">
-              <span className="text-[13px] text-[#666] font-semibold">Total consumables (ex GST)</span>
-              <div className="flex items-center gap-1 ml-auto">
-                <span className="text-[15px] text-[#666]">$</span>
-                <input type="number" min={0} value={consIndividual ? consEffective : (consTotal || '')}
-                  placeholder="0" disabled={consIndividual}
-                  onChange={e => setConsTotal(parseFloat(e.target.value) || 0)}
-                  className="w-24 text-base font-bold text-[#2563eb] border-2 border-[#2563eb] rounded-lg px-2 py-1.5 bg-[#f5f4f0] focus:outline-none disabled:opacity-70" />
-              </div>
-            </div>
-            {consIndividual && (
-              <div className="text-[11px] text-[#666] mt-1.5">
-                Set per part in the split panel — this is their sum. Estimate again to
-                re-seed it, or clear the per-part figures to go back to one number.
-              </div>
-            )}
-          </Card>
 
-          <Card>
-            <div className="flex justify-between items-center mb-2">
-              <div className={`${CT} m-0`}>5b. Extra Materials</div>
-              <button onClick={() => setExtraMats(m => [...m, { id: genId('em'), name: '', cost: 0 }])} className={BTN}><Plus size={12} /> Add</button>
-            </div>
-            {extraMats.length === 0 ? <div className="text-[#666] text-xs">None added.</div> : extraMats.map(m => (
-              <div key={m.id} className="flex items-center gap-2 mb-1.5">
-                <input value={m.name} placeholder="e.g. Stain blocker, specialty primer"
-                  onChange={e => setExtraMats(x => x.map(y => y.id === m.id ? { ...y, name: e.target.value } : y))}
-                  className="flex-1 min-w-0 px-2 py-1.5 text-xs bg-white border border-black/20 rounded-lg focus:outline-none" />
-                <input type="number" value={m.cost || ''} placeholder="0"
-                  onChange={e => setExtraMats(x => x.map(y => y.id === m.id ? { ...y, cost: parseFloat(e.target.value) || 0 } : y))}
-                  className="w-20 px-2 py-1.5 text-right font-mono text-xs bg-white border border-black/20 rounded-lg focus:outline-none" />
-                <button onClick={() => setExtraMats(x => x.filter(y => y.id !== m.id))} className="text-[#c0392b]"><Trash2 size={12} /></button>
-              </div>
-            ))}
-          </Card>
 
           <Card>
             <div className={CT}>6. Painters and Logistics</div>
@@ -2079,29 +2049,6 @@ export default function QuotingTool() {
               <Field label="Travel one way km">
                 <input type="number" value={travelKm} onChange={e => setTravelKm(e.target.value)} placeholder="e.g. 25" className={INP} />
               </Field>
-              <div>
-                <div className="flex justify-between items-center mb-1">
-                  <label className="text-xs font-medium text-gray-500">Access &amp; Equipment Hire</label>
-                  <button onClick={() => setEquip(x => [...x, { id: genId('eq'), name: '', cost: 0 }])} className={BTN}><Plus size={11} /> Add</button>
-                </div>
-                {equip.map(eq => (
-                  <div key={eq.id} className="flex items-center gap-2 mb-1.5">
-                    <input value={eq.name} placeholder="e.g. Scaffold hire, boom lift"
-                      onChange={e => setEquip(x => x.map(y => y.id === eq.id ? { ...y, name: e.target.value } : y))}
-                      className="flex-1 min-w-0 px-2 py-1.5 text-xs bg-white border border-black/20 rounded-lg focus:outline-none" />
-                    <input type="number" value={eq.cost || ''} placeholder="0"
-                      onChange={e => setEquip(x => x.map(y => y.id === eq.id ? { ...y, cost: parseFloat(e.target.value) || 0 } : y))}
-                      className="w-20 px-2 py-1.5 text-right font-mono text-xs bg-white border border-black/20 rounded-lg focus:outline-none" />
-                    <button onClick={() => setEquip(x => x.filter(y => y.id !== eq.id))} className="text-[#c0392b]"><Trash2 size={12} /></button>
-                  </div>
-                ))}
-                {equipTotal > 0 && (
-                  <div className="flex justify-between items-center px-2.5 py-2 bg-[#f5f4f0] rounded-[7px] text-xs mt-1">
-                    <span className="text-[#666]">Equipment hire total (ex GST)</span>
-                    <span className="font-bold text-sm text-[#2563eb]">{fmtCurrency(equipTotal)}</span>
-                  </div>
-                )}
-              </div>
               <Field label="Site visit notes">
                 <textarea value={logisticsNotes} onChange={e => setLogisticsNotes(e.target.value)} rows={3}
                   placeholder="e.g. Premium finish, oil-based previously used, morning access only…" className={`${INP} resize-y`} />
@@ -2553,18 +2500,126 @@ export default function QuotingTool() {
                     )}
                   </Card>
                 )}
+
+          {/* Consumables, extra materials and hire sit here rather than in the
+              estimating column: they are what you add once the estimate exists
+              and you know what the job needs. Each can be one figure for the
+              whole quote, or set against individual parts. */}
+          <Card>
+            <div className={CT}>5. Consumables</div>
+            <div className="text-[11px] text-[#666] mb-2.5">
+              AI estimates masking tape, plastic, sandpaper, caulk, cloths, thinners and other consumables
+              based on your substrates and prep level.
+            </div>
+            <div className="flex gap-2 items-end mb-2.5 flex-wrap">
+              <div className="flex-1 min-w-[180px]">
+                <label className="block text-[10px] uppercase font-bold text-[#666] mb-1">Prep Level</label>
+                <select value={consPrep} onChange={e => setConsPrep(e.target.value)} className={INP}>
+                  {CONS_PREP.map(c => <option key={c.v} value={c.v}>{c.l}</option>)}
+                </select>
+              </div>
+              <button onClick={runConsAI} disabled={consBusy} className={`${BTN_P} whitespace-nowrap disabled:opacity-50`}>
+                {consBusy ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />} Estimate
+              </button>
+            </div>
+            {consNotes && <div className="mb-2.5 px-3 py-2.5 bg-[#f5f4f0] rounded-lg text-xs text-[#666] leading-relaxed">{consNotes}</div>}
+            <div className="flex items-center gap-2">
+              <span className="text-[13px] text-[#666] font-semibold">Total consumables (ex GST)</span>
+              <div className="flex items-center gap-1 ml-auto">
+                <span className="text-[15px] text-[#666]">$</span>
+                <input type="number" min={0} value={consIndividual ? consEffective : (consTotal || '')}
+                  placeholder="0" disabled={consIndividual}
+                  onChange={e => setConsTotal(parseFloat(e.target.value) || 0)}
+                  className="w-24 text-base font-bold text-[#2563eb] border-2 border-[#2563eb] rounded-lg px-2 py-1.5 bg-[#f5f4f0] focus:outline-none disabled:opacity-70" />
+              </div>
+            </div>
+            {consIndividual && (
+              <div className="text-[11px] text-[#666] mt-1.5">
+                Set per part in the split panel — this is their sum. Estimate again to
+                re-seed it, or clear the per-part figures to go back to one number.
+              </div>
+            )}
+          </Card>
+
+          <Card>
+            <div className="flex justify-between items-center mb-2">
+              <div className={`${CT} m-0`}>5b. Extra Materials</div>
+              <button onClick={() => setExtraMats(m => [...m, { id: genId('em'), name: '', cost: 0 }])} className={BTN}><Plus size={12} /> Add</button>
+            </div>
+            {extraMats.length === 0 ? <div className="text-[#666] text-xs">None added.</div> : extraMats.map(m => (
+              <div key={m.id} className="flex items-center gap-2 mb-1.5">
+                <input value={m.name} placeholder="e.g. Stain blocker, specialty primer"
+                  onChange={e => setExtraMats(x => x.map(y => y.id === m.id ? { ...y, name: e.target.value } : y))}
+                  className="flex-1 min-w-0 px-2 py-1.5 text-xs bg-white border border-black/20 rounded-lg focus:outline-none" />
+                <input type="number" value={m.cost || ''} placeholder="0"
+                  onChange={e => setExtraMats(x => x.map(y => y.id === m.id ? { ...y, cost: parseFloat(e.target.value) || 0 } : y))}
+                  className="w-20 px-2 py-1.5 text-right font-mono text-xs bg-white border border-black/20 rounded-lg focus:outline-none" />
+                {splitting && (
+                  <select value={m.part ?? ''} title="Which part carries this"
+                    onChange={e => setExtraMats(x => x.map(y => y.id === m.id
+                      ? { ...y, part: e.target.value || undefined } : y))}
+                    className="w-28 px-1 py-1.5 text-[11px] bg-white border border-black/20 rounded-lg focus:outline-none">
+                    <option value="">All parts</option>
+                    {split.parts.map(pt => <option key={pt.id} value={pt.id}>{pt.label}</option>)}
+                  </select>
+                )}
+                <button onClick={() => setExtraMats(x => x.filter(y => y.id !== m.id))} className="text-[#c0392b]"><Trash2 size={12} /></button>
+              </div>
+            ))}
+          </Card>
+
+          <Card>
+            <div className={CT}>Access and equipment hire</div>
+            <div className="text-[11px] text-[#666] mb-2">
+              Scaffold, lifts, trestles. Assign a line to a part and that part carries it;
+              leave it on all parts and it is shared across them by cost.
+            </div>
+            <div>
+            <div className="flex justify-between items-center mb-1">
+              <label className="text-xs font-medium text-gray-500">Access &amp; Equipment Hire</label>
+              <button onClick={() => setEquip(x => [...x, { id: genId('eq'), name: '', cost: 0 }])} className={BTN}><Plus size={11} /> Add</button>
+            </div>
+            {equip.map(eq => (
+              <div key={eq.id} className="flex items-center gap-2 mb-1.5">
+                <input value={eq.name} placeholder="e.g. Scaffold hire, boom lift"
+                  onChange={e => setEquip(x => x.map(y => y.id === eq.id ? { ...y, name: e.target.value } : y))}
+                  className="flex-1 min-w-0 px-2 py-1.5 text-xs bg-white border border-black/20 rounded-lg focus:outline-none" />
+                <input type="number" value={eq.cost || ''} placeholder="0"
+                  onChange={e => setEquip(x => x.map(y => y.id === eq.id ? { ...y, cost: parseFloat(e.target.value) || 0 } : y))}
+                  className="w-20 px-2 py-1.5 text-right font-mono text-xs bg-white border border-black/20 rounded-lg focus:outline-none" />
+                {splitting && (
+                  <select value={eq.part ?? ''} title="Which part carries this"
+                    onChange={e => setEquip(x => x.map(y => y.id === eq.id
+                      ? { ...y, part: e.target.value || undefined } : y))}
+                    className="w-28 px-1 py-1.5 text-[11px] bg-white border border-black/20 rounded-lg focus:outline-none">
+                    <option value="">All parts</option>
+                    {split.parts.map(pt => <option key={pt.id} value={pt.id}>{pt.label}</option>)}
+                  </select>
+                )}
+                <button onClick={() => setEquip(x => x.filter(y => y.id !== eq.id))} className="text-[#c0392b]"><Trash2 size={12} /></button>
+              </div>
+            ))}
+            {equipTotal > 0 && (
+              <div className="flex justify-between items-center px-2.5 py-2 bg-[#f5f4f0] rounded-[7px] text-xs mt-1">
+                <span className="text-[#666]">Equipment hire total (ex GST)</span>
+                <span className="font-bold text-sm text-[#2563eb]">{fmtCurrency(equipTotal)}</span>
+              </div>
+            )}
+              </div>
+          </Card>
               </>
             )}
 
             </>
           )}
 
+
           <Card>
             <div className={CT}>Running Totals</div>
             {([
               ['Labour ex GST', labourCost],
               ['Materials ex GST', materials.total],
-              ['Consumables ex GST', consTotal],
+              ['Consumables ex GST', consEffective],
               ['Equipment hire ex GST', equipTotal],
               ['Subtotal ex GST', subtotal],
               ['GST 10%', gst],

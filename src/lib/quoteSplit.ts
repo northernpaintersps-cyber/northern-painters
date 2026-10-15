@@ -187,7 +187,12 @@ export interface PricingInput {
    * by cost was always a guess.
    */
   consByPart?: Record<string, number>
+  /** Materials bought for the job that are not paint on a surface. */
+  extraMatTotal: number
+  extraMatByPart?: Record<string, number>
   equipTotal: number
+  /** Access and hire set against individual groups — scaffold on the exterior. */
+  equipByPart?: Record<string, number>
   travelCost: number
   /**
    * True when the quote prices from the adjusted total — i.e. an estimate has
@@ -230,23 +235,47 @@ export function priceGroups(
   const totalDirect = totalRawLab + totalRawMat
 
   // A hand-set override moves every group by the same ratio.
-  const labScale = p.labourCost > 0 ? p.adjLab / p.labourCost : (totalRawLab > 0 ? 0 : 1)
-  const matScale = p.materialsTotal > 0 ? p.adjMat / p.materialsTotal : (totalRawMat > 0 ? 0 : 1)
+  const n = (v: unknown) => (Number.isFinite(Number(v)) ? Number(v) : 0)
+  const labScale = p.labourCost > 0 ? n(p.adjLab) / p.labourCost : (totalRawLab > 0 ? 0 : 1)
+  const matScale = p.materialsTotal > 0 ? n(p.adjMat) / p.materialsTotal : (totalRawMat > 0 ? 0 : 1)
 
   const shares = defs.map((_, i) =>
     totalDirect > 0 ? (rawLab[i] + rawMat[i]) / totalDirect : 1 / defs.length)
 
-  // Consumables: a group's own figure where one is set, otherwise its share of
-  // what is left. The shares are re-based over the groups without a figure, so
-  // setting one group's consumables does not quietly change another's.
-  const own = p.consByPart ?? {}
-  const hasOwn = defs.map(d => own[d.id] != null)
-  const assigned = defs.reduce((t, d) => t + (own[d.id] ?? 0), 0)
-  const spare = Math.max(0, p.consTotal - assigned)
-  const restShare = defs.reduce((t, d, i) => t + (hasOwn[i] ? 0 : shares[i]), 0)
-  const consOf = (i: number) => hasOwn[i]
-    ? (own[defs[i].id] ?? 0)
-    : (restShare > 0 ? spare * (shares[i] / restShare) : 0)
+  /**
+   * Travel is apportioned by LABOUR, not by total cost. Driving to a job is
+   * paid for in hours on site, and a group whose paint happens to be
+   * expensive did not make the trip any longer.
+   */
+  const labShares = defs.map((_, i) =>
+    totalRawLab > 0 ? rawLab[i] / totalRawLab : 1 / defs.length)
+
+  /**
+   * A cost set against individual groups: each named group takes its own
+   * figure and the rest share what is left, with the shares re-based over
+   * only the unset groups — so fixing one group's scaffold does not quietly
+   * move another's.
+   */
+  const splitCost = (rawTotal: number, byPart: Record<string, number> | undefined) => {
+    // Coerced, because one absent figure here used to turn every group's
+    // price into NaN — and a NaN on a quote is the worst failure available.
+    const total = Number.isFinite(Number(rawTotal)) ? Number(rawTotal) : 0
+    const own = byPart ?? {}
+    const hasOwn = defs.map(d => own[d.id] != null)
+    const assigned = defs.reduce((t, d) => t + (Number(own[d.id]) || 0), 0)
+    const spare = Math.max(0, total - assigned)
+    const restShare = defs.reduce((t, _d, i) => t + (hasOwn[i] ? 0 : shares[i]), 0)
+    return (i: number) => hasOwn[i]
+      ? (Number(own[defs[i].id]) || 0)
+      : (restShare > 0 ? spare * (shares[i] / restShare) : 0)
+  }
+
+  const consOf = splitCost(p.consTotal, p.consByPart)
+  const equipOf = splitCost(p.equipTotal, p.equipByPart)
+  // Extra materials sit inside the quote's materials total but belong to no
+  // surface, so without this they were scaled away and the groups summed
+  // short of the quote whenever a job carried any.
+  const extraOf = splitCost(p.extraMatTotal, p.extraMatByPart)
 
   const priced = defs.map((d, i) => {
     const share = shares[i]
@@ -254,21 +283,21 @@ export function priceGroups(
       // No estimate yet: the quote is the plain sum of its parts, equipment
       // included and no percentages anywhere.
       const labour = rawLab[i] + direct.unattributedLabour * share
-      const materials = rawMat[i]
-      const shared = consOf(i) + p.equipTotal * share
+      const materials = rawMat[i] + extraOf(i)
+      const shared = consOf(i) + equipOf(i)
       return { d, labour, materials, shared, total: labour + materials + shared }
     }
     const labour = (rawLab[i] * labScale + direct.unattributedLabour * share)
-      * (1 + p.contingency / 100)
-    const materials = (rawMat[i] * matScale + consOf(i)) * (1 + p.waste / 100)
-    const travel = p.travelCost * share
-    // Overhead lands on the subtotal, travel after it — the quote's own order.
-    const overhead = (labour + materials) * (p.overheadPct / 100)
-    // Consumables are already inside materials, the way the quote folds them
-    // in before waste. Equipment is not in the adjusted total at all, which is
-    // existing behaviour and not something to change quietly here.
-    return { d, labour, materials, shared: overhead + travel,
-             total: labour + materials + overhead + travel }
+      * (1 + n(p.contingency) / 100)
+    // Paint and extra materials scale together, because the quote's materials
+    // override covers both; consumables ride in after, before waste.
+    const materials = ((rawMat[i] + extraOf(i)) * matScale + consOf(i)) * (1 + n(p.waste) / 100)
+    // Hire carries overhead but not waste — you do not waste a scaffold.
+    const equip = equipOf(i)
+    const travel = n(p.travelCost) * labShares[i]
+    const overhead = (labour + materials + equip) * (n(p.overheadPct) / 100)
+    return { d, labour, materials, shared: equip + overhead + travel,
+             total: labour + materials + equip + overhead + travel }
   })
 
   // Cents, with the remainder on the last group.
