@@ -30,12 +30,15 @@ import { shrinkToDataUrl } from '@/lib/image'
 import { uploadPhoto, signPhotos, type StoredPhoto } from '@/lib/photoStore'
 import { checkTakeoff, hasError, type Warning } from '@/lib/takeoffChecks'
 import { applyFinishRows, finishScheduleText } from '@/lib/finishes'
-import { useRateCard, cardHoursPerUnit, cardSummary } from '@/lib/rateCard'
 import {
-  Plus, Trash2, Loader2, Sparkles, Save, ClipboardList, Settings2,
-  FileText, Image as ImageIcon, Ruler, Hammer, RefreshCw,
-  FileDown, Lock, ArrowUp, ArrowDown, Check, CopyPlus, ListChecks, Download, Users, Info, AlertTriangle,
-} from 'lucide-react'
+  buildQuoteHTML, defaultQuoteNo, surfacePrepFor,
+} from '@/lib/quoteDoc'
+import {
+  splitQuote, presetParts, quotedKeys, newPart, partLines,
+  type PartDef, type SplitBy,
+} from '@/lib/quoteSplit'
+import { useRateCard, cardHoursPerUnit, cardSummary } from '@/lib/rateCard'
+import { Plus, Trash2, Loader2, Sparkles, Save, ClipboardList, Settings2, FileText, Image as ImageIcon, Ruler, Hammer, RefreshCw, FileDown, Lock, ArrowUp, ArrowDown, Check, CopyPlus, ListChecks, Download, Users, Info, AlertTriangle, X } from 'lucide-react'
 
 type Row = Record<string, any>
 const INP = 'w-full px-2.5 py-2 text-[13px] bg-white border border-black/20 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500'
@@ -309,6 +312,10 @@ export default function QuotingTool() {
   const [bufDays, setBufDays] = useState(0)
   const [bufHrs, setBufHrs] = useState(0)
   const [travelCost, setTravelCost] = useState(0)
+  /** Off by default: a quote with no split prints its single line as before. */
+  const [splitOn, setSplitOn] = useState(false)
+  const [splitBy, setSplitBy] = useState<SplitBy>('group')
+  const [splitParts, setSplitParts] = useState<PartDef[]>([])
 
   // Settings → Overhead % was displayed on this page and passed to the AI, but
   // the field the price actually uses defaulted to 0, so the setting never
@@ -491,6 +498,8 @@ export default function QuotingTool() {
   // Materials priced from the paint product library against substrate quantities
   const materials = useMemo(() => {
     const products: Record<string, { product: string; size: string; litres: number; coverage: number; price: number }> = {}
+    /** product -> substrate key -> litres, for splitting the tin cost back. */
+    const litresFor: Record<string, Record<string, number>> = {}
     const lib: any[] = biz?.paint_products ?? []
     SUBSTRATES.forEach(sub => {
       const q = totals[sub.key] ?? 0
@@ -516,6 +525,8 @@ export default function QuotingTool() {
           products[name] = { product: name, size: h?.size ?? '4L', litres: 0, coverage: cov, price: h?.yours ?? 0 }
         }
         products[name].litres += litres
+        if (!litresFor[name]) litresFor[name] = {}
+        litresFor[name][sub.key] = (litresFor[name][sub.key] ?? 0) + litres
       }
 
       add(want, (m2 * c.topCoats) / coverageFor(coverage, c.app), coverage)
@@ -535,8 +546,32 @@ export default function QuotingTool() {
       const tins = Math.ceil(p.litres / tinL)
       return { ...p, tins, cost: tins * p.price }
     })
-    return { rows, total: rows.reduce((s, r) => s + r.cost, 0) + extraMatTotal }
+    // A product's cost, including the part-tin it was rounded up to, split
+    // across the substrates that called for it. Extra materials are not tied
+    // to a surface, so they stay out and are carried pro-rata like any other
+    // shared cost.
+    const byKey: Record<string, number> = {}
+    for (const r of rows) {
+      const mine = litresFor[r.product] ?? {}
+      const tot = Object.values(mine).reduce((a, b) => a + b, 0)
+      if (tot <= 0) continue
+      for (const [k, l] of Object.entries(mine)) byKey[k] = (byKey[k] ?? 0) + r.cost * (l / tot)
+    }
+    return { rows, byKey, total: rows.reduce((s, r) => s + r.cost, 0) + extraMatTotal }
   }, [totals, substrates, biz, extraMatTotal, finishSpecs])
+
+  /**
+   * What each surface carries, for the split. Both come straight out of the
+   * work already done above rather than a second pass: the quantity lines
+   * carry a cost per key, and the materials memo walks the substrates anyway.
+   */
+  const labourByKey = useMemo(
+    () => Object.fromEntries(qtyLines.map(l => [l.key, l.cost])),
+    [qtyLines])
+  const bookWeight = useMemo(
+    () => Object.fromEntries(Object.entries(totals)
+      .map(([k, q]) => [k, (Number(q) || 0) * (PROD_RATES[k] ?? 0)])),
+    [totals])
 
   const subtotal = labourCost + materials.total + consTotal + equipTotal
   const gst = subtotal * 0.1
@@ -568,6 +603,16 @@ export default function QuotingTool() {
    *  total once an estimate exists, else the plain running subtotal. */
   const quotePrice = typeof lockedPrice === 'number' && lockedPrice > 0 ? lockedPrice
     : estimate ? adjTotalEx : subtotal
+
+  const split = useMemo(() => splitQuote({
+    substrates, quotePrice, by: splitBy, jobType, extraServices,
+    defs: splitParts,
+    labourByKey: byQty ? labourByKey : undefined,
+    materialsByKey: materials.byKey,
+    processes, avgRate, weight: bookWeight,
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [substrates, quotePrice, splitBy, jobType, extraServices, splitParts,
+       byQty, labourByKey, materials.byKey, processes, avgRate, bookWeight])
 
   function addDocFiles(e: React.ChangeEvent<HTMLInputElement>) {
     const picked = Array.from(e.target.files ?? [])
@@ -1052,6 +1097,7 @@ export default function QuotingTool() {
       method, coats, processes, prepLevels, consPrep, consTotal, consNotes, extraMats,
       painters, travelKm, equip, siteNotes, logisticsNotes, estimate, lockedPrice, rooms,
       finishSpecs, priceMode, unitRates, extraServices,
+      splitOn, splitBy, splitParts,
       // The scope panel is mostly evidence. Without this a reopened quote
       // shows a bare list of numbers with nothing behind them.
       takeoff: extractRes && {
@@ -1080,6 +1126,9 @@ export default function QuotingTool() {
     setTerms(d.terms ?? QUOTE_TERMS[0])
     setSubstrates(normaliseSubstrates(d.substrates ?? d.qty))
     setFinishSpecs(d.finishSpecs ?? {})
+    setSplitOn(!!d.splitOn)
+    setSplitBy(d.splitBy === 'service' || d.splitBy === 'custom' ? d.splitBy : 'group')
+    setSplitParts(Array.isArray(d.splitParts) ? d.splitParts : [])
     setPriceMode(d.priceMode === 'quantity' ? 'quantity' : 'process')
     setExtraServices(Array.isArray(d.extraServices) ? d.extraServices : [])
     setUnitRates(d.unitRates ?? {})
@@ -1162,6 +1211,7 @@ export default function QuotingTool() {
     setSiteNotes(''); setLogisticsNotes(''); setEstimate(''); setLockedPrice(''); setDocs([]); setExtractRes(null)
     // Overhead back to the setting, not to zero: a new quote should start
     // with your standing overhead the same way waste and contingency do.
+    setSplitOn(false); setSplitBy('group'); setSplitParts([])
     setAdjLab(0); setAdjMat(0); setWaste(5); setContingency(10)
     setOverheadPct(rates.overhead ?? 0)
     setBufDays(0); setBufHrs(0); setTravelCost(0); setPaintRows([])
@@ -1202,7 +1252,12 @@ export default function QuotingTool() {
       // The client-facing document carries the standard wording, not the internal
       // AI estimate or the measured takeoff -- exactly as V16's export defaults do.
       coatRows,
-      lines: [{ desc: `${jobType} (labour & materials)`, total: price }],
+      // One line per part when the quote is split, otherwise the single
+      // line it has always printed.
+      lines: splitOn && split.parts.length > 1
+        ? partLines(split.parts)
+        : [{ desc: `${jobType} (labour & materials)`, total: price }],
+      biz,
       origin: window.location.origin,
     }))
     w.document.close()
@@ -2079,6 +2134,103 @@ export default function QuotingTool() {
                       </div>
                     ))}
                   </div>
+                  {/* ── Split into priced parts ── */}
+                  <div className="mb-3 border border-black/[0.12] rounded-lg overflow-hidden">
+                    <label className="flex items-center gap-2 px-3 py-2 bg-[#f5f4f0] cursor-pointer">
+                      <input type="checkbox" checked={splitOn}
+                        onChange={e => {
+                          setSplitOn(e.target.checked)
+                          // Seed from the preset on the way in, so the parts
+                          // are editable from the first click.
+                          if (e.target.checked && !splitParts.length) {
+                            setSplitParts(presetParts(splitBy, quotedKeys(substrates), jobType, extraServices))
+                          }
+                        }}
+                        className="w-4 h-4 accent-blue-600" />
+                      <span className="text-[11px] font-bold uppercase tracking-wide">
+                        Split into priced parts
+                      </span>
+                      <span className="text-[10px] font-normal normal-case text-[#666]">
+                        — separate prices for interior, exterior, the deck, on one quote
+                      </span>
+                    </label>
+
+                    {splitOn && (
+                      <div className="px-3 py-2.5">
+                        <div className="flex items-center gap-2 mb-2 flex-wrap">
+                          {(['group', 'service', 'custom'] as SplitBy[]).map(b => (
+                            <button key={b}
+                              onClick={() => {
+                                setSplitBy(b)
+                                if (b !== 'custom') {
+                                  setSplitParts(presetParts(b, quotedKeys(substrates), jobType, extraServices))
+                                }
+                              }}
+                              className={`text-[11px] px-2.5 py-1 rounded-lg border ${splitBy === b
+                                ? 'bg-blue-600 text-white border-blue-600'
+                                : 'bg-white border-black/[0.15] hover:bg-[#f5f4f0]'}`}>
+                              {b === 'group' ? 'By area' : b === 'service' ? 'By service' : 'My own'}
+                            </button>
+                          ))}
+                          <button onClick={() => setSplitParts(p => [...p, newPart()])}
+                            className="text-[11px] px-2 py-1 rounded-lg bg-white border border-black/[0.15] hover:bg-[#f5f4f0]">
+                            + Part
+                          </button>
+                        </div>
+
+                        {split.parts.map((part, i) => (
+                          <div key={part.id} className="border border-black/[0.1] rounded-lg p-2 mb-1.5">
+                            <div className="flex items-center gap-2 mb-1">
+                              <input value={part.label}
+                                onChange={e => setSplitParts(ps => ps.map(x =>
+                                  x.id === part.id ? { ...x, label: e.target.value } : x))}
+                                className="flex-1 text-[12px] font-semibold px-1.5 py-0.5 border border-black/[0.12] rounded" />
+                              <span className="text-[13px] font-bold font-mono whitespace-nowrap">
+                                {fmtCurrency(part.total)}
+                              </span>
+                              <button onClick={() => setSplitParts(ps => ps.filter(x => x.id !== part.id))}
+                                title="Remove this part — its substrates go back to unassigned"
+                                className="text-[#c0392b]"><X size={12} /></button>
+                            </div>
+                            <div className="flex flex-wrap gap-1">
+                              {part.keys.map(k => (
+                                <button key={k}
+                                  title={i + 1 < split.parts.length ? 'Move to the next part' : 'Move to the first part'}
+                                  onClick={() => {
+                                    const to = split.parts[(i + 1) % split.parts.length]
+                                    setSplitParts(ps => ps.map(x =>
+                                      x.id === part.id ? { ...x, keys: x.keys.filter(y => y !== k) }
+                                        : x.id === to.id ? { ...x, keys: [...x.keys, k] } : x))
+                                  }}
+                                  className="text-[10px] px-1.5 py-0.5 rounded bg-[#eef5ff] text-[#1e40af] hover:bg-[#dbeafe]">
+                                  {SUB_BY_KEY[k]?.label ?? k}
+                                </button>
+                              ))}
+                              {!part.keys.length && (
+                                <span className="text-[10px] text-[#92400e]">
+                                  Nothing in this part — it will still carry a share of the price.
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+
+                        {split.unassigned.length > 0 && (
+                          <div className="text-[10.5px] text-[#92400e] mb-1">
+                            Not in any part: {split.unassigned.map(k => SUB_BY_KEY[k]?.label ?? k).join(', ')}.
+                            Still charged for — their cost is shared across the parts.
+                          </div>
+                        )}
+
+                        <div className={`text-[11px] font-semibold ${split.balances ? 'text-[#166534]' : 'text-[#c0392b]'}`}>
+                          {split.parts.length} part{split.parts.length === 1 ? '' : 's'} ·{' '}
+                          {fmtCurrency(split.parts.reduce((t, p) => t + p.total, 0))}
+                          {split.balances ? ' — matches the quote total' : ' — does NOT match the quote total'}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
                   <div className="bg-[#f5f4f0] rounded-lg px-3.5 py-3">
                     <div className="grid grid-cols-3 gap-2.5">
                       {([['Labour (adj)', labAdj], ['Materials+cons (adj)', matAdj],
@@ -2416,162 +2568,3 @@ export default function QuotingTool() {
  *  printing. Letterhead images come from /public, the convention Invoices.tsx
  *  already uses, rather than V16's inline base64. */
 /** V16 nextQuoteNo() — DDMMYY. */
-function defaultQuoteNo(): string {
-  const d = new Date()
-  return String(d.getDate()).padStart(2, '0') + String(d.getMonth() + 1).padStart(2, '0')
-    + String(d.getFullYear()).slice(-2)
-}
-
-// The standard wording V16 pre-fills its export dialog with. These are what the
-// client actually reads, so they stay fixed rather than carrying internal detail.
-const QUOTE_INCLUSIONS = [
-  'All surface preparation as described',
-  'Supply and application of all specified paint systems',
-  'Masking and protection of adjacent areas',
-  'Full site clean-up and removal of waste',
-]
-/** Surface preparation reads differently per trade. Cabinets are degreased and
- *  scuffed rather than filled and gapped, so the job type picks the list. */
-const SURFACE_PREP_STANDARD = [
-  'Fill and sand all nail, screw and imperfection penetrations to a smooth finish',
-  'Seal paintable gaps at joints, trims and corners with flexible paintable sealant',
-  'Spot-prime all bare, cut or exposed substrates as required',
-  'Light sanding and dust-off between coats',
-  'Final tack-off and inspection prior to each coat',
-]
-const SURFACE_PREP_BY_TYPE: Record<string, string[]> = {
-  'Kitchen cabinets': [
-    'Cleaning and degreasing',
-    'Sanding/scuffing',
-    'Priming',
-    'Light sanding and dust-off between coats',
-    'Final tack-off and inspection prior to each coat',
-  ],
-}
-export const surfacePrepFor = (jobType: string): string[] =>
-  SURFACE_PREP_BY_TYPE[jobType] ?? SURFACE_PREP_STANDARD
-
-const QUOTE_EXCLUSIONS = [
-  'Supply or installation of scaffolding',
-  'Repairs to defective substrates beyond standard preparation',
-  'Repainting required due to damage by other trades after completion',
-  'Changes to colours or finishes beyond the approved schedule',
-]
-const QUOTE_TERMS_TEXT =
-  'Progress claims will be required for the duration of works. The schedule and '
-  + 'milestone breakdown are to be agreed with the client prior to commencement. '
-  + 'A deposit may be required to secure the booking and purchase materials.'
-
-function buildQuoteHTML(o: {
-  docType: string; to: string; proj: string; site: string
-  /** Kept separate from proj, which the user may retitle freely. */
-  jobType: string
-  qno: string; dur: string
-  coatRows: { sub: string; sys: string; coats: string; app: string; mat: string }[]
-  lines: { desc: string; total: number }[]
-  origin: string
-}): string {
-  const esc = (v: any) => String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-  const money = (n: number) => '$' + n.toLocaleString('en-AU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-  const date = new Date().toLocaleDateString('en-AU', { day: 'numeric', month: 'long', year: 'numeric' })
-  const fileTitle = [o.docType, o.qno, `${o.site} ${o.proj}`.trim()].filter(Boolean)
-    .join('_').replace(/[\\/:*?"<>|]/g, '').replace(/\s+/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '')
-
-  const exGST = o.lines.reduce((s, l) => s + l.total, 0)
-  const bullets = (items: string[]) => items.map(x => `<li>${esc(x)}</li>`).join('')
-  const scope = `This quotation covers the supply and application of all specified coating `
-    + `systems to ${o.site}. Works include surface preparation, priming where required, and `
-    + `application of finish coats to all nominated substrates, in accordance with the `
-    + `finishes schedule and AS/NZS 2311:2017.`
-
-  // V16 falls back to a hardcoded ceilings/walls/trims example when nothing is
-  // quoted. That puts work the client is not buying into a document they sign,
-  // so the section is left out instead.
-  const coatBody = o.coatRows
-    .map(r => `<tr><td>${esc(r.sub)}</td><td>${esc(r.sys)}</td><td style="text-align:center">${esc(r.coats)}</td><td>${esc(r.app)}</td><td>${esc(r.mat)}</td></tr>`)
-    .join('')
-
-  return `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${esc(fileTitle)}</title><style>
-*{box-sizing:border-box;margin:0;padding:0}
-body{font-family:Arial,Helvetica,sans-serif;font-size:11.5px;color:#1a1a18;padding:28px 32px;max-width:860px;margin:0 auto}
-.hdr{display:flex;justify-content:space-between;align-items:center;padding-bottom:14px;border-bottom:3px solid #1a1a18;margin-bottom:18px}
-.contact{text-align:right;font-size:10.5px;color:#555;line-height:1.8}
-h1{font-size:22px;font-weight:700;margin-bottom:14px}
-.meta{display:grid;grid-template-columns:110px 1fr;gap:2px 10px;font-size:11.5px;margin-bottom:16px;max-width:420px}
-.meta .lbl{font-weight:700}
-h2{font-size:12px;font-weight:700;margin:14px 0 6px;border-bottom:1.5px solid #1a1a18;padding-bottom:3px;text-transform:uppercase;letter-spacing:.4px}
-p{line-height:1.6;margin-bottom:8px}
-ul{margin-left:18px;margin-bottom:8px}li{margin-bottom:3px;line-height:1.5}
-table{width:100%;border-collapse:collapse;margin-bottom:10px;font-size:11px}
-.ct th{background:#f0efec;padding:6px 8px;text-align:left;border:1px solid #ccc;font-size:10.5px;font-weight:700}
-.ct td{border:1px solid #ccc;padding:5px 8px}
-.pt th{background:#1a1a18;color:#fff;padding:7px 10px;text-align:left;font-size:11px}
-.pt td{border:1px solid #ddd;padding:6px 10px}
-.pt tr:nth-child(even) td{background:#fafaf8}
-.tot-row td{font-weight:700;background:#f0efec;border:1px solid #ccc;padding:7px 10px}
-.footer{display:flex;justify-content:space-between;align-items:flex-end;margin-top:24px;padding-top:12px;border-top:1px solid #ccc}
-.gst-note{background:#fefce8;border:1px solid #fde68a;border-radius:6px;padding:8px 12px;font-size:11px;margin-top:6px;font-weight:600}
-@media print{button{display:none}body{padding:16px}}
-</style></head><body contenteditable="true">
-<div style="display:inline-block;background:${o.docType === 'Estimate' ? '#fefce8' : '#1a1a18'};color:${o.docType === 'Estimate' ? '#92400e' : '#fff'};font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;padding:4px 12px;border-radius:4px;margin-bottom:14px">${esc(o.docType)}</div>
-<div class="hdr">
-  <img src="${o.origin}/np-logo.png" alt="Northern Painters" style="width:300px;height:auto;display:block">
-  <div class="contact">www.northernpaintersps.com.au<br>Ph: 0449 783 461<br>Northern Rivers NSW<br><span style="font-size:9.5px;color:#aaa">Lic. No: 478971C &nbsp;|&nbsp; ABN 46 435 825 953</span></div>
-</div>
-<h1>${esc(o.docType)}</h1>
-<div class="meta">
-  <span class="lbl">To:</span><span>${esc(o.to)}</span>
-  <span class="lbl">Project:</span><span>${esc(o.proj)}</span>
-  <span class="lbl">Site Location:</span><span>${esc(o.site)}</span>
-  <span class="lbl">Date Issued:</span><span>${date}</span>
-  <span class="lbl">Quote No:</span><span>${esc(o.qno || '—')}</span>
-</div>
-<h2>Scope of Works</h2>
-<p>${esc(scope)}</p>
-<p><strong>Inclusions:</strong></p><ul>${bullets(QUOTE_INCLUSIONS)}</ul>
-${coatBody ? `<h2>Coating System</h2>
-<table class="ct"><thead><tr><th>Substrate</th><th>System</th><th style="width:70px;text-align:center">Coats</th><th>Application Method</th><th>Materials</th></tr></thead>
-<tbody>${coatBody}</tbody></table>` : ''}
-<h2>Surface Preparation</h2>
-<ul>${bullets(surfacePrepFor(o.jobType))}</ul>
-<h2>Exclusions</h2><ul>${bullets(QUOTE_EXCLUSIONS)}</ul>
-<h2>Work Plan and Duration</h2>
-<ul><li>Estimated duration: <strong>${esc(o.dur || 'To be confirmed')}</strong></li><li>Works subject to access availability and weather conditions</li><li>Scheduling to be confirmed prior to commencement</li></ul>
-<h2>Standards and Compliances</h2>
-<ul>
-  <li>AS/NZS 2311:2017 — Guide to the Painting of Buildings</li>
-  <li>Manufacturer technical data sheets and specified curing requirements</li>
-  <li>NSW Guide to Standards and Tolerances (2017) — workmanship expectations</li>
-</ul>
-<h2>Completion and Handover</h2>
-<ul>
-  <li>Removal of all masking, protection and associated materials</li>
-  <li>Full site clean-up on completion</li>
-  <li>Final walkthrough inspection with client prior to sign-off</li>
-</ul>
-<h2>Pricing</h2>
-<table class="pt"><thead><tr><th style="width:55px">Qty</th><th>Description</th><th style="width:110px">Price</th><th style="width:110px">Total</th></tr></thead>
-<tbody>
-${o.lines.map(l => `<tr><td>1</td><td>${esc(l.desc)}</td><td style="text-align:right">${money(l.total)}</td><td style="text-align:right;font-weight:600">${money(l.total)}</td></tr>`).join('')}
-</tbody>
-<tfoot>
-<tr><td colspan="2"></td><td style="text-align:right;padding:7px 10px;border:1px solid #ddd;font-weight:700">Total ex GST</td><td class="tot-row">${money(exGST)}</td></tr>
-</tfoot></table>
-<div class="gst-note">Note: 10% GST to be added on top of the quoted price. Total inc. GST: <strong>${money(exGST * 1.1)}</strong></div>
-<h2>Variations Clause</h2>
-<p>Any changes, additional works or variations requested by the client or builder will require a written variation order or revised quotation and may incur additional charges. Work will not proceed on variations until written approval is received.</p>
-<h2>Progress Claims and Payment Terms</h2>
-<p>${esc(QUOTE_TERMS_TEXT)}</p>
-<div class="footer">
-  <div style="display:flex;gap:16px;align-items:center">
-    <img src="${o.origin}/ft-logo.png" alt="NSW Fair Trading Licensed Contractor" style="height:70px;width:auto">
-    <img src="${o.origin}/dulux-badge.png" alt="Dulux Accredited Painter — 5 year workmanship warranty" style="height:60px;width:auto">
-  </div>
-  <div style="text-align:right">
-    <div style="font-size:13px;font-weight:700">NORTHERN PAINTERS</div>
-    <div style="font-size:9.5px;color:#666">PAINTING SOLUTIONS<br>Lic. No: 478971C | ABN 46 435 825 953</div>
-  </div>
-</div>
-<br><button onclick="window.print()" style="margin-top:12px;padding:10px 24px;background:#1a1a18;color:#fff;border:none;border-radius:6px;font-size:13px;cursor:pointer">Print / Save as PDF</button>
-</body></html>`
-}
