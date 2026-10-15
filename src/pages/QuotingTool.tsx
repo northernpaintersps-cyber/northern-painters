@@ -318,6 +318,8 @@ export default function QuotingTool() {
   const [splitParts, setSplitParts] = useState<PartDef[]>([])
   /** Spread a locked price across the groups, rather than leaving them short. */
   const [scaleSplit, setScaleSplit] = useState(false)
+  /** Consumables set against a group by hand. Empty means apportion as before. */
+  const [consByPart, setConsByPart] = useState<Record<string, number>>({})
 
   // Settings → Overhead % was displayed on this page and passed to the AI, but
   // the field the price actually uses defaulted to 0, so the setting never
@@ -575,7 +577,17 @@ export default function QuotingTool() {
       .map(([k, q]) => [k, (Number(q) || 0) * (PROD_RATES[k] ?? 0)])),
     [totals])
 
-  const subtotal = labourCost + materials.total + consTotal + equipTotal
+  /**
+   * What the quote counts as consumables. Once they are set per group, the
+   * sum of those IS the figure — one source of truth, which is also what
+   * keeps the groups summing to the quote total.
+   */
+  const consIndividual = Object.keys(consByPart).length > 0
+  const consEffective = consIndividual
+    ? Math.round(splitParts.reduce((t, d) => t + (consByPart[d.id] ?? 0), 0) * 100) / 100
+    : consTotal
+
+  const subtotal = labourCost + materials.total + consEffective + equipTotal
   const gst = subtotal * 0.1
 
   // ── V16 calcPaintTotal / calcLabourAdj / calcCostAdj ────────
@@ -597,7 +609,7 @@ export default function QuotingTool() {
   useEffect(() => { if (laTotalHrs > 0) setAdjLab(laCost) }, [laCost, laTotalHrs])
 
   const labAdj = adjLab * (1 + contingency / 100)
-  const matAdj = (adjMat + consTotal) * (1 + waste / 100)
+  const matAdj = (adjMat + consEffective) * (1 + waste / 100)
   const adjSub = labAdj + matAdj
   const adjTotalEx = adjSub * (1 + overheadPct / 100) + travelCost
   const adjGst = adjTotalEx * 0.1
@@ -620,14 +632,14 @@ export default function QuotingTool() {
     pricing: {
       labourCost, materialsTotal: materials.total,
       adjLab, adjMat, contingency, waste, overheadPct,
-      consTotal, equipTotal, travelCost,
+      consTotal: consEffective, consByPart, equipTotal, travelCost,
       // The quote prices from the adjusted total once an estimate exists.
       adjusted: !!estimate,
     },
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }), [substrates, splitBy, jobType, extraServices, splitParts, byQty, labourByKey,
        materials.byKey, materials.total, processes, avgRate, bookWeight, labourCost,
-       adjLab, adjMat, contingency, waste, overheadPct, consTotal, equipTotal,
+       adjLab, adjMat, contingency, waste, overheadPct, consEffective, consByPart, equipTotal,
        travelCost, estimate])
 
   /** A locked price is for the whole job; the groups will not land on it. */
@@ -1023,7 +1035,7 @@ export default function QuotingTool() {
         labourBreakdown: processes.map(p =>
           `${p.name}: ${p.hours.toFixed(1)} hrs × ${Math.max(1, p.np || painters.length)} painter(s) ($${Math.round(stepCost(p))})`).join('\n'),
         totalHours, labourCost, days,
-        consumables: consTotal,
+        consumables: consEffective,
         materialsBreakdown: materials.rows.length
           ? materials.rows.map(r => `${r.product} (${r.size}): ${r.litres.toFixed(1)}L needed → ${r.tins} tin${r.tins !== 1 ? 's' : ''} = ${fmtCurrency(r.cost)}`).join('\n')
             + `\nTOTAL MATERIALS: ${fmtCurrency(materials.total)} ex GST`
@@ -1079,7 +1091,7 @@ export default function QuotingTool() {
         quote_ex_gst: Math.round(subtotal),
         agreed_ex_gst: Math.round(agreed),
         est_labour_ex: Math.round(labourCost),
-        est_materials_ex: Math.round(materials.total + consTotal),
+        est_materials_ex: Math.round(materials.total + consEffective),
         // The crew's average, because that is the rate est_labour_ex was
         // costed at. Storing the first painter's rate made the Costs page
         // divide the budget by the wrong number: a lead at 75 ahead of a
@@ -1119,7 +1131,7 @@ export default function QuotingTool() {
   function captureState() {
     return {
       client, address, jobType, terms, substrates, prep, ceilingHeight, access,
-      method, coats, processes, prepLevels, consPrep, consTotal, consNotes, extraMats,
+      method, coats, processes, prepLevels, consPrep, consTotal, consByPart, consNotes, extraMats,
       painters, travelKm, equip, siteNotes, logisticsNotes, estimate, lockedPrice, rooms,
       finishSpecs, priceMode, unitRates, extraServices,
       splitOn, splitBy, splitParts, scaleSplit,
@@ -1167,6 +1179,7 @@ export default function QuotingTool() {
     // Drafts saved before per-item prep levels existed fall back to the type's defaults.
     setPrepLevels(d.prepLevels ?? defaultPrepLevels(d.jobType ?? JOB_TYPES[0]))
     setConsPrep(d.consPrep ?? 'medium'); setConsTotal(d.consTotal ?? 0); setConsNotes(d.consNotes ?? '')
+    setConsByPart(d.consByPart && typeof d.consByPart === 'object' ? d.consByPart : {})
     setExtraMats(d.extraMats ?? []); if (d.painters?.length) setPainters(d.painters)
     setTravelKm(d.travelKm ?? ''); setEquip(d.equip ?? []); setSiteNotes(d.siteNotes ?? '')
     setLogisticsNotes(d.logisticsNotes ?? ''); setEstimate(d.estimate ?? '')
@@ -1196,7 +1209,7 @@ export default function QuotingTool() {
         quote_ex_gst: Math.round(subtotal),
         labour_cost: Math.round(labourCost),
         materials_cost: Math.round(materials.total),
-        consumables: Math.round(consTotal),
+        consumables: Math.round(consEffective),
         equipment: Math.round(equipTotal),
         total_hours: Number(totalHours.toFixed(2)),
         est_days: Number(days.toFixed(2)),
@@ -1238,6 +1251,7 @@ export default function QuotingTool() {
     // Overhead back to the setting, not to zero: a new quote should start
     // with your standing overhead the same way waste and contingency do.
     setSplitOn(false); setSplitBy('group'); setSplitParts([]); setScaleSplit(false)
+    setConsByPart({})
     setAdjLab(0); setAdjMat(0); setWaste(5); setContingency(10)
     setOverheadPct(rates.overhead ?? 0)
     setBufDays(0); setBufHrs(0); setTravelCost(0); setPaintRows([])
@@ -1990,11 +2004,18 @@ export default function QuotingTool() {
               <span className="text-[13px] text-[#666] font-semibold">Total consumables (ex GST)</span>
               <div className="flex items-center gap-1 ml-auto">
                 <span className="text-[15px] text-[#666]">$</span>
-                <input type="number" min={0} value={consTotal || ''} placeholder="0"
+                <input type="number" min={0} value={consIndividual ? consEffective : (consTotal || '')}
+                  placeholder="0" disabled={consIndividual}
                   onChange={e => setConsTotal(parseFloat(e.target.value) || 0)}
-                  className="w-24 text-base font-bold text-[#2563eb] border-2 border-[#2563eb] rounded-lg px-2 py-1.5 bg-[#f5f4f0] focus:outline-none" />
+                  className="w-24 text-base font-bold text-[#2563eb] border-2 border-[#2563eb] rounded-lg px-2 py-1.5 bg-[#f5f4f0] focus:outline-none disabled:opacity-70" />
               </div>
             </div>
+            {consIndividual && (
+              <div className="text-[11px] text-[#666] mt-1.5">
+                Set per part in the split panel — this is their sum. Estimate again to
+                re-seed it, or clear the per-part figures to go back to one number.
+              </div>
+            )}
           </Card>
 
           <Card>
@@ -2208,6 +2229,20 @@ export default function QuotingTool() {
                             className="text-[11px] px-2 py-1 rounded-lg bg-white border border-black/[0.15] hover:bg-[#f5f4f0]">
                             + Part
                           </button>
+                          {/* Seeded from how they are currently apportioned, so
+                              turning this on changes nothing until you edit it. */}
+                          <button
+                            onClick={() => setConsByPart(consIndividual
+                              ? {}
+                              : Object.fromEntries(split.parts.map(x => {
+                                  const direct = split.labour + split.materials
+                                  const mine = x.labour + x.materials
+                                  const share = direct > 0 ? mine / direct : 1 / split.parts.length
+                                  return [x.id, Math.round(consTotal * share)]
+                                })))}
+                            className="text-[11px] px-2 py-1 rounded-lg bg-white border border-black/[0.15] hover:bg-[#f5f4f0]">
+                            {consIndividual ? 'Share consumables again' : 'Consumables per part'}
+                          </button>
                         </div>
 
                         {shownParts.map((part, i) => (
@@ -2225,9 +2260,28 @@ export default function QuotingTool() {
                                 title="Remove this part — its substrates go back to unassigned"
                                 className="text-[#c0392b]"><X size={12} /></button>
                             </div>
-                            <div className="text-[10px] text-[#666] mb-1 tabular-nums">
-                              Labour {fmtCurrency(part.labour)} · materials {fmtCurrency(part.materials)}
-                              {part.shared > 0 && <> · overhead and travel {fmtCurrency(part.shared)}</>}
+                            <div className="flex items-center gap-2 flex-wrap mb-1">
+                              <span className="text-[10px] text-[#666] tabular-nums">
+                                Labour {fmtCurrency(part.labour)} · materials {fmtCurrency(part.materials)}
+                                {part.shared > 0 && <> · overhead and travel {fmtCurrency(part.shared)}</>}
+                              </span>
+                              <label className="flex items-center gap-1 ml-auto text-[10px] text-[#666]">
+                                Consumables $
+                                <input type="number" min={0} step="10"
+                                  value={consByPart[part.id] ?? ''}
+                                  placeholder={consIndividual ? '0' : 'shared'}
+                                  title="Masking a deck costs nothing like masking an interior. Set it here and this group carries its own."
+                                  onChange={e => {
+                                    const v = e.target.value
+                                    setConsByPart(c => {
+                                      const n = { ...c }
+                                      if (v === '') delete n[part.id]
+                                      else n[part.id] = parseFloat(v) || 0
+                                      return n
+                                    })
+                                  }}
+                                  className="w-16 px-1 py-0.5 border border-black/[0.15] rounded text-right tabular-nums" />
+                              </label>
                             </div>
                             <div className="flex flex-wrap gap-1">
                               {part.keys.map(k => (
@@ -2267,6 +2321,7 @@ export default function QuotingTool() {
                           <span className="font-normal text-[#666]">
                             {' '}— labour {fmtCurrency(split.labour)}, materials {fmtCurrency(split.materials)}
                             {split.shared > 0 && <>, overhead and travel {fmtCurrency(split.shared)}</>}
+                            {consIndividual && <>. Consumables {fmtCurrency(consEffective)}, set per part</>}
                           </span>
                         </div>
 

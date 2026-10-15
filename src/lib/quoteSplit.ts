@@ -180,6 +180,13 @@ export interface PricingInput {
   waste: number
   overheadPct: number
   consTotal: number
+  /**
+   * Consumables set against individual groups. A group listed here uses its
+   * own figure; the rest share whatever of consTotal is left over. Masking a
+   * deck restoration costs nothing like masking an interior, so apportioning
+   * by cost was always a guess.
+   */
+  consByPart?: Record<string, number>
   equipTotal: number
   travelCost: number
   /**
@@ -229,6 +236,18 @@ export function priceGroups(
   const shares = defs.map((_, i) =>
     totalDirect > 0 ? (rawLab[i] + rawMat[i]) / totalDirect : 1 / defs.length)
 
+  // Consumables: a group's own figure where one is set, otherwise its share of
+  // what is left. The shares are re-based over the groups without a figure, so
+  // setting one group's consumables does not quietly change another's.
+  const own = p.consByPart ?? {}
+  const hasOwn = defs.map(d => own[d.id] != null)
+  const assigned = defs.reduce((t, d) => t + (own[d.id] ?? 0), 0)
+  const spare = Math.max(0, p.consTotal - assigned)
+  const restShare = defs.reduce((t, d, i) => t + (hasOwn[i] ? 0 : shares[i]), 0)
+  const consOf = (i: number) => hasOwn[i]
+    ? (own[defs[i].id] ?? 0)
+    : (restShare > 0 ? spare * (shares[i] / restShare) : 0)
+
   const priced = defs.map((d, i) => {
     const share = shares[i]
     if (!p.adjusted) {
@@ -236,12 +255,12 @@ export function priceGroups(
       // included and no percentages anywhere.
       const labour = rawLab[i] + direct.unattributedLabour * share
       const materials = rawMat[i]
-      const shared = (p.consTotal + p.equipTotal) * share
+      const shared = consOf(i) + p.equipTotal * share
       return { d, labour, materials, shared, total: labour + materials + shared }
     }
     const labour = (rawLab[i] * labScale + direct.unattributedLabour * share)
       * (1 + p.contingency / 100)
-    const materials = (rawMat[i] * matScale + p.consTotal * share) * (1 + p.waste / 100)
+    const materials = (rawMat[i] * matScale + consOf(i)) * (1 + p.waste / 100)
     const travel = p.travelCost * share
     // Overhead lands on the subtotal, travel after it — the quote's own order.
     const overhead = (labour + materials) * (p.overheadPct / 100)
