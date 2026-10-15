@@ -68,7 +68,8 @@ export function buildQuoteHTML(o: {
     licence?: string; abn?: string
     quote_footer?: string; quote_valid_days?: number
   } | null
-  coatRows: { sub: string; sys: string; coats: string; app: string; mat: string }[]
+  /** `part` is set only when the quote is priced in groups. */
+  coatRows: { sub: string; sys: string; coats: string; app: string; mat: string; part?: string }[]
   lines: { desc: string; total: number }[]
   origin: string
 }): string {
@@ -88,8 +89,14 @@ export function buildQuoteHTML(o: {
   // V16 falls back to a hardcoded ceilings/walls/trims example when nothing is
   // quoted. That puts work the client is not buying into a document they sign,
   // so the section is left out instead.
+  // The Part column appears only when the quote is split, so an ordinary
+  // quote's table is exactly as it was.
+  const showPart = o.coatRows.some(r => r.part)
   const coatBody = o.coatRows
-    .map(r => `<tr><td>${esc(r.sub)}</td><td>${esc(r.sys)}</td><td style="text-align:center">${esc(r.coats)}</td><td>${esc(r.app)}</td><td>${esc(r.mat)}</td></tr>`)
+    .map(r => `<tr>${showPart ? `<td>${esc(r.part || '')}</td>` : ''}`
+      + `<td>${esc(r.sub)}</td><td>${esc(r.sys)}</td>`
+      + `<td style="text-align:center">${esc(r.coats)}</td>`
+      + `<td>${esc(r.app)}</td><td>${esc(r.mat)}</td></tr>`)
     .join('')
 
   return `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${esc(fileTitle)}</title><style>
@@ -131,7 +138,7 @@ table{width:100%;border-collapse:collapse;margin-bottom:10px;font-size:11px}
 <p>${esc(scope)}</p>
 <p><strong>Inclusions:</strong></p><ul>${bullets(QUOTE_INCLUSIONS)}</ul>
 ${coatBody ? `<h2>Coating System</h2>
-<table class="ct"><thead><tr><th>Substrate</th><th>System</th><th style="width:70px;text-align:center">Coats</th><th>Application Method</th><th>Materials</th></tr></thead>
+<table class="ct"><thead><tr>${showPart ? '<th>Part</th>' : ''}<th>Substrate</th><th>System</th><th style="width:70px;text-align:center">Coats</th><th>Application Method</th><th>Materials</th></tr></thead>
 <tbody>${coatBody}</tbody></table>` : ''}
 <h2>Surface Preparation</h2>
 <ul>${bullets(surfacePrepFor(o.jobType))}</ul>

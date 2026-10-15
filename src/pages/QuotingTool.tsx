@@ -34,7 +34,7 @@ import {
   buildQuoteHTML, defaultQuoteNo, surfacePrepFor,
 } from '@/lib/quoteDoc'
 import {
-  splitQuote, presetParts, quotedKeys, newPart, partLines,
+  splitQuote, presetParts, quotedKeys, newPart, partLines, scaleTo,
   type PartDef, type SplitBy,
 } from '@/lib/quoteSplit'
 import { useRateCard, cardHoursPerUnit, cardSummary } from '@/lib/rateCard'
@@ -316,6 +316,8 @@ export default function QuotingTool() {
   const [splitOn, setSplitOn] = useState(false)
   const [splitBy, setSplitBy] = useState<SplitBy>('group')
   const [splitParts, setSplitParts] = useState<PartDef[]>([])
+  /** Spread a locked price across the groups, rather than leaving them short. */
+  const [scaleSplit, setScaleSplit] = useState(false)
 
   // Settings → Overhead % was displayed on this page and passed to the AI, but
   // the field the price actually uses defaulted to 0, so the setting never
@@ -604,15 +606,38 @@ export default function QuotingTool() {
   const quotePrice = typeof lockedPrice === 'number' && lockedPrice > 0 ? lockedPrice
     : estimate ? adjTotalEx : subtotal
 
+  /**
+   * Each group costed from its own substrates, using the quote's own
+   * percentages on its own base. The groups sum to what the quote charges
+   * undivided, so turning the split on never changes the price.
+   */
   const split = useMemo(() => splitQuote({
-    substrates, quotePrice, by: splitBy, jobType, extraServices,
+    substrates, by: splitBy, jobType, extraServices,
     defs: splitParts,
     labourByKey: byQty ? labourByKey : undefined,
     materialsByKey: materials.byKey,
     processes, avgRate, weight: bookWeight,
+    pricing: {
+      labourCost, materialsTotal: materials.total,
+      adjLab, adjMat, contingency, waste, overheadPct,
+      consTotal, equipTotal, travelCost,
+      // The quote prices from the adjusted total once an estimate exists.
+      adjusted: !!estimate,
+    },
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }), [substrates, quotePrice, splitBy, jobType, extraServices, splitParts,
-       byQty, labourByKey, materials.byKey, processes, avgRate, bookWeight])
+  }), [substrates, splitBy, jobType, extraServices, splitParts, byQty, labourByKey,
+       materials.byKey, materials.total, processes, avgRate, bookWeight, labourCost,
+       adjLab, adjMat, contingency, waste, overheadPct, consTotal, equipTotal,
+       travelCost, estimate])
+
+  /** A locked price is for the whole job; the groups will not land on it. */
+  const splitting = splitOn && split.parts.length > 1
+  const lockedGap = typeof lockedPrice === 'number' && lockedPrice > 0 && splitting
+    ? Math.round((lockedPrice - split.total) * 100) / 100
+    : 0
+  const shownParts = scaleSplit && lockedGap !== 0
+    ? scaleTo(split.parts, lockedPrice as number)
+    : split.parts
 
   function addDocFiles(e: React.ChangeEvent<HTMLInputElement>) {
     const picked = Array.from(e.target.files ?? [])
@@ -1097,7 +1122,7 @@ export default function QuotingTool() {
       method, coats, processes, prepLevels, consPrep, consTotal, consNotes, extraMats,
       painters, travelKm, equip, siteNotes, logisticsNotes, estimate, lockedPrice, rooms,
       finishSpecs, priceMode, unitRates, extraServices,
-      splitOn, splitBy, splitParts,
+      splitOn, splitBy, splitParts, scaleSplit,
       // The scope panel is mostly evidence. Without this a reopened quote
       // shows a bare list of numbers with nothing behind them.
       takeoff: extractRes && {
@@ -1129,6 +1154,7 @@ export default function QuotingTool() {
     setSplitOn(!!d.splitOn)
     setSplitBy(d.splitBy === 'service' || d.splitBy === 'custom' ? d.splitBy : 'group')
     setSplitParts(Array.isArray(d.splitParts) ? d.splitParts : [])
+    setScaleSplit(!!d.scaleSplit)
     setPriceMode(d.priceMode === 'quantity' ? 'quantity' : 'process')
     setExtraServices(Array.isArray(d.extraServices) ? d.extraServices : [])
     setUnitRates(d.unitRates ?? {})
@@ -1211,7 +1237,7 @@ export default function QuotingTool() {
     setSiteNotes(''); setLogisticsNotes(''); setEstimate(''); setLockedPrice(''); setDocs([]); setExtractRes(null)
     // Overhead back to the setting, not to zero: a new quote should start
     // with your standing overhead the same way waste and contingency do.
-    setSplitOn(false); setSplitBy('group'); setSplitParts([])
+    setSplitOn(false); setSplitBy('group'); setSplitParts([]); setScaleSplit(false)
     setAdjLab(0); setAdjMat(0); setWaste(5); setContingency(10)
     setOverheadPct(rates.overhead ?? 0)
     setBufDays(0); setBufHrs(0); setTravelCost(0); setPaintRows([])
@@ -1233,9 +1259,15 @@ export default function QuotingTool() {
       // Name what the architect specified, with the colour, so the client sees
       // their own schedule reflected back.
       const mat = (spec?.product || s.paint) + (spec?.colour ? ` — ${spec.colour}` : '')
+      // Which priced group this surface sits in, so a client reading
+      // "Exterior $11,500" can see what that price covers.
+      const part = splitting
+        ? shownParts.find(x => x.keys.includes(s.key))?.label
+        : undefined
       return s.group === 'Specialty'
-        ? { sub: s.label, sys: `${c.fin} system`, coats: String(c.topCoats), app: c.app, mat }
+        ? { sub: s.label, sys: `${c.fin} system`, coats: String(c.topCoats), app: c.app, mat, part }
         : {
+            part,
             sub: s.group === 'Exterior' ? `${s.label} (ext)` : s.label,
             sys: hasUC ? `${c.uc} undercoat (${c.ucApp}) + ${c.fin}` : c.fin,
             coats: hasUC ? `${c.ucCoats} + ${c.topCoats}` : String(c.topCoats),
@@ -1254,8 +1286,8 @@ export default function QuotingTool() {
       coatRows,
       // One line per part when the quote is split, otherwise the single
       // line it has always printed.
-      lines: splitOn && split.parts.length > 1
-        ? partLines(split.parts)
+      lines: splitting
+        ? partLines(shownParts)
         : [{ desc: `${jobType} (labour & materials)`, total: price }],
       biz,
       origin: window.location.origin,
@@ -2178,19 +2210,24 @@ export default function QuotingTool() {
                           </button>
                         </div>
 
-                        {split.parts.map((part, i) => (
+                        {shownParts.map((part, i) => (
                           <div key={part.id} className="border border-black/[0.1] rounded-lg p-2 mb-1.5">
                             <div className="flex items-center gap-2 mb-1">
                               <input value={part.label}
                                 onChange={e => setSplitParts(ps => ps.map(x =>
                                   x.id === part.id ? { ...x, label: e.target.value } : x))}
                                 className="flex-1 text-[12px] font-semibold px-1.5 py-0.5 border border-black/[0.12] rounded" />
-                              <span className="text-[13px] font-bold font-mono whitespace-nowrap">
+                              <span className="text-[13px] font-bold font-mono whitespace-nowrap"
+                                title={`Labour ${fmtCurrency(part.labour)} · materials ${fmtCurrency(part.materials)} · overhead and travel ${fmtCurrency(part.shared)}`}>
                                 {fmtCurrency(part.total)}
                               </span>
                               <button onClick={() => setSplitParts(ps => ps.filter(x => x.id !== part.id))}
                                 title="Remove this part — its substrates go back to unassigned"
                                 className="text-[#c0392b]"><X size={12} /></button>
+                            </div>
+                            <div className="text-[10px] text-[#666] mb-1 tabular-nums">
+                              Labour {fmtCurrency(part.labour)} · materials {fmtCurrency(part.materials)}
+                              {part.shared > 0 && <> · overhead and travel {fmtCurrency(part.shared)}</>}
                             </div>
                             <div className="flex flex-wrap gap-1">
                               {part.keys.map(k => (
@@ -2207,8 +2244,8 @@ export default function QuotingTool() {
                                 </button>
                               ))}
                               {!part.keys.length && (
-                                <span className="text-[10px] text-[#92400e]">
-                                  Nothing in this part — it will still carry a share of the price.
+                                <span className="text-[10px] text-[#666]">
+                                  Nothing in this part, so it prices at nothing.
                                 </span>
                               )}
                             </div>
@@ -2216,17 +2253,35 @@ export default function QuotingTool() {
                         ))}
 
                         {split.unassigned.length > 0 && (
-                          <div className="text-[10.5px] text-[#92400e] mb-1">
-                            Not in any part: {split.unassigned.map(k => SUB_BY_KEY[k]?.label ?? k).join(', ')}.
-                            Still charged for — their cost is shared across the parts.
+                          <div className="text-[10.5px] text-[#991b1b] bg-[#fee2e2] border border-[#fca5a5] rounded px-2 py-1 mb-1.5">
+                            <b>Not in any part:</b>{' '}
+                            {split.unassigned.map(k => SUB_BY_KEY[k]?.label ?? k).join(', ')}.
+                            Because each part is priced from its own substrates, these are in no
+                            price at all — put them in a part or the quote is short.
                           </div>
                         )}
 
-                        <div className={`text-[11px] font-semibold ${split.balances ? 'text-[#166534]' : 'text-[#c0392b]'}`}>
-                          {split.parts.length} part{split.parts.length === 1 ? '' : 's'} ·{' '}
-                          {fmtCurrency(split.parts.reduce((t, p) => t + p.total, 0))}
-                          {split.balances ? ' — matches the quote total' : ' — does NOT match the quote total'}
+                        <div className="text-[11px] font-semibold text-[#166534] tabular-nums">
+                          {shownParts.length} part{shownParts.length === 1 ? '' : 's'} ·{' '}
+                          {fmtCurrency(shownParts.reduce((t, p) => t + p.total, 0))}
+                          <span className="font-normal text-[#666]">
+                            {' '}— labour {fmtCurrency(split.labour)}, materials {fmtCurrency(split.materials)}
+                            {split.shared > 0 && <>, overhead and travel {fmtCurrency(split.shared)}</>}
+                          </span>
                         </div>
+
+                        {lockedGap !== 0 && (
+                          <div className="flex items-center gap-2 flex-wrap mt-1 text-[10.5px] text-[#92400e]">
+                            <span>
+                              The parts come to {fmtCurrency(split.total)} against your locked price of{' '}
+                              {fmtCurrency(lockedPrice as number)}.
+                            </span>
+                            <button onClick={() => setScaleSplit(v => !v)}
+                              className="px-2 py-0.5 rounded border border-[#fbbf24] bg-[#fffbeb] hover:bg-white">
+                              {scaleSplit ? 'Use the costed figures' : 'Spread the locked price across them'}
+                            </button>
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
