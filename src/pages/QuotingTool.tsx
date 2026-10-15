@@ -11,7 +11,7 @@ import {
 } from '@/lib/ai'
 import {
   PROD_RATES, JOB_TYPES, QUOTE_TERMS,
-  PREP_OPTS, HEIGHT_OPTS, ACCESS_OPTS, METHOD_OPTS, CONS_PREP,
+  PREP_OPTS, HEIGHT_OPTS, ACCESS_OPTS, CONS_PREP,
   JOB_WORKFLOWS, PREP_LEVELS, workflowStepNames, defaultPrepLevels,
   BENCHMARKS, coverageFor, serviceFor, serviceGroups, UNDERCOAT_PRODUCTS, matchProduct,
 } from '@/lib/quoteData'
@@ -274,7 +274,6 @@ export default function QuotingTool() {
   const [access, setAccess] = useState(ACCESS_OPTS[0])
 
   // 4. Labour
-  const [method, setMethod] = useState('roll')
   const [coats, setCoats] = useState('2')
   const [procUnit, setProcUnit] = useState<'hrs' | 'days'>('hrs')
   const [processes, setProcesses] = useState<Process[]>([])
@@ -423,6 +422,22 @@ export default function QuotingTool() {
   const baselineHours = useMemo(
     () => Object.entries(totals).reduce((s, [key, q]) => s + q * (PROD_RATES[key] ?? 0), 0),
     [totals])
+
+  /**
+   * How the job is actually being applied, read off the substrates rather
+   * than asked for separately. Listed commonest first, because a job that is
+   * mostly sprayed with a few brushed trims is a sprayed job.
+   */
+  const methodSummary = useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const sub of SUBSTRATES) {
+      if ((totals[sub.key] ?? 0) <= 0) continue
+      const app = coatOf(substrates, sub.key).app
+      if (app) counts.set(app, (counts.get(app) ?? 0) + 1)
+    }
+    const ranked = [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([m]) => m)
+    return ranked.join(', ') || 'Brush & Roll'
+  }, [totals, substrates])
 
   const rateSum = painters.reduce((s, p) => s + (p.rate || 0), 0)
   // V16 calcProcessTotal: hours are elapsed crew time, so a step costs
@@ -882,7 +897,9 @@ export default function QuotingTool() {
   function changeJobType(next: string) {
     setJobType(next)
     setPrepLevels(defaultPrepLevels(next))
-    if (serviceFor(next).newBuild) { setMethod('spray'); applyNewBuildCoats(next) }
+    // applyNewBuildCoats already sprays each interior substrate; the global
+    // setMethod('spray') beside it was the redundant half of the same thing.
+    if (serviceFor(next).newBuild) applyNewBuildCoats(next)
   }
 
   /** V16 autoApplyNewBuildSettings(): a new build gets 1 coat of Acrylic
@@ -941,7 +958,7 @@ export default function QuotingTool() {
       const { steps, notes } = await suggestProcess(apiKey, {
         services,
         prep,
-        method: METHOD_OPTS.find(m => m.v === method)?.l ?? 'Brush & Roll',
+        method: methodSummary,
         coats,
         access,
         ceilingHeight,
@@ -975,7 +992,7 @@ export default function QuotingTool() {
     try {
       const r = await estimateConsumables(apiKey, {
         jobType: [jobType, ...extraServices].join(' + '), prepLevel: consPrep, substrates: substrateLines,
-        method: METHOD_OPTS.find(m => m.v === method)?.l ?? 'Brush & Roll',
+        method: methodSummary,
       })
       setConsTotal(Math.round(r.total)); setConsNotes(r.notes)
     } catch (e: any) { setGenErr(e?.message ?? 'Consumables estimate failed') } finally { setConsBusy(false) }
@@ -1049,7 +1066,7 @@ export default function QuotingTool() {
     try {
       const text = await generateQuote(apiKey, {
         client, address, jobType: [jobType, ...extraServices].join(' + '), terms,
-        method: METHOD_OPTS.find(m => m.v === method)?.l ?? 'Brush & Roll',
+        method: methodSummary,
         coats, prep, ceilingHeight, access, travelKm,
         equipText: equip.map(e => e.name).filter(Boolean).join(', ') || 'None',
         equipTotal,
@@ -1153,7 +1170,7 @@ export default function QuotingTool() {
   function captureState() {
     return {
       client, address, jobType, terms, substrates, prep, ceilingHeight, access,
-      method, coats, processes, prepLevels, consPrep, consTotal, consByPart, consNotes, extraMats,
+      coats, processes, prepLevels, consPrep, consTotal, consByPart, consNotes, extraMats,
       painters, travelKm, equip, siteNotes, logisticsNotes, estimate, lockedPrice, rooms,
       finishSpecs, priceMode, unitRates, extraServices,
       splitOn, splitBy, splitParts, scaleSplit,
@@ -1197,7 +1214,7 @@ export default function QuotingTool() {
     restorePhotos(d.scopePhotos ?? [])
     setReview(null)
     setPrep(d.prep ?? PREP_OPTS[1]); setCeilingHeight(d.ceilingHeight ?? HEIGHT_OPTS[0]); setAccess(d.access ?? ACCESS_OPTS[0])
-    setMethod(d.method ?? 'roll'); setCoats(d.coats ?? '2'); setProcesses(d.processes ?? [])
+    setCoats(d.coats ?? '2'); setProcesses(d.processes ?? [])
     // Drafts saved before per-item prep levels existed fall back to the type's defaults.
     setPrepLevels(d.prepLevels ?? defaultPrepLevels(d.jobType ?? JOB_TYPES[0]))
     setConsPrep(d.consPrep ?? 'medium'); setConsTotal(d.consTotal ?? 0); setConsNotes(d.consNotes ?? '')
@@ -1874,12 +1891,10 @@ export default function QuotingTool() {
             )}
 
             <div className="flex gap-2 mb-2.5 flex-wrap">
-              <div className="flex-1 min-w-[140px]">
-                <label className="block text-[10px] uppercase font-bold text-[#666] mb-1">Application method</label>
-                <select value={method} onChange={e => setMethod(e.target.value)} className={INP}>
-                  {METHOD_OPTS.map(m => <option key={m.v} value={m.v}>{m.l}</option>)}
-                </select>
-              </div>
+              {/* Application method used to live here as one setting for the
+                  whole quote, while every substrate already carries its own in
+                  its coat settings. Two places to say the same thing, and the
+                  per-substrate one is the one that prices the paint. */}
               <div className="flex-1 min-w-[120px]">
                 <label className="block text-[10px] uppercase font-bold text-[#666] mb-1">Coats</label>
                 <select value={coats} onChange={e => changeCoats(e.target.value)} className={INP}>
