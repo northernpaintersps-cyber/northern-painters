@@ -965,6 +965,15 @@ export default function QuotingTool() {
         substrates: substrateLines,
         painters: painters.length,
         siteNotes,
+        // The workflows you wrote, one per service in the quote. The main job
+        // type uses the prep levels set on this quote; an extra service uses
+        // its own defaults, since the levels on screen belong to the main one.
+        workflows: [jobType, ...extraServices]
+          .filter((v, i, a) => v && a.indexOf(v) === i)
+          .map(svc => ({
+            service: svc,
+            steps: workflowStepNames(svc, svc === jobType ? prepLevels : defaultPrepLevels(svc)),
+          })),
       })
       // Steps only. The time against each is the estimator's to put, and a
       // number from the model would just anchor them to a worse guess.

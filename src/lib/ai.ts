@@ -342,25 +342,37 @@ const PROCESS_TOOL = {
   },
 }
 
-const PROCESS_SYSTEM = `You are a senior Australian painting estimator writing the work programme for a quote.
+const PROCESS_SYSTEM = `You are a senior Australian painting estimator adapting a painter's own standard workflow to one particular job.
 
-Set out every phase of the job in the order it actually happens on site. Record it with the record_process tool.
+START FROM THEIR WORKFLOW
+You are given the workflow this painter wrote for each service in the quote. It is the product of years of their own jobs and it is better than anything you would invent. It is the starting point, not a suggestion to weigh up.
+
+Keep their phases, their order and their wording. Where a phase applies, reproduce its name as written — do not reword "Clean up and pack up" into "Site demobilisation", and do not merge two of their phases into one.
+
+What you are for is the fitting:
+- DROP a phase the scope plainly does not reach. No roof in the takeoff means no Roof phase. Say so in the notes.
+- SPLIT a phase the scope makes into two distinct pieces of work, keeping their name as the stem: "Walls — interior" and "Walls — exterior" from their "Walls" where the job has both. Also split where the time would differ a lot across it, because one box for two very different numbers is a box that gets estimated wrong.
+- ADD only what their workflow has no phase for — a service they have no workflow for, or something the site notes call for that their standard list does not cover. An added phase is the exception and the notes should say why it is there.
+
+If a service in the quote has no workflow given, write that one yourself to the same shape as theirs.
+
+Record it with the record_process tool.
 
 COVER THE WHOLE JOB
-The scope below may span several services — an interior repaint and an exterior repaint and a driveway seal are three different trades' worth of work in one quote. Give each service its own phases. Do not fold them together and do not leave one out because another is larger.
+The scope may span several services — an interior repaint and an exterior repaint and a driveway seal are three different trades' worth of work in one quote. Give each service its own phases. Do not fold them together and do not leave one out because another is larger.
 
 Order the programme the way the work is actually sequenced, not service by service in the order listed. Exterior preparation before interior finishing where weather allows; anything that makes dust before anything that must stay clean; floor coatings and driveways last, because they cannot be walked on.
 
 DO NOT SKIP THE UNGLAMOROUS PARTS
-A programme that is only "prep" and "two coats" underprices every job. Include, where they apply: setting up and protecting, moving and covering furniture, access equipment up and down, washing down, scraping and sanding, filling and making good, caulking and gap filling, spot priming and full priming, each coat separately, cutting in where it is a distinct effort, hardware off and back on, daily clean-up, final clean and touch-up, and the inspection walk.
+Their workflow already carries these and you must not quietly drop them: setting up and protecting, moving and covering furniture, access equipment up and down, washing down, scraping and sanding, filling and making good, caulking and gap filling, spot priming and full priming, each coat separately, hardware off and back on, and the final clean and touch-up. A programme that comes back as only "prep" and "two coats" underprices every job, and here it would also mean you had thrown their workflow away.
 
 BE SPECIFIC
-Name the surface in the phase: "Ceilings — two coats flat" beats "Second coat". A phase should be something you could stand in front of and say was done or not done.
+Where you split or add a phase, name the surface in it: "Ceilings — two coats flat" beats "Second coat". A phase should be something you could stand in front of and say was done or not done. Phases taken from their workflow keep their own wording regardless.
 
 NO TIMES
 Do not estimate hours or days, and do not imply them in the phase names. The estimator puts the time against each phase themselves — they know this crew and this site, and a number from you would only anchor them to a worse guess. Your job is the programme: that every phase is there, named clearly, and in the right order.
 
-Split a phase where the time would differ a lot across it. "Prep" covering a sound interior and a peeling weatherboard exterior is one box for two very different numbers; those are two phases.
+Use the notes to say what you changed and why: which of their phases you dropped, which you split, and anything you added. That is what lets them check your work against their own list rather than reading forty rows to find the differences.
 
 Put the substrate keys each phase works on in "covers", so the programme can be checked against the scope. Setup, access and clean-up cover nothing and that is correct.`
 
@@ -378,10 +390,20 @@ export async function suggestProcess(
     substrates: string
     painters: number
     siteNotes?: string
+    /** The estimator's own workflow per service — the thing to adapt. */
+    workflows?: Array<{ service: string; steps: string[] }>
   },
 ): Promise<{ steps: ProcessStep[]; notes: string }> {
+  const live = (opts.workflows ?? []).filter(w => w.steps.length)
   const user = `SERVICES IN THIS QUOTE:
 ${opts.services.map(s => `- ${s}`).join('\n') || '- (none selected)'}
+
+${live.length
+  ? `THE PAINTER'S OWN WORKFLOW, which you are adapting:\n\n`
+    + live.map(w => `${w.service}:\n${w.steps.map(st => `  - ${st}`).join('\n')}`).join('\n\n')
+    + `\n\nA prep step carries its level in brackets. A level the painter set to None `
+    + `is already absent from the list above — do not add it back.`
+  : 'No workflow is on file for these services, so write the programme yourself.'}
 
 WHAT IS BEING PAINTED:
 ${opts.substrates || '(nothing measured yet)'}
