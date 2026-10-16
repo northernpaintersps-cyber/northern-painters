@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase, selectAll } from '@/lib/supabase'
 import { useAuth } from '@/lib/auth'
+import { quoteStage, SETTABLE_STAGES, QUOTE_STAGES, quoteValue } from '@/lib/quoteStatus'
 import { Modal } from '@/components/ui/Modal'
 import { fmtCurrency, fmtDate } from '@/lib/utils'
 import {
@@ -12,9 +13,10 @@ import {
 type Row = Record<string, any>
 
 const STATUS_BADGE: Record<string, string> = {
-  Locked:    'bg-[#dcfce7] text-[#166534]',
   Draft:     'bg-[#fef3c7] text-[#92400e]',
-  Converted: 'bg-[#dbeafe] text-[#1e40af]',
+  Created:   'bg-[#dcfce7] text-[#166534]',
+  Sent:      'bg-[#dbeafe] text-[#1e40af]',
+  Converted: 'bg-[#e9d5ff] text-[#6b21a8]',
 }
 const BADGE = 'inline-block px-2 py-0.5 rounded-full text-[11px] font-medium whitespace-nowrap'
 
@@ -76,12 +78,27 @@ function renderEstimate(src: string): string {
   return out.join('')
 }
 
+function useSetStage() {
+  const qc = useQueryClient()
+  const { user } = useAuth()
+  return useMutation({
+    mutationFn: async ({ id, stage }: { id: string; stage: string }) => {
+      const { error } = await (supabase.from('np_quotes') as any)
+        .update({ status: stage, updated_at: new Date().toISOString() })
+        .eq('id', id).eq('user_id', user!.id)
+      if (error) throw error
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['np_quotes'] }),
+  })
+}
+
 export default function Quotes() {
   const nav = useNavigate()
   const { data: quotes = [], isLoading, error } = useQuotes()
   const del = useDel()
 
   const [q, setQ] = useState('')
+  const setStage = useSetStage()
   const [status, setStatus] = useState('')
   const [asc, setAsc] = useState(false)
   const [viewing, setViewing] = useState<Row | null>(null)
@@ -89,7 +106,7 @@ export default function Quotes() {
   const rows = useMemo(() => {
     const s = q.toLowerCase()
     const list = quotes.filter(x => {
-      if (status && (x.status || 'Draft') !== status) return false
+      if (status && quoteStage(x.status) !== status) return false
       if (s && !`${x.client ?? ''}${x.address ?? ''}${x.job_type ?? ''}${x.quote_no ?? ''}`.toLowerCase().includes(s)) return false
       return true
     })
@@ -99,7 +116,10 @@ export default function Quotes() {
     })
   }, [quotes, q, status, asc])
 
-  const totLocked = quotes.filter(x => x.status === 'Locked').reduce((s, x) => s + (x.locked_price || 0), 0)
+  const totLocked = quotes.filter(x => quoteStage(x.status) === 'Created')
+    .reduce((s, x) => s + quoteValue(x), 0)
+  const totSent = quotes.filter(x => quoteStage(x.status) === 'Sent')
+    .reduce((s, x) => s + quoteValue(x), 0)
   const totConverted = quotes.filter(x => x.status === 'Converted').length
 
   // Reopen a saved quote in the builder, fully restored
@@ -175,7 +195,8 @@ create policy "Users own their quotes" on np_quotes for all using (auth.uid() = 
       <div className="grid gap-2.5 mb-3.5" style={{ gridTemplateColumns: 'repeat(auto-fit,minmax(140px,1fr))' }}>
         {[
           { l: 'Saved quotes', v: String(quotes.length), c: '#2563eb' },
-          { l: 'Locked value (ex GST)', v: fmtCurrency(totLocked), c: '#16a34a' },
+          { l: 'Created, not sent (ex GST)', v: fmtCurrency(totLocked), c: '#16a34a' },
+          { l: 'Out with clients (ex GST)', v: fmtCurrency(totSent), c: '#2563eb' },
           { l: 'Converted to jobs', v: String(totConverted) },
         ].map(m => (
           <div key={m.l} className="bg-[#f5f4f0] rounded-lg px-4 py-3.5">
@@ -191,7 +212,7 @@ create policy "Users own their quotes" on np_quotes for all using (auth.uid() = 
         <select value={status} onChange={e => setStatus(e.target.value)}
           className="px-2.5 py-1.5 text-[12.5px] bg-white border border-black/20 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500">
           <option value="">All statuses</option>
-          {['Draft', 'Locked', 'Converted'].map(s => <option key={s} value={s}>{s}</option>)}
+          {QUOTE_STAGES.map(s => <option key={s} value={s}>{s}</option>)}
         </select>
         <button onClick={() => setAsc(a => !a)}
           className="flex items-center gap-1 px-2.5 py-1.5 text-[12.5px] bg-white border border-black/20 rounded-lg hover:bg-[#f5f4f0]">
@@ -234,7 +255,17 @@ create policy "Users own their quotes" on np_quotes for all using (auth.uid() = 
                       {x.locked_price ? fmtCurrency(x.locked_price) : '—'}
                     </td>
                     <td className="px-2.5 py-[7px]">
-                      <span className={`${BADGE} ${STATUS_BADGE[x.status] || STATUS_BADGE.Draft}`}>{x.status || 'Draft'}</span>
+                      {quoteStage(x.status) === 'Converted' ? (
+                        <span className={`${BADGE} ${STATUS_BADGE.Converted}`}>Converted</span>
+                      ) : (
+                        // Settable, because marking a quote sent is what puts
+                        // it on the Pipeline — there is no job to do it with.
+                        <select value={quoteStage(x.status)}
+                          onChange={e => setStage.mutate({ id: x.id, stage: e.target.value })}
+                          className={`${BADGE} border-0 cursor-pointer ${STATUS_BADGE[quoteStage(x.status)]}`}>
+                          {SETTABLE_STAGES.map(st => <option key={st} value={st}>{st}</option>)}
+                        </select>
+                      )}
                     </td>
                     <td className="px-2.5 py-[7px] text-[#2563eb] font-medium text-xs">{x.job_id || '—'}</td>
                     <td className="px-2.5 py-[7px] whitespace-nowrap">

@@ -7,6 +7,7 @@ import { Loader2, List } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { invalidateTable } from '../lib/queryKeys'
 import JobModal from '@/components/JobModal'
+import { stageColumn, quoteStage, quoteValue, SETTABLE_STAGES } from '@/lib/quoteStatus'
 
 const QS_OPTS = ['','Info Collected','Site Visit','Quote Created','Sent','Negotiating','Accepted','Booked','Not Accepted','Lost']
 const JS_OPTS  = ['','Not Started','Scheduled','In Progress','Hourly Rate Accepted','Finished','Closed']
@@ -53,6 +54,39 @@ function useJobs() {
   })
 }
 
+/**
+ * Saved quotes, for the two columns that are entirely about quotes. Until now
+ * a quote only reached the board by being converted into a job, so the Quote
+ * Created and Sent columns could never show an actual quote.
+ */
+function useBoardQuotes() {
+  const { user } = useAuth()
+  return useQuery({
+    queryKey: ['np_quotes', user?.id],
+    queryFn: async () => {
+      const { data } = await (supabase.from('np_quotes') as any)
+        .select('id, quote_no, client, address, job_type, status, locked_price, quote_ex_gst, created_at')
+        .eq('user_id', user!.id)
+      return (data ?? []) as any[]
+    },
+    enabled: !!user,
+  })
+}
+
+function useSetQuoteStage() {
+  const qc = useQueryClient()
+  const { user } = useAuth()
+  return useMutation({
+    mutationFn: async ({ id, stage }: { id: string; stage: string }) => {
+      const { error } = await (supabase.from('np_quotes') as any)
+        .update({ status: stage, updated_at: new Date().toISOString() })
+        .eq('id', id).eq('user_id', user!.id)
+      if (error) throw error
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['np_quotes'] }),
+  })
+}
+
 function useUpdateJob() {
   const qc = useQueryClient()
   const { user } = useAuth()
@@ -68,7 +102,9 @@ function useUpdateJob() {
 
 export default function Pipeline() {
   const { data: jobs = [], isLoading } = useJobs()
+  const { data: boardQuotes = [] } = useBoardQuotes()
   const updateJob = useUpdateJob()
+  const setQuoteStage = useSetQuoteStage()
   const navigate = useNavigate()
   // A card opens the job itself rather than dumping you on the Jobs list,
   // which lost the board's scroll position and made you find the row again.
@@ -85,8 +121,14 @@ export default function Pipeline() {
       return { ...col, jobs: colJobs }
     })
     const unplaced = jobs.filter(j => !placed.has(j.id))
-    return { cols: result, unplaced }
-  }, [jobs])
+    // A quote that has become a job is already on the board as that job.
+    const quotesByCol = (id: string) => boardQuotes.filter(q => stageColumn(q.status) === id)
+    return {
+      cols: result.map(c => ({ ...c, quotes: quotesByCol(c.id) })),
+      unplaced,
+      quoteCount: boardQuotes.filter(q => stageColumn(q.status)).length,
+    }
+  }, [jobs, boardQuotes])
 
   if (isLoading) return (
     <div className="flex items-center justify-center h-64">
@@ -99,7 +141,11 @@ export default function Pipeline() {
       <div className="flex items-start justify-between mb-4 flex-wrap gap-3">
         <div>
           <h2 className="text-[17px] font-semibold text-gray-900">Pipeline</h2>
-          <div className="text-[11px] text-gray-500 mt-0.5">{jobs.length} total jobs · Change status inline via the dropdowns on each card</div>
+          <div className="text-[11px] text-gray-500 mt-0.5">
+            {jobs.length} jobs
+            {colsWithJobs.quoteCount > 0 && ` · ${colsWithJobs.quoteCount} quotes not yet converted`}
+            {' '}· Change status inline via the dropdowns on each card
+          </div>
         </div>
         <button onClick={() => navigate('/jobs')} className="flex items-center gap-1.5 px-3 py-1.5 text-[13px] bg-white border border-black/20 rounded-lg text-gray-700 hover:bg-[#f5f4f0] transition-colors">
           <List size={14} /> All Jobs
@@ -114,7 +160,7 @@ export default function Pipeline() {
 
       <div className="flex gap-2.5 overflow-x-auto pb-3 items-start">
         {colsWithJobs.cols.map(col => {
-          const total = col.jobs.length
+          const total = col.jobs.length + col.quotes.length
           const isAlwaysVisible = ['enquiry','sitevisit','quoted','sent','negot','accepted','scheduled','inprog'].includes(col.id)
           if (total === 0 && !isAlwaysVisible) return null
           return (
@@ -129,6 +175,35 @@ export default function Pipeline() {
               </div>
               {/* Cards */}
               <div className="space-y-1.5">
+                {col.quotes.map(q => (
+                  <div key={q.id}
+                    className="bg-white border border-dashed border-black/20 rounded-lg p-2.5 cursor-pointer hover:shadow-sm transition-shadow"
+                    onClick={() => navigate('/quotes')}>
+                    <div className="flex justify-between items-start gap-1 mb-1">
+                      <span className="text-[9px] font-bold uppercase tracking-wide px-1 py-0.5 rounded bg-[#f5f4f0] text-[#666]">
+                        Quote{q.quote_no ? ` ${q.quote_no}` : ''}
+                      </span>
+                      {quoteValue(q) > 0 && (
+                        <span className="text-[11px] font-bold text-green-700 whitespace-nowrap">
+                          {fmtCurrency(quoteValue(q))}
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-[13px] font-bold mb-0.5 leading-tight">{q.client || '—'}</div>
+                    {q.address && (
+                      <div className="text-[11px] text-gray-500 mb-1 truncate">📍 {q.address.split(',')[0]}</div>
+                    )}
+                    {q.job_type && <div className="text-[10px] text-gray-500 mb-1">{q.job_type}</div>}
+                    <div className="flex gap-1 flex-wrap mt-1.5" onClick={e => e.stopPropagation()}>
+                      <select value={quoteStage(q.status)}
+                        onChange={e => setQuoteStage.mutate({ id: q.id, stage: e.target.value })}
+                        className="text-[10px] px-1 py-0.5 border border-black/15 rounded bg-[#f5f4f0] text-gray-600">
+                        {SETTABLE_STAGES.map(st => <option key={st} value={st}>{st}</option>)}
+                      </select>
+                      <span className="text-[9px] text-gray-400 self-center">no job yet</span>
+                    </div>
+                  </div>
+                ))}
                 {col.jobs.map(j => (
                   <div key={j.id} className="bg-white border border-black/10 rounded-lg p-2.5 cursor-pointer hover:shadow-sm transition-shadow"
                     onClick={() => setOpenJobId(j.id)}>

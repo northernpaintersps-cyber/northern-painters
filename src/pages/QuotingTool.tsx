@@ -1252,7 +1252,9 @@ export default function QuotingTool() {
         user_id: user!.id,
         quote_no: quoteNo || null,
         client, address, job_type: jobType, terms,
-        status: typeof lockedPrice === 'number' && lockedPrice > 0 ? 'Locked' : 'Draft',
+        // 'Created' rather than 'Locked': the stage the work has reached,
+        // not the mechanism. Rows already saying Locked read as Created.
+        status: typeof lockedPrice === 'number' && lockedPrice > 0 ? 'Created' : 'Draft',
         locked_price: typeof lockedPrice === 'number' && lockedPrice > 0 ? lockedPrice : null,
         quote_ex_gst: Math.round(subtotal),
         labour_cost: Math.round(labourCost),
