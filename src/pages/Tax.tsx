@@ -4,6 +4,7 @@ import { supabase, selectAll } from '@/lib/supabase'
 import { useAuth } from '@/lib/auth'
 import { fmtCurrency, invStatus, isCashJob, today } from '@/lib/utils'
 import { splitBooks, isCashPaid } from '@/lib/cashBooks'
+import { registerTotals } from '@/lib/assets'
 import { reconcileBankStatement } from '@/lib/ai'
 import {
   Printer, Loader2, FileSpreadsheet, Download, ReceiptText, LineChart,
@@ -121,6 +122,7 @@ export default function Tax() {
   const { data: expenses = [] } = useTable('np_expenses')
   const { data: labour = [] } = useTable('np_labour')
   const { data: jobs = [] } = useTable('np_jobs')
+  const { data: assets = [] } = useTable('np_assets')
 
   // Cash jobs are off the books: their income, materials, labour and expenses
   // are excluded from BAS and from the tax summary entirely. Rows with no job
@@ -182,19 +184,27 @@ export default function Tax() {
     const gstCollected = invs.reduce((s, i) => s + (i.gst || 0), 0)
     const gstOnMats = mats.reduce((s, m) => s + (m.gst || 0), 0)
     const gstOnExps = exps.reduce((s, e) => s + (e.gst || 0), 0)
+    // An asset bought this quarter is a capital acquisition: its GST is
+    // claimable now even though its cost is deducted over years. Cash and
+    // private-use shares are already netted off by the register.
+    const capital = assets.filter(a => inRange(a.purchase_date || '', year, quarter))
+    const gstOnAssets = registerTotals(capital, year).purchasedGST
+    const assetsExGST = capital.filter(a => !isCashPaid(a)).reduce((s, a) => s + (a.cost_ex_gst || 0), 0)
     return {
       gstCollected,
-      totalGSTCredits: gstOnMats + gstOnExps,
-      netGST: gstCollected - (gstOnMats + gstOnExps),
+      totalGSTCredits: gstOnMats + gstOnExps + gstOnAssets,
+      netGST: gstCollected - (gstOnMats + gstOnExps + gstOnAssets),
+      gstOnAssets, assetsExGST, assetCount: capital.length,
       totalSales: invs.reduce((s, i) => s + (i.agreed_ex_gst || 0), 0),
-      totalPurchases: mats.reduce((s, m) => s + (m.cost_ex_gst || 0), 0) + exps.reduce((s, e) => s + (e.amount_ex_gst || 0), 0),
+      totalPurchases: mats.reduce((s, m) => s + (m.cost_ex_gst || 0), 0)
+        + exps.reduce((s, e) => s + (e.amount_ex_gst || 0), 0) + assetsExGST,
       invCount: invs.length,
       txnCount: mats.length + exps.length,
       matsIncGST: materials.filter(m => onBooks(m) && !isCashPaid(m) && inRange(m.date || '', year, quarter)).reduce((s, m) => s + (m.total_inc_gst || 0), 0),
       expsIncGST: expenses.filter(e => onBooks(e) && !isCashPaid(e) && inRange(e.date || '', year, quarter)).reduce((s, e) => s + expIncGST(e), 0),
       cashPurchases: [...materials, ...expenses].filter(r => isCashPaid(r) && inRange(r.date || '', year, quarter)).length,
     }
-  }, [invoices, materials, expenses, basis, year, quarter])
+  }, [invoices, materials, expenses, assets, basis, year, quarter])
 
   // V16 aggPL(), now split on the books.
   //
@@ -202,6 +212,10 @@ export default function Tax() {
   // deductible and a cash job's income is not declared, but both are real
   // money and both land on the after-tax line. splitBooks does the partition.
   const TAX_RATE = 0.25
+  // The asset register's deduction for the year. A spray rig bought once is
+  // deducted across the years it earns, so it reaches the P&L here rather
+  // than as a cost in the month the invoice landed.
+  const reg = useMemo(() => registerTotals(assets, year), [assets, year])
   const pl = useMemo(() => splitBooks({
     invoices: invoices.filter(i => inYear(i.date || '', year)),
     materials: materials.filter(m => inYear(m.date || '', year)),
@@ -209,20 +223,23 @@ export default function Tax() {
     expenses: expenses.filter(e => inYear(e.date || '', year)),
     cashJobIds,
     taxRate: TAX_RATE,
-  }), [invoices, materials, labour, expenses, cashJobIds, year])
+    depreciation: reg.deduction,
+    depreciationNonDeductible: reg.nonDeductible,
+  }), [invoices, materials, labour, expenses, cashJobIds, year, reg])
 
   const basRows: LineSpec[] = [
     ['SALES & INCOME', '', 'header'],
     ['G1 — Total sales (inc GST)', fmtCurrency(bas.totalSales * 1.1), ''],
     ['G2 — Export sales', '$0.00', ''],
     ['G3 — Other GST-free sales', '$0.00', ''],
-    ['G10 — Capital acquisitions', '$0.00', ''],
+    ['G10 — Capital acquisitions (assets, inc GST)', fmtCurrency(bas.assetsExGST * 1.1), ''],
     ['1A — GST on sales', fmtCurrency(bas.gstCollected), 'bold'],
     null,
     ['PURCHASES & EXPENSES', '', 'header'],
     ['G11 — Total purchases (inc GST)', fmtCurrency(bas.totalPurchases * 1.1), ''],
     ['Materials purchased', fmtCurrency(bas.matsIncGST), 'sub'],
     ['Overhead expenses (inc GST)', fmtCurrency(bas.expsIncGST), 'sub'],
+    ...(bas.assetsExGST ? [['Assets purchased (inc GST)', fmtCurrency(bas.assetsExGST * 1.1), 'sub'] as LineSpec] : []),
     ['1B — GST credits on purchases', fmtCurrency(bas.totalGSTCredits), 'bold'],
     null,
     ['NET GST POSITION', '', 'header'],
@@ -248,6 +265,11 @@ export default function Tax() {
     ['OVERHEAD EXPENSES', '', 'header'],
     ...Object.entries(pl.byCat).sort((a, b) => b[1] - a[1]).map(([c, v]) => [c, fmtCurrency(v), ''] as LineSpec),
     books.expenses ? ['TOTAL OVERHEADS', fmtCurrency(books.expenses), 'bold'] as LineSpec : null,
+    ...(books.depreciation ? [
+      null,
+      ['DEPRECIATION', '', 'header'],
+      [`Assets written down (${reg.count} on the register)`, fmtCurrency(books.depreciation), ''],
+    ] as LineSpec[] : []),
     null,
     ['TAXABLE PROFIT', fmtCurrency(pl.taxableProfit), profitCol(pl.taxableProfit)],
     [`Estimated income tax (${Math.round(pl.taxRate * 100)}%)`, fmtCurrency(pl.tax), ''],
@@ -262,6 +284,7 @@ export default function Tax() {
       offBooks.materials ? ['Materials paid cash (not deductible)', fmtCurrency(-offBooks.materials), ''] as LineSpec : null,
       offBooks.labour ? ['Labour paid cash (not deductible)', fmtCurrency(-offBooks.labour), ''] as LineSpec : null,
       offBooks.expenses ? ['Expenses paid cash (not deductible)', fmtCurrency(-offBooks.expenses), ''] as LineSpec : null,
+      offBooks.depreciation ? ['Depreciation on cash-bought assets (not deductible)', fmtCurrency(-offBooks.depreciation), ''] as LineSpec : null,
       ['Net cash position', fmtCurrency(offBooks.net), profitCol(offBooks.net)],
     ] as LineSpec[] : []),
 

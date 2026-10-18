@@ -17,6 +17,7 @@ import AdsSpend from '@/pages/AdsSpend'
 import QuotingTool from '@/pages/QuotingTool'
 import Quotes from '@/pages/Quotes'
 import Materials from '@/pages/Materials'
+import Assets from '@/pages/Assets'
 import Pipeline from '@/pages/Pipeline'
 import Clients from '@/pages/Clients'
 import LegalDocs from '@/pages/LegalDocs'
@@ -76,6 +77,7 @@ export default function App() {
         <Route path="/tax" element={<Tax />} />
         <Route path="/labour" element={<Labour />} />
         <Route path="/expenses" element={<Expenses />} />
+        <Route path="/assets" element={<Assets />} />
         <Route path="/schedule" element={<Schedule />} />
         <Route path="/settings" element={<SettingsPage />} />
       </Route>

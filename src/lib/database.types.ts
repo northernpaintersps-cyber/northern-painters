@@ -215,6 +215,38 @@ export interface Database {
         Insert: Omit<Database['public']['Tables']['np_todos']['Row'], 'created_at' | 'updated_at'>
         Update: Partial<Database['public']['Tables']['np_todos']['Insert']>
       }
+      np_assets: {
+        Row: {
+          id: string
+          user_id: string
+          name: string | null
+          category: string | null
+          supplier: string | null
+          purchase_date: string | null
+          invoice_no: string | null
+          cost_ex_gst: number | null
+          gst: number | null
+          total_inc_gst: number | null
+          /** 'Bank' | 'Card' | 'Cash' — cash deducts nothing. */
+          paid_by: string | null
+          /** 'immediate' | 'prime_cost' | 'diminishing' | 'none'. */
+          method: string | null
+          effective_life_yr: number | null
+          business_use_pct: number | null
+          prior_depreciation: number | null
+          disposal_date: string | null
+          disposal_amount_ex_gst: number | null
+          serial_no: string | null
+          location: string | null
+          notes: string | null
+          attachments: Json | null
+          extra: Json | null
+          updated_at: string | null
+          created_at: string | null
+        }
+        Insert: Omit<Database['public']['Tables']['np_assets']['Row'], 'created_at' | 'updated_at'>
+        Update: Partial<Database['public']['Tables']['np_assets']['Insert']>
+      }
       np_expenses: {
         Row: {
           id: string

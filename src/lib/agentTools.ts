@@ -34,7 +34,7 @@ export const READABLE_TABLES = [
   'np_jobs', 'np_invoices', 'np_labour', 'np_materials', 'np_expenses',
   'np_receipts', 'np_variations', 'np_enquiries', 'np_crew', 'np_assignments',
   'np_calendar_events', 'np_site_visits', 'np_todos', 'np_pay_schedules',
-  'np_ads_spend',
+  'np_ads_spend', 'np_assets',
 ] as const
 
 export type ReadableTable = typeof READABLE_TABLES[number]
@@ -46,6 +46,7 @@ const TABLE_NOTES: Record<ReadableTable, string> = {
   np_materials: 'Paint and materials bought. job_id, date, supplier, invoice_no, cost_ex_gst, gst, total_inc_gst, billing_type.',
   np_expenses: 'Business costs not tied to a job. date, category, amount, notes.',
   np_receipts: 'Money received, including cash.',
+  np_assets: 'Machinery, tools and vehicles owned by the business. name, category, purchase_date, cost_ex_gst, method (immediate, prime_cost, diminishing, none), effective_life_yr, business_use_pct, disposal_date. Depreciation is worked out from these, not stored.',
   np_variations: 'Extra work agreed after the quote. job_id, amount_ex_gst, var_status (Approved matters).',
   np_enquiries: 'Leads before they become jobs. client, source, job_type, enq_status (New, Replied, Waiting for Answer, Visit Scheduled, Quote Sent, Won, Lost, No Response).',
   np_crew: 'The painters. id, name, rate, charge_rate, phone.',

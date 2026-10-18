@@ -47,7 +47,10 @@ export interface Side {
   materials: number
   labour: number
   expenses: number
-  /** materials + labour + expenses */
+  /** This year's depreciation from the asset register — a deduction with no
+   *  payment behind it, which is why it is its own line rather than a cost. */
+  depreciation: number
+  /** materials + labour + expenses + depreciation */
   costs: number
   /** income − costs */
   net: number
@@ -84,13 +87,19 @@ export interface PLInput {
   /** The jobs marked Cash — their work was never invoiced to anybody. */
   cashJobIds: Set<string>
   taxRate: number
+  /** This year's depreciation from the asset register, already net of
+   *  business use. Optional: a register with nothing in it changes nothing. */
+  depreciation?: number
+  /** Depreciation forgone because the asset was bought with cash — a real
+   *  cost of owning it, deductible nowhere. */
+  depreciationNonDeductible?: number
 }
 
 const empty = (): Side =>
-  ({ income: 0, materials: 0, labour: 0, expenses: 0, costs: 0, net: 0 })
+  ({ income: 0, materials: 0, labour: 0, expenses: 0, depreciation: 0, costs: 0, net: 0 })
 
 const close = (s: Side) => {
-  s.costs = s.materials + s.labour + s.expenses
+  s.costs = s.materials + s.labour + s.expenses + s.depreciation
   s.net = s.income - s.costs
   return s
 }
@@ -103,7 +112,10 @@ const close = (s: Side) => {
  * says nothing about which period that is.
  */
 export function splitBooks(input: PLInput): PLResult {
-  const { invoices, materials, labour, expenses, cashJobIds, taxRate } = input
+  const {
+    invoices, materials, labour, expenses, cashJobIds, taxRate,
+    depreciation = 0, depreciationNonDeductible = 0,
+  } = input
   const offJob = (r: Row) => !!r.job_id && cashJobIds.has(r.job_id)
 
   const books = empty()
@@ -150,6 +162,8 @@ export function splitBooks(input: PLInput): PLResult {
     }
   }
 
+  books.depreciation = depreciation
+  offBooks.depreciation = depreciationNonDeductible
   close(books); close(offBooks)
 
   const taxableProfit = books.net
