@@ -5,6 +5,7 @@ import { useAuth } from '@/lib/auth'
 import { attentionList, overdueInvoices, needsFollowUp, type AttentionKind } from '@/lib/attention'
 import { supabase, selectAll } from '@/lib/supabase'
 import { fmtCurrency, calcOwed, invStatus, normaliseDate, genId, crewLabel } from '@/lib/utils'
+import InfoTip, { TipCalc } from '@/components/InfoTip'
 import {
   AlertCircle, UserPlus, Clock, Users, ExternalLink, Plus,
   CalendarDays, BarChart3, CheckSquare, CalendarPlus,
@@ -77,9 +78,11 @@ function SBadge({ s }: { s?: string | null }) {
 }
 
 // V16 .metric
-function Metric({ label, badge, value, valueColor, sub, borderColor, onClick }: {
+function Metric({ label, badge, value, valueColor, sub, borderColor, onClick, help, helpAlign }: {
   label: string; badge?: string; value: React.ReactNode; valueColor?: string
   sub?: React.ReactNode; borderColor?: string; onClick?: () => void
+  /** What the figure means and how it is worked out. */
+  help?: React.ReactNode; helpAlign?: 'left' | 'right'
 }) {
   return (
     <div
@@ -90,6 +93,7 @@ function Metric({ label, badge, value, valueColor, sub, borderColor, onClick }: 
       <div className="text-[11px] text-[#666] mb-1">
         {label}
         {badge && <span className="text-[9px] bg-[#e0f2fe] text-[#0369a1] rounded-[3px] px-1 py-px ml-1">{badge}</span>}
+        {help && <span className="ml-1"><InfoTip title={label} align={helpAlign}>{help}</InfoTip></span>}
       </div>
       <div className="text-xl font-semibold" style={valueColor ? { color: valueColor } : undefined}>{value}</div>
       {sub && <div className="text-[10px] text-[#666] mt-0.5">{sub}</div>}
@@ -271,27 +275,54 @@ export default function Dashboard() {
       <div className="grid gap-2.5 mb-2.5" style={{ gridTemplateColumns: 'repeat(auto-fill,minmax(150px,1fr))' }}>
         <Metric
           label="Outstanding payments" borderColor="#dc2626" onClick={() => nav('/invoices')}
+          help={<>Money invoiced that has not arrived yet, across every invoice ever raised — not
+          just this year. Overdue means the due date has passed and something is still owed.
+          <TipCalc>Each invoice: total inc GST minus what has been received. An invoice marked
+          paid by hand counts as nil however much was received against it.</TipCalc></>}
           value={owed > 0 ? fmtCurrency(owed) : 'All clear ✓'}
           valueColor={owed > 0 ? '#dc2626' : '#16a34a'}
           sub={overdueInvs.length ? <span className="text-[#dc2626]">{overdueInvs.length} overdue</span> : undefined}
         />
         <Metric
           label="GST this quarter" badge={qLabel} borderColor="#0369a1" onClick={() => nav('/reports')}
+          help={<>The GST you have collected this calendar quarter and will owe the ATO, less whatever
+          GST credits you claim on purchases — which this figure does not subtract. Cash basis:
+          it counts when the client paid, not when you invoiced.
+          <TipCalc>GST on fully paid invoices whose payment date falls in {qLabel}. A paid
+          invoice with no payment date recorded falls back to its invoice date. Cash jobs carry
+          no GST and never appear.</TipCalc></>}
           value={fmtCurrency(gstThisQ)} valueColor="#0369a1"
           sub="Cash basis · click for BAS"
         />
         <Metric
           label={`Revenue received ${yr}`} borderColor="#16a34a"
+          help={<>What has actually landed this calendar year, ex GST. <b>Invoiced</b> underneath is what
+          you have billed in the same period — the gap between the two is work done and not yet
+          paid for.
+          <TipCalc>Fully paid invoices dated in {yr} by payment date (falling back to the invoice
+          date), ex GST, plus approved variations on those jobs. Part-paid invoices are not counted
+          at all until they settle.</TipCalc></>}
           value={fmtCurrency(fyRevenue)} valueColor="#16a34a"
           sub={`Invoiced: ${fmtCurrency(fyInvoiced)}`}
         />
         <Metric
           label={`Gross margin ${yr}`} borderColor={mgColor}
+          help={<>What is left of this year's received revenue after everything logged against the
+          business this year. Green at 40% and above, amber from 25%, red below.
+          <TipCalc>(Revenue received &minus; materials &minus; labour &minus; overheads) &divide;
+          revenue received, all dated in {yr}. It is a period margin, not a job margin: costs
+          logged this year on a job paid next year still land here, so it is rough until a year is
+          well under way. Per-job figures are on the Costs page.</TipCalc></>}
           value={`${fyMargin}%`} valueColor={mgColor}
           sub="After mat. & labour costs"
         />
         <Metric
           label="Pipeline (quotes out)" borderColor="#7c3aed" onClick={() => nav('/quotes')}
+          help={<>Work quoted and sitting with clients — your best read on what is coming if the usual
+          share of it converts. Ex GST.
+          <TipCalc>Jobs whose quote is marked Sent, summing each one's quoted ex-GST price. A quote
+          goes out of this the moment it is won or lost.</TipCalc></>}
+          helpAlign="right"
           value={fmtCurrency(pipelineV)} valueColor="#7c3aed"
           sub={`${pipelineCount} quote${pipelineCount !== 1 ? 's' : ''} pending`}
         />
@@ -301,18 +332,31 @@ export default function Dashboard() {
       <div className="grid gap-2.5 mb-4" style={{ gridTemplateColumns: 'repeat(auto-fill,minmax(130px,1fr))' }}>
         <Metric
           label="In progress" value={jobsInProgress.length} valueColor="#2563eb" onClick={() => nav('/jobs')}
+          help={<>Jobs on the tools right now.
+          <TipCalc>Jobs with status In Progress. The names underneath are the first two.</TipCalc></>}
           sub={jobsInProgress.map(j => (j.client || '').split(' ')[0]).slice(0, 2).join(', ') + (jobsInProgress.length > 2 ? ' +more' : '')}
         />
         <Metric
           label="Scheduled" value={jobsScheduled.length} valueColor="#5b21b6" onClick={() => nav('/calendar')}
+          help={<>Jobs confirmed with a client but not yet started.
+          <TipCalc>Jobs with status Scheduled, whatever their dates — including any whose start
+          date has already passed, which is worth knowing.</TipCalc></>}
           sub="confirmed jobs"
         />
         <Metric
           label="New enquiries" value={newEnquiries.length || '—'} valueColor={newEnquiries.length ? '#d97706' : undefined}
+          help={<>Enquiries nobody has replied to yet. A dash means none waiting.
+          <TipCalc>Enquiries with status New. Moving one on to Quoted or Lost clears it from
+          here.</TipCalc></>}
           onClick={() => nav('/enquiries')} sub="need response"
         />
         <Metric
           label="Crew on jobs" value={crewTodayCount || '—'} valueColor="#2563eb" onClick={() => nav('/crew')}
+          help={<>How many different people are booked on site today.
+          <TipCalc>Distinct crew with an assignment dated today. Someone booked on two jobs counts
+          once; someone working today without an assignment recorded does not count at
+          all.</TipCalc></>}
+          helpAlign="right"
           sub="assigned today"
         />
       </div>
