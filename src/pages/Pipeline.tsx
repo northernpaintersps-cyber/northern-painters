@@ -62,7 +62,12 @@ function useJobs() {
 function useBoardQuotes() {
   const { user } = useAuth()
   return useQuery({
-    queryKey: ['np_quotes', user?.id],
+    // 'board' in the key, and not optional. This selects a few columns and
+    // leaves out `state`, which holds the whole quote and is large. Sharing a
+    // key with the Quotes page's full query meant whichever loaded last won
+    // the cache — so after opening the Pipeline, reopening a quote in the
+    // builder found no state and came up blank.
+    queryKey: ['np_quotes', 'board', user?.id],
     queryFn: async () => {
       const { data } = await (supabase.from('np_quotes') as any)
         .select('id, quote_no, client, address, job_type, status, locked_price, quote_ex_gst, created_at')

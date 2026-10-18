@@ -160,7 +160,11 @@ export default function QuotingTool() {
 
   // Logged costs, so comparable jobs can show real cost and margin
   const { data: pastMaterials = [] } = useQuery({
-    queryKey: ['np_materials', user?.id],
+    // Its own key: this fetches a few columns, and sharing the full
+    // query's key meant whichever loaded last won the cache — rows then
+    // arrive somewhere else missing fields it needs. staleTime is five
+    // minutes, so that is served rather than refetched.
+    queryKey: ['np_materials', 'history', user?.id],
     queryFn: async () => {
       const { data } = await supabase.from('np_materials').select('job_id, cost_ex_gst').eq('user_id', user!.id)
       return (data ?? []) as any[]
@@ -168,7 +172,11 @@ export default function QuotingTool() {
     enabled: !!user,
   })
   const { data: pastLabour = [] } = useQuery({
-    queryKey: ['np_labour', user?.id],
+    // Its own key: this fetches a few columns, and sharing the full
+    // query's key meant whichever loaded last won the cache — rows then
+    // arrive somewhere else missing fields it needs. staleTime is five
+    // minutes, so that is served rather than refetched.
+    queryKey: ['np_labour', 'history', user?.id],
     queryFn: async () => {
       const { data } = await supabase.from('np_labour').select('job_id, cost, hours, rate').eq('user_id', user!.id)
       return (data ?? []) as any[]
@@ -179,7 +187,11 @@ export default function QuotingTool() {
   // carrying them is flagged rather than trusted. Without this query the flag
   // never fires on this page.
   const { data: pastVariations = [] } = useQuery({
-    queryKey: ['np_variations', user?.id],
+    // Its own key: this fetches a few columns, and sharing the full
+    // query's key meant whichever loaded last won the cache — rows then
+    // arrive somewhere else missing fields it needs. staleTime is five
+    // minutes, so that is served rather than refetched.
+    queryKey: ['np_variations', 'history', user?.id],
     queryFn: async () => {
       const { data } = await supabase.from('np_variations')
         .select('job_id, amount_ex_gst, var_status').eq('user_id', user!.id)

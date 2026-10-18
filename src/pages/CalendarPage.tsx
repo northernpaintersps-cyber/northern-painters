@@ -49,7 +49,11 @@ function useCalendarEvents() {
 function useJobs() {
   const { user } = useAuth()
   return useQuery({
-    queryKey: ['np_jobs', user?.id],
+        // Its own key: this fetches a few columns, and sharing the full
+    // query's key meant whichever loaded last won the cache — rows then
+    // arrive somewhere else missing fields it needs. staleTime is five
+    // minutes, so that is served rather than refetched.
+    queryKey: ['np_jobs', 'calendar', user?.id],
     queryFn: async () => {
       const { data } = await supabase.from('np_jobs').select('id,client,address,status,sched_start,est_days,scheduled_dates,type').eq('user_id', user!.id)
       return (data ?? []) as any[]

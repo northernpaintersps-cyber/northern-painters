@@ -123,10 +123,29 @@ export default function Quotes() {
   const totConverted = quotes.filter(x => x.status === 'Converted').length
 
   // Reopen a saved quote in the builder, fully restored
+  /**
+   * A quote with no stored state cannot be reopened — the builder would come
+   * up blank with no clue why. That happens for anything saved before `state`
+   * was captured, and it used to happen for every quote once the Pipeline had
+   * been visited, because its trimmed query shared this one's cache key.
+   */
+  const reopenable = (quote: Row) =>
+    !!quote?.state && typeof quote.state === 'object' && Object.keys(quote.state).length > 0
+
   function reopen(quote: Row) {
+    if (!reopenable(quote)) {
+      alert(`There is nothing stored to reopen for this quote${quote.quote_no ? ` (${quote.quote_no})` : ''}.`
+        + '\n\nIt was saved before the builder kept its working state, so only the figures '
+        + 'on the review screen remain. Duplicate it to start a new quote from the same client '
+        + 'and address.')
+      return
+    }
     try {
       sessionStorage.setItem('np_reopen_quote', JSON.stringify({ ...quote.state, _quoteId: quote.id }))
-    } catch {}
+    } catch {
+      alert('Could not hand the quote over — browser storage is full or blocked.')
+      return
+    }
     nav('/quotes/build')
   }
 
@@ -271,7 +290,9 @@ create policy "Users own their quotes" on np_quotes for all using (auth.uid() = 
                     <td className="px-2.5 py-[7px] whitespace-nowrap">
                       <button onClick={() => setViewing(x)} title="Review"
                         className="ml-1 px-1.5 py-1 rounded-md bg-blue-600 text-white hover:bg-blue-700 align-middle"><Eye size={12} /></button>
-                      <button onClick={() => reopen(x)} title="Reopen in builder"
+                      <button onClick={() => reopen(x)}
+                        title={reopenable(x) ? 'Reopen in builder' : 'Nothing stored to reopen'}
+                        style={reopenable(x) ? undefined : { opacity: 0.4 }}
                         className="ml-1 px-1.5 py-1 rounded-md bg-white border border-black/20 hover:bg-[#f5f4f0] align-middle"><Pencil size={12} /></button>
                       <button onClick={() => duplicate(x)} title="Duplicate as a new quote"
                         className="ml-1 px-1.5 py-1 rounded-md bg-white border border-black/20 hover:bg-[#f5f4f0] align-middle"><Copy size={12} /></button>

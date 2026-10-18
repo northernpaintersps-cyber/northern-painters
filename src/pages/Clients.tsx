@@ -9,7 +9,11 @@ import { Search, Loader2 } from 'lucide-react'
 function useJobs() {
   const { user } = useAuth()
   return useQuery({
-    queryKey: ['np_jobs', user?.id],
+        // Its own key: this fetches a few columns, and sharing the full
+    // query's key meant whichever loaded last won the cache — rows then
+    // arrive somewhere else missing fields it needs. staleTime is five
+    // minutes, so that is served rather than refetched.
+    queryKey: ['np_jobs', 'clients', user?.id],
     queryFn: async () => {
       const { data } = await supabase.from('np_jobs').select('id,client,agreed_ex_gst,quote_ex_gst,status,quote_status').eq('user_id', user!.id)
       return (data ?? []) as any[]
