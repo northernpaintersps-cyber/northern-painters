@@ -9,6 +9,7 @@ import {
   fmtCurrency, fmtDate, genId, today, toNum, lineItemsOf,
   findDuplicateMaterial, jobBillingType, type DuplicateHit, type InvoiceLineItem,
 } from '@/lib/utils'
+import { PAID_BY, isCashPaid } from '@/lib/cashBooks'
 import { extractInvoice } from '@/lib/ai'
 import { useBusinessSettings } from '@/pages/SettingsPage'
 import {
@@ -113,6 +114,7 @@ function emptyForm() {
     mat_desc: '',
     category: 'Paint',
     billing_type: 'Fixed Quote',
+    paid_by: 'Bank',
     cost_ex_gst: '' as any,
     gst: '' as any,
     total_inc_gst: '' as any,
@@ -554,6 +556,13 @@ export default function Materials() {
           <div className="grid grid-cols-2 gap-3">
             <Select label="Category" value={form.category} onChange={ef('category')} options={CATEGORIES} />
             <Select label="Billing type" value={form.billing_type} onChange={ef('billing_type')} options={BILLING_TYPES} />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            {/* Cash is not deductible and claims no GST credit — see src/lib/cashBooks.ts. */}
+            <Select label="Paid by" value={form.paid_by || 'Bank'} onChange={ef('paid_by')} options={[...PAID_BY]} />
+            <div className="flex items-end text-[11px] text-[#92400e] pb-2">
+              {isCashPaid(form) && 'Cash — not deductible, no GST credit'}
+            </div>
           </div>
           <div className="grid grid-cols-3 gap-3">
             <Input label="Cost ex GST ($)" type="number" value={form.cost_ex_gst} onChange={ef('cost_ex_gst')} />

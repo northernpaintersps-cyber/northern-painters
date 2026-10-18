@@ -54,6 +54,10 @@ export interface Database {
           billing_type: string | null
           paid: boolean | null
           worker_payment_type: string | null
+          /** 'Bank' | 'Card' | 'Cash' — see supabase/np-cash-payments.sql.
+           *  Cash is not deductible and claims no GST credit. Null reads as
+           *  on the books. */
+          paid_by: string | null
           labour_desc: string | null
           notes: string | null
           /** Which phase of the job these hours went to — see
@@ -111,6 +115,10 @@ export interface Database {
           billing_type: string | null
           notes: string | null
           receipt_no: string | null
+          /** 'Bank' | 'Card' | 'Cash' — see supabase/np-cash-payments.sql.
+           *  Cash is not deductible and claims no GST credit. Null reads as
+           *  on the books. */
+          paid_by: string | null
           line_items: Json | null
           updated_at: string | null
           created_at: string | null
@@ -218,6 +226,10 @@ export interface Database {
           amount_ex_gst: number | null
           gst: number | null
           category: string | null
+          /** 'Bank' | 'Card' | 'Cash' — see supabase/np-cash-payments.sql.
+           *  Cash is not deductible and claims no GST credit. Null reads as
+           *  on the books. */
+          paid_by: string | null
           notes: string | null
           updated_at: string | null
           created_at: string | null

@@ -6,6 +6,7 @@ import { Modal } from '@/components/ui/Modal'
 import JobPicker from '@/components/JobPicker'
 import { Input, Select } from '@/components/ui/Field'
 import { fmtCurrency, genId, today } from '@/lib/utils'
+import { PAID_BY } from '@/lib/cashBooks'
 import { Plus, Loader2, Trash2, Edit2 } from 'lucide-react'
 import { invalidateTable } from '../lib/queryKeys'
 
@@ -94,7 +95,7 @@ export default function Expenses() {
   }, [rows])
 
   function openNew() {
-    setForm({ date: today(), category: 'Other', gst_applies: true })
+    setForm({ date: today(), category: 'Other', paid_by: 'Bank', gst_applies: true })
     setModal(true)
   }
   function openEdit(e: Row) {
@@ -233,6 +234,8 @@ export default function Expenses() {
           <Input label="Supplier" value={form.supplier || ''} onChange={ef('supplier')} />
           <Input label="Description" value={form.exp_desc || ''} onChange={ef('exp_desc')} wrapperClassName="col-span-2" />
           <Select label="Category" value={form.category || 'Other'} onChange={ef('category')} options={EXP_CATS} />
+          {/* Cash is not deductible and claims no GST credit — see src/lib/cashBooks.ts. */}
+          <Select label="Paid by" value={form.paid_by || 'Bank'} onChange={ef('paid_by')} options={[...PAID_BY]} />
           <JobPicker jobs={jobs} value={form.job_id} label="Link to job (optional)"
             noneLabel="— None (overhead) —"
             onChange={id => setForm(p => ({ ...p, job_id: id }))} />

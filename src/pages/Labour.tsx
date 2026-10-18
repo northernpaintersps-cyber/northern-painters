@@ -50,7 +50,7 @@ function useUpsert() {
       // the rest of the entry must still save, so drop whichever is missing
       // and retry. Loops, because there is more than one of them now and the
       // error only ever names the first.
-      const OPTIONAL = ['period_start', 'period_end', 'phase_name', 'phase_id']
+      const OPTIONAL = ['period_start', 'period_end', 'phase_name', 'phase_id', 'paid_by']
       let err = error
       for (let i = 0; i < OPTIONAL.length; i++) {
         const missing = err.message?.match(/Could not find the '(\w+)' column/)?.[1]
@@ -190,6 +190,9 @@ export default function Labour() {
       period_end: form.period_end || form.period_start || null,
       phase_name: (form.phase_name || '').trim() || null,
       phase_id: form.phase_id || null,
+      // How the worker was actually paid, which is what decides deductibility.
+      // Kept in step with the ABN/Cash choice rather than asked twice.
+      paid_by: form.worker_payment_type === 'Cash' ? 'Cash' : 'Bank',
       created_at: form.created_at || new Date().toISOString(),
     })
     setModal(false)
@@ -446,8 +449,13 @@ export default function Labour() {
               className="w-full bg-white border border-black/20 rounded-lg px-3 py-2 text-[13px] focus:outline-none focus:ring-1 focus:ring-blue-500" />
             <datalist id="crew-names">{crew.map(c => <option key={c.id} value={c.name} />)}</datalist>
           </div>
-          <Select label="Worker payment type" value={form.worker_payment_type || 'ABN'}
-            onChange={e => setForm(p => ({ ...p, worker_payment_type: e.target.value }))} options={['ABN', 'Cash']} />
+          <div>
+            <Select label="Worker payment type" value={form.worker_payment_type || 'ABN'}
+              onChange={e => setForm(p => ({ ...p, worker_payment_type: e.target.value }))} options={['ABN', 'Cash']} />
+            {form.worker_payment_type === 'Cash' && (
+              <div className="text-[11px] text-[#92400e] mt-1">Cash — not deductible, excluded from the tax estimate</div>
+            )}
+          </div>
 
           {/* The phase of the job these hours went to. Optional, and an
               untagged entry still counts in full toward what the job cost —

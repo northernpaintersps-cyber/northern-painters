@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { supabase, selectAll } from '@/lib/supabase'
 import { useAuth } from '@/lib/auth'
 import { fmtCurrency, invStatus, isCashJob, today } from '@/lib/utils'
+import { splitBooks, isCashPaid } from '@/lib/cashBooks'
 import { reconcileBankStatement } from '@/lib/ai'
 import {
   Printer, Loader2, FileSpreadsheet, Download, ReceiptText, LineChart,
@@ -175,8 +176,9 @@ export default function Tax() {
     const invs = invoices.filter(i => onBooks(i) && (basis === 'cash'
       ? (i.date_paid && inRange(i.date_paid, year, quarter)) || (invStatus(i) === 'Paid' && !i.date_paid && inRange(i.date || '', year, quarter))
       : inRange(i.date || '', year, quarter)))
-    const mats = materials.filter(m => onBooks(m) && inRange(m.date || '', year, quarter))
-    const exps = expenses.filter(e => onBooks(e) && inRange(e.date || '', year, quarter) && hasGST(e))
+    // A cash purchase claims no GST credit, so it is not on the BAS at all.
+    const mats = materials.filter(m => onBooks(m) && !isCashPaid(m) && inRange(m.date || '', year, quarter))
+    const exps = expenses.filter(e => onBooks(e) && !isCashPaid(e) && inRange(e.date || '', year, quarter) && hasGST(e))
     const gstCollected = invs.reduce((s, i) => s + (i.gst || 0), 0)
     const gstOnMats = mats.reduce((s, m) => s + (m.gst || 0), 0)
     const gstOnExps = exps.reduce((s, e) => s + (e.gst || 0), 0)
@@ -188,36 +190,26 @@ export default function Tax() {
       totalPurchases: mats.reduce((s, m) => s + (m.cost_ex_gst || 0), 0) + exps.reduce((s, e) => s + (e.amount_ex_gst || 0), 0),
       invCount: invs.length,
       txnCount: mats.length + exps.length,
-      matsIncGST: materials.filter(m => onBooks(m) && inRange(m.date || '', year, quarter)).reduce((s, m) => s + (m.total_inc_gst || 0), 0),
-      expsIncGST: expenses.filter(e => onBooks(e) && inRange(e.date || '', year, quarter)).reduce((s, e) => s + expIncGST(e), 0),
+      matsIncGST: materials.filter(m => onBooks(m) && !isCashPaid(m) && inRange(m.date || '', year, quarter)).reduce((s, m) => s + (m.total_inc_gst || 0), 0),
+      expsIncGST: expenses.filter(e => onBooks(e) && !isCashPaid(e) && inRange(e.date || '', year, quarter)).reduce((s, e) => s + expIncGST(e), 0),
+      cashPurchases: [...materials, ...expenses].filter(r => isCashPaid(r) && inRange(r.date || '', year, quarter)).length,
     }
   }, [invoices, materials, expenses, basis, year, quarter])
 
-  // V16 aggPL()
-  const pl = useMemo(() => {
-    const invs = invoices.filter(i => onBooks(i) && inYear(i.date || '', year))
-    const mats = materials.filter(m => onBooks(m) && inYear(m.date || '', year))
-    const labs = labour.filter(l => onBooks(l) && inYear(l.date || '', year))
-    const exps = expenses.filter(e => onBooks(e) && inYear(e.date || '', year))
-    const income = invs.reduce((s, i) => s + (i.agreed_ex_gst || 0), 0)
-    const matCost = mats.reduce((s, m) => s + (m.cost_ex_gst || 0), 0)
-    const labCost = labs.reduce((s, l) => s + (l.cost || (l.hours || 0) * (l.rate || 0)), 0)
-    const expCost = exps.reduce((s, e) => s + (e.amount_ex_gst || 0), 0)
-    const byCat: Record<string, number> = {}
-    exps.forEach(e => {
-      const c = e.category || 'Other'
-      byCat[c] = (byCat[c] || 0) + (e.amount_ex_gst || 0)
-    })
-    const gstCollected = invs.reduce((s, i) => s + (i.gst || 0), 0)
-    const gstCredits = mats.reduce((s, m) => s + (m.gst || 0), 0) + exps.filter(hasGST).reduce((s, e) => s + (e.gst || 0), 0)
-    return {
-      income, matCost, labCost, expCost,
-      totalExpenses: matCost + labCost + expCost,
-      grossProfit: income - matCost - labCost,
-      netProfit: income - (matCost + labCost + expCost),
-      byCat, gstCollected, gstCredits, netGST: gstCollected - gstCredits,
-    }
-  }, [invoices, materials, expenses, labour, year])
+  // V16 aggPL(), now split on the books.
+  //
+  // Cash is not a kind of job, it is a kind of payment: a cash cost is not
+  // deductible and a cash job's income is not declared, but both are real
+  // money and both land on the after-tax line. splitBooks does the partition.
+  const TAX_RATE = 0.25
+  const pl = useMemo(() => splitBooks({
+    invoices: invoices.filter(i => inYear(i.date || '', year)),
+    materials: materials.filter(m => inYear(m.date || '', year)),
+    labour: labour.filter(l => inYear(l.date || '', year)),
+    expenses: expenses.filter(e => inYear(e.date || '', year)),
+    cashJobIds,
+    taxRate: TAX_RATE,
+  }), [invoices, materials, labour, expenses, cashJobIds, year])
 
   const basRows: LineSpec[] = [
     ['SALES & INCOME', '', 'header'],
@@ -238,27 +230,47 @@ export default function Tax() {
       fmtCurrency(Math.abs(bas.netGST)), bas.netGST > 0 ? 'total-red' : 'total-green'],
   ]
 
+  const { books, offBooks } = pl
+  const hasOffBooks = offBooks.income !== 0 || offBooks.costs !== 0
+  const profitCol = (v: number) => v >= 0 ? 'total-green' : 'total-red'
+
   const plRows: LineSpec[] = [
-    ['INCOME', '', 'header'],
-    ['Revenue from painting services (ex GST)', fmtCurrency(pl.income), ''],
-    ['TOTAL INCOME', fmtCurrency(pl.income), 'total-green'],
+    ['DECLARED INCOME', '', 'header'],
+    ['Revenue from painting services (ex GST)', fmtCurrency(books.income), ''],
+    ['TOTAL INCOME', fmtCurrency(books.income), 'total-green'],
     null,
     ['COST OF GOODS SOLD', '', 'header'],
-    ['Materials & supplies', fmtCurrency(pl.matCost), ''],
-    ['Labour & subcontractors', fmtCurrency(pl.labCost), ''],
-    ['GROSS PROFIT', fmtCurrency(pl.grossProfit), pl.grossProfit >= 0 ? 'total-green' : 'total-red'],
+    ['Materials & supplies', fmtCurrency(books.materials), ''],
+    ['Labour & subcontractors', fmtCurrency(books.labour), ''],
+    ['GROSS PROFIT', fmtCurrency(books.income - books.materials - books.labour),
+      profitCol(books.income - books.materials - books.labour)],
     null,
     ['OVERHEAD EXPENSES', '', 'header'],
     ...Object.entries(pl.byCat).sort((a, b) => b[1] - a[1]).map(([c, v]) => [c, fmtCurrency(v), ''] as LineSpec),
-    pl.expCost ? ['TOTAL OVERHEADS', fmtCurrency(pl.expCost), 'bold'] as LineSpec : null,
+    books.expenses ? ['TOTAL OVERHEADS', fmtCurrency(books.expenses), 'bold'] as LineSpec : null,
     null,
-    ['NET PROFIT BEFORE TAX', fmtCurrency(pl.netProfit), pl.netProfit >= 0 ? 'total-green' : 'total-red'],
-    ['Estimated income tax (25%)', fmtCurrency(Math.max(0, pl.netProfit) * 0.25), ''],
-    ['NET PROFIT AFTER TAX', fmtCurrency(pl.netProfit - Math.max(0, pl.netProfit) * 0.25), pl.netProfit >= 0 ? 'total-green' : 'total-red'],
+    ['TAXABLE PROFIT', fmtCurrency(pl.taxableProfit), profitCol(pl.taxableProfit)],
+    [`Estimated income tax (${Math.round(pl.taxRate * 100)}%)`, fmtCurrency(pl.tax), ''],
+    ['PROFIT AFTER TAX (declared)', fmtCurrency(pl.taxableProfit - pl.tax), profitCol(pl.taxableProfit - pl.tax)],
+
+    // Everything the ATO does not see, kept out of the figures above and
+    // applied here, where it belongs: real money, no tax effect.
+    ...(hasOffBooks ? [
+      null,
+      ['OFF THE BOOKS — CASH', '', 'header'],
+      offBooks.income ? ['Cash income (not declared, no GST)', fmtCurrency(offBooks.income), ''] as LineSpec : null,
+      offBooks.materials ? ['Materials paid cash (not deductible)', fmtCurrency(-offBooks.materials), ''] as LineSpec : null,
+      offBooks.labour ? ['Labour paid cash (not deductible)', fmtCurrency(-offBooks.labour), ''] as LineSpec : null,
+      offBooks.expenses ? ['Expenses paid cash (not deductible)', fmtCurrency(-offBooks.expenses), ''] as LineSpec : null,
+      ['Net cash position', fmtCurrency(offBooks.net), profitCol(offBooks.net)],
+    ] as LineSpec[] : []),
+
+    null,
+    ['TOTAL PROFIT AFTER TAX', fmtCurrency(pl.afterTax), profitCol(pl.afterTax)],
     null,
     ['GST SUMMARY', '', 'header'],
     ['GST collected from clients', fmtCurrency(pl.gstCollected), ''],
-    ['GST credits (materials + expenses)', fmtCurrency(pl.gstCredits), ''],
+    ['GST credits (materials + expenses, excl. cash)', fmtCurrency(pl.gstCredits), ''],
     ['Net GST payable', fmtCurrency(pl.netGST), pl.netGST > 0 ? 'total-red' : 'total-green'],
   ]
 
@@ -284,7 +296,9 @@ h1{font-size:18px;margin-bottom:4px}h2{font-size:14px;margin:16px 0 8px;border-b
   function exportXeroSales() {
     const headers = ['*ContactName','EmailAddress','*InvoiceNumber','Reference','*InvoiceDate','*DueDate','*Description','*Quantity','*UnitAmount','*AccountCode','*TaxType','Currency']
     const rows = [csvRow(headers)]
-    invoices.filter(i => (i.agreed_ex_gst || 0) > 0).forEach(inv => {
+    // A Cash job was never declared, so it is not exported either.
+    const undeclared = invoices.filter(i => (i.agreed_ex_gst || 0) > 0 && !onBooks(i)).length
+    invoices.filter(i => (i.agreed_ex_gst || 0) > 0 && onBooks(i)).forEach(inv => {
       const date = inv.date || today()
       rows.push(csvRow([
         inv.client || '', inv.email || '', inv.id || '', inv.job_id || '',
@@ -293,28 +307,34 @@ h1{font-size:18px;margin-bottom:4px}h2{font-size:14px;margin:16px 0 8px;border-b
       ]))
     })
     downloadCSV(`NP_Xero_Sales_${today()}.csv`, rows)
-    alert(`Sales CSV exported — ${rows.length - 1} invoice${rows.length - 1 !== 1 ? 's' : ''}. Import via Xero → Accounting → Import.`)
+    alert(`Sales CSV exported — ${rows.length - 1} invoice${rows.length - 1 !== 1 ? 's' : ''}.`
+      + (undeclared ? ` ${undeclared} cash job${undeclared !== 1 ? 's' : ''} left out — off the books.` : '')
+      + ' Import via Xero → Accounting → Import.')
   }
 
   // V16 exportXeroBills()
   function exportXeroBills() {
     const headers = ['*ContactName','*InvoiceNumber','Reference','*InvoiceDate','*DueDate','*Description','*Quantity','*UnitAmount','*AccountCode','*TaxType','Currency']
     const rows = [csvRow(headers)]
-    materials.forEach((m, i) => {
+    // A cash purchase is not claimed, so it does not belong in the accounts.
+    const held = [...materials, ...expenses].filter(isCashPaid).length
+    materials.filter(m => !isCashPaid(m)).forEach((m, i) => {
       const invno = m.receipt_no || `MAT-${String(i + 1).padStart(4, '0')}`
       rows.push(csvRow([
         m.supplier || 'Unknown', invno, m.job_id || '', m.date || '', m.date || '',
         m.mat_desc || '', '1', (m.cost_ex_gst || 0).toFixed(2), '310', 'INPUT2', 'AUD',
       ]))
     })
-    expenses.forEach((e, i) => {
+    expenses.filter(e => !isCashPaid(e)).forEach((e, i) => {
       rows.push(csvRow([
         e.supplier || 'Unknown', `EXP-${String(i + 1).padStart(4, '0')}`, e.job_id || '',
         e.date || '', e.date || '', e.exp_desc || '', '1', (e.amount_ex_gst || 0).toFixed(2), '310', 'INPUT2', 'AUD',
       ]))
     })
     downloadCSV(`NP_Xero_Bills_${today()}.csv`, rows)
-    alert(`Bills CSV exported — ${rows.length - 1} item${rows.length - 1 !== 1 ? 's' : ''}. Import via Xero → Accounting → Import.`)
+    alert(`Bills CSV exported — ${rows.length - 1} item${rows.length - 1 !== 1 ? 's' : ''}.`
+      + (held ? ` ${held} cash purchase${held !== 1 ? 's' : ''} left out — cash is not deductible.` : '')
+      + ' Import via Xero → Accounting → Import.')
   }
 
   if (isLoading) return (
@@ -402,6 +422,7 @@ h1{font-size:18px;margin-bottom:4px}h2{font-size:14px;margin:16px 0 8px;border-b
               <div className="text-[11px] text-[#666] mt-4 pt-2.5 border-t border-black/[0.08]">
                 Based on {bas.invCount} invoice{bas.invCount !== 1 ? 's' : ''} and {bas.txnCount} purchase/expense
                 transaction{bas.txnCount !== 1 ? 's' : ''} in this period. Confirm with your registered BAS agent or accountant before lodging.
+                {bas.cashPurchases > 0 && <> {bas.cashPurchases} cash purchase{bas.cashPurchases !== 1 ? 's are' : ' is'} excluded — cash claims no GST credit.</>}
               </div>
             </div>
           </div>
@@ -418,10 +439,12 @@ h1{font-size:18px;margin-bottom:4px}h2{font-size:14px;margin:16px 0 8px;border-b
 
           <div className="grid gap-2.5 mb-3.5" style={{ gridTemplateColumns: 'repeat(auto-fit,minmax(140px,1fr))' }}>
             {[
-              { l: 'Total income (ex GST)', v: fmtCurrency(pl.income), c: '#16a34a' },
-              { l: 'Total expenses (ex GST)', v: fmtCurrency(pl.totalExpenses) },
-              { l: 'Net profit', v: fmtCurrency(pl.netProfit), c: pl.netProfit >= 0 ? '#16a34a' : '#dc2626' },
-              { l: 'Est. tax @ 25%', v: fmtCurrency(Math.max(0, pl.netProfit) * 0.25), c: '#d97706' },
+              { l: 'Declared income (ex GST)', v: fmtCurrency(books.income), c: '#16a34a' },
+              { l: 'Deductible expenses', v: fmtCurrency(books.costs) },
+              { l: 'Taxable profit', v: fmtCurrency(pl.taxableProfit), c: pl.taxableProfit >= 0 ? '#16a34a' : '#dc2626' },
+              { l: `Est. tax @ ${Math.round(pl.taxRate * 100)}%`, v: fmtCurrency(pl.tax), c: '#d97706' },
+              { l: 'Cash (off books)', v: fmtCurrency(offBooks.net), c: offBooks.net >= 0 ? '#16a34a' : '#dc2626' },
+              { l: 'Profit after tax', v: fmtCurrency(pl.afterTax), c: pl.afterTax >= 0 ? '#16a34a' : '#dc2626' },
             ].map(m => (
               <div key={m.l} className="bg-[#f5f4f0] rounded-lg px-4 py-3.5">
                 <div className="text-[11px] text-[#666] mb-1">{m.l}</div>
@@ -440,7 +463,12 @@ h1{font-size:18px;margin-bottom:4px}h2{font-size:14px;margin:16px 0 8px;border-b
               <StatementRows rows={plRows} />
               <div className="text-[11px] text-[#666] mt-4 pt-2.5 border-t border-black/[0.08]">
                 This report is prepared from app data only. Confirm all figures with your accountant before lodging your
-                tax return. Income tax rate of 25% applies to base rate entities — verify your applicable rate.
+                tax return. Income tax rate of {Math.round(pl.taxRate * 100)}% applies to base rate entities — verify your applicable rate.
+                {hasOffBooks && <> Cash is excluded from every figure above the off-the-books section: a cash cost claims no
+                deduction and no GST credit, and a Cash job&rsquo;s income is not declared. Both are still real money, so both
+                are applied to the total after tax. Based on {pl.counts.cashCostRows} cash-paid
+                cost{pl.counts.cashCostRows !== 1 ? 's' : ''} and {pl.counts.cashIncomeRows} cash job
+                invoice{pl.counts.cashIncomeRows !== 1 ? 's' : ''}.</>}
               </div>
             </div>
           </div>
