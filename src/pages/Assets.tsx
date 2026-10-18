@@ -12,6 +12,7 @@ import {
   assetMethod, depreciationFor, registerTotals, schedule, disposalResult,
   businessShare, yearOf,
 } from '@/lib/assets'
+import { fyLabel, fyOptions, currentFY } from '@/lib/fy'
 import { Plus, Loader2, Trash2, Edit2, Truck } from 'lucide-react'
 import { invalidateTable } from '../lib/queryKeys'
 
@@ -66,7 +67,8 @@ export default function Assets() {
   const upsert = useUpsert()
   const del = useDel()
 
-  const curYear = new Date().getFullYear()
+  // Financial years, 1 July to 30 June, the same as the P&L this feeds.
+  const curYear = currentFY()
   const [year, setYear] = useState(curYear)
   const [q, setQ] = useState('')
   const [cat, setCat] = useState('')
@@ -77,11 +79,7 @@ export default function Assets() {
 
   const ef = (k: string) => (e: any) => setForm(p => ({ ...p, [k]: e.target.value }))
 
-  const years = useMemo(() => {
-    const ys = [...new Set(assets.map(a => yearOf(a.purchase_date)).filter((y): y is number => y !== null))]
-    for (let y = Math.min(curYear, ...(ys.length ? ys : [curYear])); y <= curYear; y++) ys.push(y)
-    return [...new Set(ys)].sort((a, b) => b - a)
-  }, [assets, curYear])
+  const years = useMemo(() => fyOptions(assets.map(a => a.purchase_date)), [assets])
 
   const rows = useMemo(() => assets.filter(a => {
     const bought = yearOf(a.purchase_date)
@@ -157,9 +155,9 @@ export default function Assets() {
         {[
           {
             l: 'Assets owned', v: String(totals.count), c: '#2563eb',
-            help: <>Everything on the register still owned at the end of {year}.
-              <TipCalc>Bought on or before {year}, not disposed of before it. Something sold
-              during {year} still counts — you owned it for part of the year.</TipCalc></>,
+            help: <>Everything on the register still owned at 30 June {year}.
+              <TipCalc>Bought on or before FY {fyLabel(year)}, not disposed of before it. Something sold
+              during the year still counts — you owned it for part of it.</TipCalc></>,
           },
           {
             l: 'Cost of assets', v: fmtCurrency(totals.costExGST),
@@ -169,26 +167,26 @@ export default function Assets() {
           },
           {
             l: 'Written-down value', v: fmtCurrency(totals.writtenDown), c: '#0369a1',
-            help: <>What they are worth on paper at the end of {year}, after depreciation. This
+            help: <>What they are worth on paper at 30 June {year}, after depreciation. This
               is the figure a balance sheet carries.
-              <TipCalc>Cost less all depreciation charged up to the end of {year}, per asset,
+              <TipCalc>Cost less all depreciation charged up to 30 June {year}, per asset,
               on the method each one is set to. An asset written off completely sits at nil and
               stays on the register.</TipCalc></>,
           },
           {
-            l: `Depreciation ${year}`, v: fmtCurrency(totals.deduction), c: '#16a34a',
+            l: `Depreciation FY ${fyLabel(year)}`, v: fmtCurrency(totals.deduction), c: '#16a34a',
             help: <>This year&rsquo;s deduction from the register, which the Tax page carries into
               the P&amp;L as an expense.
-              <TipCalc>Each asset&rsquo;s charge for {year} times its business-use share. An asset
+              <TipCalc>Each asset&rsquo;s charge for FY {fyLabel(year)} times its business-use share. An asset
               bought with cash deducts nothing{totals.nonDeductible
                 ? ` — ${fmtCurrency(totals.nonDeductible)} of depreciation is forgone that way this year`
                 : ''}.</TipCalc></>,
           },
           {
-            l: `Bought in ${year}`, v: fmtCurrency(totals.purchasedExGST), c: '#7c3aed',
+            l: `Bought in FY ${fyLabel(year)}`, v: fmtCurrency(totals.purchasedExGST), c: '#7c3aed',
             help: <>Spent on assets this year, ex GST, with {fmtCurrency(totals.purchasedGST)} of
               GST credit to claim on the BAS.
-              <TipCalc>Assets whose purchase date falls in {year}. The GST credit is the business-use
+              <TipCalc>Assets whose purchase date falls in FY {fyLabel(year)}. The GST credit is the business-use
               share of the GST paid, and nil on anything bought with cash.</TipCalc></>,
           },
         ].map(m => (
@@ -212,7 +210,7 @@ export default function Assets() {
           </select>
           <select value={year} onChange={e => setYear(parseInt(e.target.value))}
             className="px-2.5 py-2 text-[13px] bg-white border border-black/20 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500">
-            {years.map(y => <option key={y} value={y}>{y}</option>)}
+            {years.map(y => <option key={y} value={y}>FY {fyLabel(y)}</option>)}
           </select>
           <label className="flex items-center gap-1.5 text-[12px] text-[#666] cursor-pointer">
             <input type="checkbox" checked={showSold} onChange={e => setShowSold(e.target.checked)}
@@ -227,7 +225,7 @@ export default function Assets() {
           <table className="w-full border-collapse text-[12.5px]">
             <thead>
               <tr>
-                {['Asset', 'Category', 'Bought', 'Cost ex GST', 'Method', `Dep. ${year}`, 'Written down', ''].map((h, i) => (
+                {['Asset', 'Category', 'Bought', 'Cost ex GST', 'Method', `Dep. FY ${fyLabel(year)}`, 'Written down', ''].map((h, i) => (
                   <th key={i} className={`px-2.5 py-[7px] border-b border-black/[0.12] text-[#666] font-medium whitespace-nowrap bg-[#fafaf8] sticky top-0 z-[2] ${[3, 5, 6].includes(i) ? 'text-right' : 'text-left'}`}>{h}</th>
                 ))}
               </tr>
@@ -279,7 +277,7 @@ export default function Assets() {
               })}
               {rows.length === 0 && (
                 <tr><td colSpan={8} className="text-center text-[#666] py-6">
-                  Nothing on the register for {year}. Add the ute, the compressor, the ladders — anything
+                  Nothing on the register for FY {fyLabel(year)}. Add the ute, the compressor, the ladders — anything
                   bought once that is used for years.
                 </td></tr>
               )}
@@ -342,12 +340,12 @@ export default function Assets() {
 
           {preview && (
             <div className="col-span-2 rounded-lg bg-[#f5f4f0] px-3 py-2.5 text-[12px]">
-              <b>First year</b> ({yearOf(form.purchase_date)}): {fmtCurrency(preview.charge)} depreciation
+              <b>First year</b> (FY {fyLabel(yearOf(form.purchase_date) ?? curYear)}): {fmtCurrency(preview.charge)} depreciation
               {preview.deduction !== preview.charge && <> · <b>{fmtCurrency(preview.deduction)}</b> of it deductible</>}
               {' '}· written down to {fmtCurrency(preview.closing)}
               {assetMethod(form) !== 'immediate' && assetMethod(form) !== 'none' &&
                 <div className="text-[11px] text-[#666] mt-0.5">
-                  Part-year: the first year is pro-rated from the purchase date, so a late purchase deducts less.
+                  Part-year: the first year is pro-rated from the purchase date to 30 June, so something bought in June deducts almost nothing in its first year.
                 </div>}
             </div>
           )}
@@ -385,7 +383,7 @@ export default function Assets() {
                 <tbody>
                   {rows.map(([y, d]) => (
                     <tr key={y} className={`border-b border-black/[0.06] ${y === year ? 'bg-[#f5f4f0] font-medium' : ''}`}>
-                      <td className="px-2 py-1.5">{y}</td>
+                      <td className="px-2 py-1.5">{fyLabel(y)}</td>
                       <td className="px-2 py-1.5 text-right">{fmtCurrency(d.opening)}</td>
                       <td className="px-2 py-1.5 text-right">{fmtCurrency(d.charge)}</td>
                       <td className="px-2 py-1.5 text-right" style={{ color: d.deduction ? '#16a34a' : '#666' }}>

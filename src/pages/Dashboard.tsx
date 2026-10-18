@@ -6,6 +6,7 @@ import { attentionList, overdueInvoices, needsFollowUp, type AttentionKind } fro
 import { supabase, selectAll } from '@/lib/supabase'
 import { fmtCurrency, calcOwed, invStatus, normaliseDate, genId, crewLabel } from '@/lib/utils'
 import InfoTip, { TipCalc } from '@/components/InfoTip'
+import { fyLabel, fyRange, currentFY, currentQuarter, quarterRange, quarterLabel } from '@/lib/fy'
 import {
   AlertCircle, UserPlus, Clock, Users, ExternalLink, Plus,
   CalendarDays, BarChart3, CheckSquare, CalendarPlus,
@@ -147,18 +148,17 @@ export default function Dashboard() {
 
   const now = new Date()
   const todayStr = localStr(now)
-  const yr = now.getFullYear()
   const rate0 = settings?.rates?.standard ?? 65
 
   // ── Finance KPIs ──────────────────────────────────────────
   const owed = invoices.reduce((a, b) => a + calcOwed(b), 0)
   const overdueInvs = overdueInvoices(invoices, todayStr)
 
-  const qMonth = now.getMonth()
-  const qStart = new Date(yr, Math.floor(qMonth / 3) * 3, 1)
-  const qStartStr = localStr(qStart)
-  const qEndStr = localStr(new Date(qStart.getFullYear(), qStart.getMonth() + 3, 0))
-  const qLabel = `Q${Math.floor(qMonth / 3) + 1} ${yr}`
+  // The Australian financial year and its BAS quarters — the same periods the
+  // Tax page reports on, so a figure here and a figure there agree.
+  const fy = currentFY(todayStr)
+  const [qStartStr, qEndStr] = quarterRange(fy, currentQuarter(todayStr))
+  const qLabel = quarterLabel(fy, currentQuarter(todayStr))
   const gstQ = invoices.filter(i => {
     const dp = i.date_paid || ''
     return invStatus(i) === 'Paid' && dp >= qStartStr && dp <= qEndStr
@@ -168,7 +168,7 @@ export default function Dashboard() {
   ).reduce((a, b) => a + (b.gst || 0), 0)
   const gstThisQ = gstQ + gstQNoDate
 
-  const fyStart = `${yr}-01-01`, fyEnd = `${yr}-12-31`
+  const [fyStart, fyEnd] = fyRange(fy)
   const fyPaidInvs = invoices.filter(i =>
     (i.date_paid || i.date || '') >= fyStart && (i.date_paid || i.date || '') <= fyEnd && invStatus(i) === 'Paid'
   )
@@ -288,29 +288,30 @@ export default function Dashboard() {
           help={<>The GST you have collected this calendar quarter and will owe the ATO, less whatever
           GST credits you claim on purchases — which this figure does not subtract. Cash basis:
           it counts when the client paid, not when you invoiced.
-          <TipCalc>GST on fully paid invoices whose payment date falls in {qLabel}. A paid
+          <TipCalc>GST on fully paid invoices whose payment date falls in {qLabel} — the BAS
+          quarter, numbered from July. A paid
           invoice with no payment date recorded falls back to its invoice date. Cash jobs carry
           no GST and never appear.</TipCalc></>}
           value={fmtCurrency(gstThisQ)} valueColor="#0369a1"
           sub="Cash basis · click for BAS"
         />
         <Metric
-          label={`Revenue received ${yr}`} borderColor="#16a34a"
+          label={`Revenue received FY ${fyLabel(fy)}`} borderColor="#16a34a"
           help={<>What has actually landed this calendar year, ex GST. <b>Invoiced</b> underneath is what
           you have billed in the same period — the gap between the two is work done and not yet
           paid for.
-          <TipCalc>Fully paid invoices dated in {yr} by payment date (falling back to the invoice
+          <TipCalc>Fully paid invoices paid between 1 July {fy - 1} and 30 June {fy} by payment date (falling back to the invoice
           date), ex GST, plus approved variations on those jobs. Part-paid invoices are not counted
           at all until they settle.</TipCalc></>}
           value={fmtCurrency(fyRevenue)} valueColor="#16a34a"
           sub={`Invoiced: ${fmtCurrency(fyInvoiced)}`}
         />
         <Metric
-          label={`Gross margin ${yr}`} borderColor={mgColor}
+          label={`Gross margin FY ${fyLabel(fy)}`} borderColor={mgColor}
           help={<>What is left of this year's received revenue after everything logged against the
           business this year. Green at 40% and above, amber from 25%, red below.
           <TipCalc>(Revenue received &minus; materials &minus; labour &minus; overheads) &divide;
-          revenue received, all dated in {yr}. It is a period margin, not a job margin: costs
+          revenue received, all dated in the financial year. It is a period margin, not a job margin: costs
           logged this year on a job paid next year still land here, so it is rough until a year is
           well under way. Per-job figures are on the Costs page.</TipCalc></>}
           value={`${fyMargin}%`} valueColor={mgColor}

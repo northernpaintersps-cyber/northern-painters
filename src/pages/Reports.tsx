@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { supabase, selectAll } from '@/lib/supabase'
 import { useAuth } from '@/lib/auth'
 import { fmtCurrency, fmtDate, inYear, grossMargin } from '@/lib/utils'
+import { fyLabel, fyOptions, currentFY, inFY } from '@/lib/fy'
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   LineChart, Line, PieChart, Pie, Cell, Legend, AreaChart, Area,
@@ -110,20 +111,15 @@ function downloadCSV(content: string, filename: string) {
 export default function Reports() {
   const { loading, jobs, invoices, labour, materials, expenses, enquiries, adsSpend } = useAll()
 
-  const now = new Date()
-  const years = useMemo(() => {
-    const set = new Set<number>()
-    set.add(now.getFullYear())
-    invoices.forEach(i => { if (i.date) set.add(new Date(i.date).getFullYear()) })
-    return [...set].sort((a, b) => b - a)
-  }, [invoices])
-
-  const [selYear, setSelYear] = useState(now.getFullYear())
+  // Australian financial years, 1 July to 30 June — the same periods the Tax
+  // page and the Dashboard report on, so a figure here matches one there.
+  const years = useMemo(() => fyOptions(invoices.map(i => i.date)), [invoices])
+  const [selYear, setSelYear] = useState(currentFY())
 
   // ── Revenue by month ─────────────────────────────────────────
   const revenueByMonth = useMemo(() => {
     const map: Record<string, { invoiced: number; received: number }> = {}
-    invoices.filter(i => i.date && new Date(i.date).getFullYear() === selYear).forEach(i => {
+    invoices.filter(i => inFY(i.date, selYear)).forEach(i => {
       const k = monthKey(i.date)!
       if (!map[k]) map[k] = { invoiced: 0, received: 0 }
       map[k].invoiced  += i.agreed_ex_gst ?? 0
@@ -154,19 +150,19 @@ export default function Reports() {
     const mat: Record<string, number>  = {}
     const exp: Record<string, number>  = {}
 
-    invoices.filter(i => i.date && new Date(i.date).getFullYear() === selYear).forEach(i => {
+    invoices.filter(i => inFY(i.date, selYear)).forEach(i => {
       const k = monthKey(i.date)!
       rev[k] = (rev[k] ?? 0) + (i.agreed_ex_gst ?? 0)
     })
-    labour.filter(l => l.date && new Date(l.date).getFullYear() === selYear).forEach(l => {
+    labour.filter(l => inFY(l.date, selYear)).forEach(l => {
       const k = monthKey(l.date)!
       lab[k] = (lab[k] ?? 0) + (l.cost ?? (l.hours ?? 0) * (l.rate ?? 0))
     })
-    materials.filter(m => m.date && new Date(m.date).getFullYear() === selYear).forEach(m => {
+    materials.filter(m => inFY(m.date, selYear)).forEach(m => {
       const k = monthKey(m.date)!
       mat[k] = (mat[k] ?? 0) + (m.cost_ex_gst ?? 0)
     })
-    expenses.filter(e => e.date && new Date(e.date).getFullYear() === selYear).forEach(e => {
+    expenses.filter(e => inFY(e.date, selYear)).forEach(e => {
       const k = monthKey(e.date)!
       exp[k] = (exp[k] ?? 0) + (e.amount_ex_gst ?? 0)
     })
@@ -203,12 +199,12 @@ export default function Reports() {
   }, [enquiries])
 
   // ── Top-level KPIs for selected year ─────────────────────────
-  const yearInvoices = invoices.filter(i => i.date && new Date(i.date).getFullYear() === selYear)
+  const yearInvoices = invoices.filter(i => inFY(i.date, selYear))
   const totalRevenue   = yearInvoices.reduce((s, i) => s + (i.agreed_ex_gst ?? 0), 0)
   const totalReceived  = yearInvoices.reduce((s, i) => s + (i.received ?? 0), 0)
-  const totalLabour    = labour.filter(l => l.date && new Date(l.date).getFullYear() === selYear).reduce((s, l) => s + (l.cost ?? (l.hours ?? 0) * (l.rate ?? 0)), 0)
-  const totalMaterials = materials.filter(m => m.date && new Date(m.date).getFullYear() === selYear).reduce((s, m) => s + (m.cost_ex_gst ?? 0), 0)
-  const totalExpenses  = expenses.filter(e => e.date && new Date(e.date).getFullYear() === selYear).reduce((s, e) => s + (e.amount_ex_gst ?? 0), 0)
+  const totalLabour    = labour.filter(l => inFY(l.date, selYear)).reduce((s, l) => s + (l.cost ?? (l.hours ?? 0) * (l.rate ?? 0)), 0)
+  const totalMaterials = materials.filter(m => inFY(m.date, selYear)).reduce((s, m) => s + (m.cost_ex_gst ?? 0), 0)
+  const totalExpenses  = expenses.filter(e => inFY(e.date, selYear)).reduce((s, e) => s + (e.amount_ex_gst ?? 0), 0)
   const netProfit      = totalRevenue - totalLabour - totalMaterials - totalExpenses
   const margin         = totalRevenue > 0 ? (netProfit / totalRevenue * 100) : 0
   const convRate       = enquiries.length ? Math.round(enquiries.filter(e => e.enq_status === 'Booked').length / enquiries.length * 100) : 0
@@ -231,32 +227,32 @@ export default function Reports() {
           <span className="text-sm text-gray-500">Year</span>
           <select value={selYear} onChange={e => setSelYear(Number(e.target.value))}
             className="bg-gray-50 border border-gray-200 rounded-lg px-3 py-1.5 text-sm text-gray-900 focus:outline-none focus:ring-1 focus:ring-blue-500">
-            {years.map(y => <option key={y}>{y}</option>)}
+            {years.map(y => <option key={y} value={y}>FY {fyLabel(y)}</option>)}
           </select>
           {/* CSV exports */}
           <div className="flex gap-1.5">
             {[
-              { label: 'Invoices', fn: () => downloadCSV(toCSV(invoices.filter(i => i.date && new Date(i.date).getFullYear() === selYear), [
+              { label: 'Invoices', fn: () => downloadCSV(toCSV(invoices.filter(i => inFY(i.date, selYear)), [
                 { key: 'id', label: 'Invoice #' }, { key: 'date', label: 'Date' }, { key: 'client', label: 'Client' },
                 { key: 'job_id', label: 'Job' }, { key: 'agreed_ex_gst', label: 'Ex GST' }, { key: 'gst', label: 'GST' },
                 { key: 'total_inc_gst', label: 'Total Inc GST' }, { key: 'received', label: 'Received' }, { key: 'inv_status', label: 'Status' },
-              ]), `invoices-${selYear}.csv`) },
-              { label: 'Labour', fn: () => downloadCSV(toCSV(labour.filter(l => l.date && new Date(l.date).getFullYear() === selYear), [
+              ]), `invoices-FY${selYear}.csv`) },
+              { label: 'Labour', fn: () => downloadCSV(toCSV(labour.filter(l => inFY(l.date, selYear)), [
                 { key: 'date', label: 'Date' }, { key: 'job_id', label: 'Job' }, { key: 'client', label: 'Client' },
                 { key: 'sub', label: 'Worker' }, { key: 'hours', label: 'Hours' }, { key: 'rate', label: 'Rate' },
                 { key: 'cost', label: 'Cost' }, { key: 'billing_type', label: 'Billing' }, { key: 'paid', label: 'Paid' },
                 { key: 'labour_desc', label: 'Description' },
-              ]), `labour-${selYear}.csv`) },
-              { label: 'Materials', fn: () => downloadCSV(toCSV(materials.filter(m => m.date && new Date(m.date).getFullYear() === selYear), [
+              ]), `labour-FY${selYear}.csv`) },
+              { label: 'Materials', fn: () => downloadCSV(toCSV(materials.filter(m => inFY(m.date, selYear)), [
                 { key: 'date', label: 'Date' }, { key: 'job_id', label: 'Job' }, { key: 'client', label: 'Client' },
                 { key: 'supplier', label: 'Supplier' }, { key: 'mat_desc', label: 'Description' }, { key: 'category', label: 'Category' },
                 { key: 'cost_ex_gst', label: 'Ex GST' }, { key: 'gst', label: 'GST' }, { key: 'total_inc_gst', label: 'Total Inc GST' },
                 { key: 'receipt_no', label: 'Receipt #' },
-              ]), `materials-${selYear}.csv`) },
-              { label: 'Expenses', fn: () => downloadCSV(toCSV(expenses.filter(e => e.date && new Date(e.date).getFullYear() === selYear), [
+              ]), `materials-FY${selYear}.csv`) },
+              { label: 'Expenses', fn: () => downloadCSV(toCSV(expenses.filter(e => inFY(e.date, selYear)), [
                 { key: 'date', label: 'Date' }, { key: 'exp_desc', label: 'Description' }, { key: 'category', label: 'Category' },
                 { key: 'amount_ex_gst', label: 'Ex GST' }, { key: 'gst', label: 'GST' }, { key: 'job_id', label: 'Job' },
-              ]), `expenses-${selYear}.csv`) },
+              ]), `expenses-FY${selYear}.csv`) },
             ].map(({ label, fn }) => (
               <button key={label} onClick={fn} className="flex items-center gap-1 text-xs bg-gray-50 hover:bg-gray-100 border border-gray-200 text-gray-600 px-2.5 py-1.5 rounded-lg transition-colors">
                 <Download size={11} /> {label}
@@ -275,7 +271,7 @@ export default function Reports() {
       </div>
 
       {/* Revenue by month */}
-      <ChartCard title={`Revenue vs received — ${selYear}`}>
+      <ChartCard title={`Revenue vs received — FY ${fyLabel(selYear)}`}>
         <ResponsiveContainer width="100%" height={200}>
           <BarChart data={revenueByMonth} margin={{ top: 4, right: 8, left: -10, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
@@ -291,7 +287,7 @@ export default function Reports() {
       </ChartCard>
 
       {/* Profit chart */}
-      <ChartCard title={`Monthly profit — ${selYear}`}>
+      <ChartCard title={`Monthly profit — FY ${fyLabel(selYear)}`}>
         <ResponsiveContainer width="100%" height={200}>
           <AreaChart data={profitByMonth} margin={{ top: 4, right: 8, left: -10, bottom: 0 }}>
             <defs>
@@ -341,7 +337,7 @@ export default function Reports() {
 
       {/* Job margins */}
       {jobMarginData.length > 0 && (
-        <ChartCard title={`Job margin % — top jobs ${selYear}`}>
+        <ChartCard title={`Job margin % — top jobs, FY ${fyLabel(selYear)}`}>
           <ResponsiveContainer width="100%" height={220}>
             <BarChart data={jobMarginData} layout="vertical" margin={{ top: 0, right: 40, left: 10, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" horizontal={false} />
@@ -382,7 +378,7 @@ export default function Reports() {
       </ChartCard>
 
       {/* Cost breakdown */}
-      <ChartCard title={`Cost breakdown — ${selYear}`}>
+      <ChartCard title={`Cost breakdown — FY ${fyLabel(selYear)}`}>
         <div className="grid grid-cols-3 gap-4 text-center">
           {[
             { label: 'Labour',    value: totalLabour,    color: 'text-blue-400',  bg: 'bg-blue-500' },

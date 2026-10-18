@@ -5,6 +5,10 @@ import { useAuth } from '@/lib/auth'
 import { fmtCurrency, invStatus, isCashJob, today } from '@/lib/utils'
 import { splitBooks, isCashPaid } from '@/lib/cashBooks'
 import { registerTotals } from '@/lib/assets'
+import {
+  fyLabel, fyRange, fyOptions, currentFY, currentQuarter,
+  quarterRange, quarterLabel, inFY, inQuarter, QUARTER_MONTHS,
+} from '@/lib/fy'
 import { reconcileBankStatement } from '@/lib/ai'
 import {
   Printer, Loader2, FileSpreadsheet, Download, ReceiptText, LineChart,
@@ -26,20 +30,9 @@ function useTable(table: string) {
   })
 }
 
-// Calendar quarters, as V16 uses
-const qRanges = (y: number, q: number): [string, string] => ([
-  [`${y}-01-01`, `${y}-03-31`],
-  [`${y}-04-01`, `${y}-06-30`],
-  [`${y}-07-01`, `${y}-09-30`],
-  [`${y}-10-01`, `${y}-12-31`],
-] as [string, string][])[q - 1]
-
-const inRange = (date: string | null, y: number, q: number) => {
-  if (!date) return false
-  const [s, e] = qRanges(y, q)
-  return date >= s && date <= e
-}
-const inYear = (date: string | null, y: number) => !!date && date.startsWith(String(y))
+// Everything is reported on the Australian financial year — 1 July to 30
+// June — with BAS quarters numbered inside it. See lib/fy.ts; this page used
+// to use calendar years and calendar quarters, which is not what is lodged.
 
 // np_expenses has no has_gst / amount_inc_gst columns — derive them
 const hasGST = (e: Row) => (e.gst || 0) > 0
@@ -133,11 +126,11 @@ export default function Tax() {
   const onBooks = (r: any) => !r.job_id || !cashJobIds.has(r.job_id)
   const { data: biz } = useBusinessSettings()
 
-  const curYear = new Date().getFullYear()
+  const curFY = currentFY()
   const [tab, setTab] = useState<'bas' | 'pl'>('bas')
   const [basis, setBasis] = useState<'cash' | 'accrual'>('cash')
-  const [year, setYear] = useState(curYear)
-  const [quarter, setQuarter] = useState(Math.ceil((new Date().getMonth() + 1) / 3))
+  const [year, setYear] = useState(curFY)
+  const [quarter, setQuarter] = useState(currentQuarter())
 
   // ── AI bank reconciliation (V16 analyzeBankStatement) ────
   const [recon, setRecon] = useState('')
@@ -165,29 +158,26 @@ export default function Tax() {
     }
   }
 
-  const fyYears = useMemo(() => {
-    const ys = [...new Set(
-      [...invoices, ...materials, ...expenses]
-        .map(x => (x.date || '').slice(0, 4)).filter(Boolean).map(Number)
-    )].sort((a, b) => b - a)
-    return ys.length ? ys : [curYear]
-  }, [invoices, materials, expenses, curYear])
+  const fyYears = useMemo(
+    () => fyOptions([...invoices, ...materials, ...expenses, ...assets]
+      .map(x => x.date ?? x.purchase_date)),
+    [invoices, materials, expenses, assets])
 
   // V16 aggBAS()
   const bas = useMemo(() => {
     const invs = invoices.filter(i => onBooks(i) && (basis === 'cash'
-      ? (i.date_paid && inRange(i.date_paid, year, quarter)) || (invStatus(i) === 'Paid' && !i.date_paid && inRange(i.date || '', year, quarter))
-      : inRange(i.date || '', year, quarter)))
+      ? (i.date_paid && inQuarter(i.date_paid, year, quarter)) || (invStatus(i) === 'Paid' && !i.date_paid && inQuarter(i.date, year, quarter))
+      : inQuarter(i.date, year, quarter)))
     // A cash purchase claims no GST credit, so it is not on the BAS at all.
-    const mats = materials.filter(m => onBooks(m) && !isCashPaid(m) && inRange(m.date || '', year, quarter))
-    const exps = expenses.filter(e => onBooks(e) && !isCashPaid(e) && inRange(e.date || '', year, quarter) && hasGST(e))
+    const mats = materials.filter(m => onBooks(m) && !isCashPaid(m) && inQuarter(m.date, year, quarter))
+    const exps = expenses.filter(e => onBooks(e) && !isCashPaid(e) && inQuarter(e.date, year, quarter) && hasGST(e))
     const gstCollected = invs.reduce((s, i) => s + (i.gst || 0), 0)
     const gstOnMats = mats.reduce((s, m) => s + (m.gst || 0), 0)
     const gstOnExps = exps.reduce((s, e) => s + (e.gst || 0), 0)
     // An asset bought this quarter is a capital acquisition: its GST is
     // claimable now even though its cost is deducted over years. Cash and
     // private-use shares are already netted off by the register.
-    const capital = assets.filter(a => inRange(a.purchase_date || '', year, quarter))
+    const capital = assets.filter(a => inQuarter(a.purchase_date, year, quarter))
     const gstOnAssets = registerTotals(capital, year).purchasedGST
     const assetsExGST = capital.filter(a => !isCashPaid(a)).reduce((s, a) => s + (a.cost_ex_gst || 0), 0)
     return {
@@ -200,9 +190,9 @@ export default function Tax() {
         + exps.reduce((s, e) => s + (e.amount_ex_gst || 0), 0) + assetsExGST,
       invCount: invs.length,
       txnCount: mats.length + exps.length,
-      matsIncGST: materials.filter(m => onBooks(m) && !isCashPaid(m) && inRange(m.date || '', year, quarter)).reduce((s, m) => s + (m.total_inc_gst || 0), 0),
-      expsIncGST: expenses.filter(e => onBooks(e) && !isCashPaid(e) && inRange(e.date || '', year, quarter)).reduce((s, e) => s + expIncGST(e), 0),
-      cashPurchases: [...materials, ...expenses].filter(r => isCashPaid(r) && inRange(r.date || '', year, quarter)).length,
+      matsIncGST: materials.filter(m => onBooks(m) && !isCashPaid(m) && inQuarter(m.date, year, quarter)).reduce((s, m) => s + (m.total_inc_gst || 0), 0),
+      expsIncGST: expenses.filter(e => onBooks(e) && !isCashPaid(e) && inQuarter(e.date, year, quarter)).reduce((s, e) => s + expIncGST(e), 0),
+      cashPurchases: [...materials, ...expenses].filter(r => isCashPaid(r) && inQuarter(r.date, year, quarter)).length,
     }
   }, [invoices, materials, expenses, assets, basis, year, quarter])
 
@@ -217,10 +207,10 @@ export default function Tax() {
   // than as a cost in the month the invoice landed.
   const reg = useMemo(() => registerTotals(assets, year), [assets, year])
   const pl = useMemo(() => splitBooks({
-    invoices: invoices.filter(i => inYear(i.date || '', year)),
-    materials: materials.filter(m => inYear(m.date || '', year)),
-    labour: labour.filter(l => inYear(l.date || '', year)),
-    expenses: expenses.filter(e => inYear(e.date || '', year)),
+    invoices: invoices.filter(i => inFY(i.date, year)),
+    materials: materials.filter(m => inFY(m.date, year)),
+    labour: labour.filter(l => inFY(l.date, year)),
+    expenses: expenses.filter(e => inFY(e.date, year)),
     cashJobIds,
     taxRate: TAX_RATE,
     depreciation: reg.deduction,
@@ -298,7 +288,7 @@ export default function Tax() {
   ]
 
   function printReport(type: 'bas' | 'pl') {
-    const title = type === 'bas' ? `BAS Q${quarter} ${year}` : `P&L Statement ${year}`
+    const title = type === 'bas' ? `BAS ${quarterLabel(year, quarter)}` : `P&L Statement FY ${fyLabel(year)}`
     const el = document.getElementById(type === 'bas' ? 'tax-bas-detail' : 'tax-pl-detail')
     const content = el?.innerHTML ?? ''
     const company = biz?.company_name || 'Northern Painters'
@@ -364,7 +354,7 @@ h1{font-size:18px;margin-bottom:4px}h2{font-size:14px;margin:16px 0 8px;border-b
     <div className="flex items-center justify-center h-64"><Loader2 size={20} className="animate-spin text-blue-600" /></div>
   )
 
-  const [qFrom, qTo] = qRanges(year, quarter)
+  const [qFrom, qTo] = quarterRange(year, quarter)
   const fmtD = (d: string) => new Date(d + 'T00:00').toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' })
   const BTN = 'px-2.5 py-1.5 text-[13px] bg-white border border-black/20 rounded-lg hover:bg-[#f5f4f0]'
 
@@ -406,16 +396,17 @@ h1{font-size:18px;margin-bottom:4px}h2{font-size:14px;margin:16px 0 8px;border-b
           </div>
 
           <div className="flex gap-2 mb-3 flex-wrap items-center">
-            <label className="text-[13px] font-semibold">Year:</label>
+            <label className="text-[13px] font-semibold">Financial year:</label>
             <select value={year} onChange={e => setYear(parseInt(e.target.value))}
               className="px-2.5 py-1.5 border border-black/20 rounded-lg text-[13px] bg-white focus:outline-none focus:ring-1 focus:ring-blue-500">
-              {fyYears.map(y => <option key={y} value={y}>{y}</option>)}
+              {fyYears.map(y => <option key={y} value={y}>{fyLabel(y)}</option>)}
             </select>
             <label className="text-[13px] font-semibold">Quarter:</label>
             {[1, 2, 3, 4].map(q => (
               <button key={q} onClick={() => setQuarter(q)}
+                title={`Q${q} — ${QUARTER_MONTHS[q - 1]}`}
                 className={`px-2.5 py-1.5 text-[13px] rounded-lg border ${quarter === q ? 'bg-blue-600 text-white border-blue-600' : 'bg-white border-black/20 hover:bg-[#f5f4f0]'}`}>
-                Q{q}
+                Q{q} <span className="text-[10px] opacity-70">{QUARTER_MONTHS[q - 1]}</span>
               </button>
             ))}
             <span className="text-xs text-[#666]">{fmtD(qFrom)} – {fmtD(qTo)}</span>
@@ -437,7 +428,7 @@ h1{font-size:18px;margin-bottom:4px}h2{font-size:14px;margin:16px 0 8px;border-b
 
           <div id="tax-bas-detail">
             <div className="bg-white border border-black/[0.12] rounded-xl p-4 mb-3.5">
-              <h2 className="text-sm font-bold mb-3">BAS Summary — Q{quarter} {year}</h2>
+              <h2 className="text-sm font-bold mb-3">BAS Summary — {quarterLabel(year, quarter)}</h2>
               <div className="text-[11px] text-[#666] mb-3">
                 Period: {new Date(qFrom + 'T00:00').toLocaleDateString('en-AU')} to {new Date(qTo + 'T00:00').toLocaleDateString('en-AU')}
               </div>
@@ -453,10 +444,10 @@ h1{font-size:18px;margin-bottom:4px}h2{font-size:14px;margin:16px 0 8px;border-b
       ) : (
         <>
           <div className="flex gap-2 mb-3 flex-wrap items-center">
-            <label className="text-[13px] font-semibold">Financial Year:</label>
+            <label className="text-[13px] font-semibold">Financial year:</label>
             <select value={year} onChange={e => setYear(parseInt(e.target.value))}
               className="px-2.5 py-1.5 border border-black/20 rounded-lg text-[13px] bg-white focus:outline-none focus:ring-1 focus:ring-blue-500">
-              {fyYears.map(y => <option key={y} value={y}>{y}</option>)}
+              {fyYears.map(y => <option key={y} value={y}>{fyLabel(y)}</option>)}
             </select>
           </div>
 
@@ -478,9 +469,9 @@ h1{font-size:18px;margin-bottom:4px}h2{font-size:14px;margin:16px 0 8px;border-b
 
           <div id="tax-pl-detail">
             <div className="bg-white border border-black/[0.12] rounded-xl p-4 mb-3.5">
-              <h2 className="text-sm font-bold mb-1">Profit &amp; Loss Statement — {year}</h2>
+              <h2 className="text-sm font-bold mb-1">Profit &amp; Loss Statement — FY {fyLabel(year)}</h2>
               <div className="text-[11px] text-[#666] mb-3.5">
-                1 January {year} to 31 December {year} · {biz?.company_name || 'Northern Painters'}
+                1 July {year - 1} to 30 June {year} · {biz?.company_name || 'Northern Painters'}
                 {biz?.abn ? ` · ABN ${biz.abn}` : ''}
               </div>
               <StatementRows rows={plRows} />

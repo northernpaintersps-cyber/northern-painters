@@ -20,15 +20,16 @@
 //                  since cashBooks.ts. It still appears in the register,
 //                  because you still own it.
 //
-// The year here is the one the rest of the app reports on, which is the
-// CALENDAR year: the P&L on the Tax page runs 1 January to 31 December. An
-// Australian financial year does not, so when the time comes to move the app
-// to July–June this is one of the places that changes. Deliberate — a
-// register that disagreed with the P&L beside it would be worse.
+// A "year" here is an Australian financial year, 1 July to 30 June, named by
+// the year it ends in — the same one the P&L beside it reports on. See
+// lib/fy.ts. An asset bought in May and one bought in August are a whole
+// year apart for depreciation, which is exactly the distinction a calendar
+// year got wrong.
 //
 // Pure — no hooks, no Supabase.
 
 import { isCashPaid } from './cashBooks'
+import { fyOf, fyRange } from './fy'
 
 export const ASSET_CATEGORIES = [
   'Vehicle', 'Machinery', 'Tools', 'Equipment', 'Technology', 'Other',
@@ -79,18 +80,30 @@ export const businessShare = (a: Asset): number => {
 export const depreciableBase = (a: Asset): number =>
   Math.max(0, n(a.cost_ex_gst) - n(a.prior_depreciation))
 
-export const yearOf = (date: unknown): number | null => {
-  const s = String(date ?? '').slice(0, 4)
-  return /^\d{4}$/.test(s) ? Number(s) : null
+/** The financial year a date falls in. Re-exported so callers need one import. */
+export const yearOf = fyOf
+
+const dayNumber = (iso: string): number => {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso)
+  return m ? Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])) / 86400000 : NaN
 }
 
-/** The share of the purchase year the asset was actually held for. */
+/**
+ * The share of its first financial year the asset was actually held for.
+ *
+ * A rig bought on 20 June earns ten days of deduction, not a year's — and
+ * one bought on 2 July earns nearly all of it, which is the reason the date
+ * of a big purchase is worth thinking about.
+ */
 function firstYearFraction(a: Asset): number {
-  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(a.purchase_date ?? ''))
-  if (!m) return 1
-  const year = Number(m[1])
-  const held = Date.UTC(year + 1, 0, 1) - Date.UTC(year, Number(m[2]) - 1, Number(m[3]))
-  const whole = Date.UTC(year + 1, 0, 1) - Date.UTC(year, 0, 1)
+  const bought = String(a.purchase_date ?? '').slice(0, 10)
+  const fy = fyOf(bought)
+  if (fy === null) return 1
+  const [from, to] = fyRange(fy)
+  const start = Math.max(dayNumber(bought), dayNumber(from))
+  const held = dayNumber(to) - start + 1          // inclusive of both days
+  const whole = dayNumber(to) - dayNumber(from) + 1
+  if (!Number.isFinite(held) || !Number.isFinite(whole) || whole <= 0) return 1
   return Math.min(1, Math.max(0, held / whole))
 }
 
