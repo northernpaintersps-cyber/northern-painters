@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '@/lib/auth'
@@ -7,6 +7,7 @@ import { supabase, selectAll } from '@/lib/supabase'
 import { fmtCurrency, calcOwed, invStatus, normaliseDate, genId, crewLabel } from '@/lib/utils'
 import InfoTip, { TipCalc } from '@/components/InfoTip'
 import { fyLabel, fyRange, currentFY, currentQuarter, quarterRange, quarterLabel } from '@/lib/fy'
+import { dueTotals } from '@/lib/scheduled'
 import {
   AlertCircle, UserPlus, Clock, Users, ExternalLink, Plus,
   CalendarDays, BarChart3, CheckSquare, CalendarPlus,
@@ -41,6 +42,7 @@ function useAllData() {
   const variations  = useQuery(opts('np_variations'))
   const calEvents   = useQuery(opts('np_calendar_events'))
   const todos       = useQuery(opts('np_todos'))
+  const schedules   = useQuery(opts('np_pay_schedules'))
 
   const settings = useQuery({
     queryKey: ['np_settings', 'business', uid],
@@ -57,6 +59,7 @@ function useAllData() {
     materials: materials.data ?? [], expenses: expenses.data ?? [], enquiries: enquiries.data ?? [],
     crew: crew.data ?? [], assignments: assignments.data ?? [], variations: variations.data ?? [],
     calEvents: calEvents.data ?? [], todos: todos.data ?? [],
+    schedules: schedules.data ?? [],
     settings: settings.data ?? {},
     loading: jobs.isLoading || invoices.isLoading,
   }
@@ -121,7 +124,7 @@ export default function Dashboard() {
   const { user } = useAuth()
   const {
     jobs, invoices, labour, materials, expenses, enquiries, crew,
-    assignments, variations, calEvents, todos, settings, loading,
+    assignments, variations, calEvents, todos, schedules, settings, loading,
   } = useAllData()
   const [newTodo, setNewTodo] = useState('')
 
@@ -153,6 +156,11 @@ export default function Dashboard() {
   // ── Finance KPIs ──────────────────────────────────────────
   const owed = invoices.reduce((a, b) => a + calcOwed(b), 0)
   const overdueInvs = overdueInvoices(invoices, todayStr)
+
+  // Agreed but not received. An invoice is not the only promise of payment,
+  // and on a cash job the pay schedule is the only record there is — that
+  // money appears in no invoice, so `owed` above cannot see a dollar of it.
+  const due = useMemo(() => dueTotals(schedules, jobs, todayStr), [schedules, jobs, todayStr])
 
   // The Australian financial year and its BAS quarters — the same periods the
   // Tax page reports on, so a figure here and a figure there agree.
@@ -282,6 +290,23 @@ export default function Dashboard() {
           value={owed > 0 ? fmtCurrency(owed) : 'All clear ✓'}
           valueColor={owed > 0 ? '#dc2626' : '#16a34a'}
           sub={overdueInvs.length ? <span className="text-[#dc2626]">{overdueInvs.length} overdue</span> : undefined}
+        />
+        <Metric
+          label="Scheduled payments due" borderColor="#d97706" onClick={() => nav('/payments')}
+          value={due.total > 0 ? fmtCurrency(due.total) : 'Nothing due'}
+          valueColor={due.overdue > 0 ? '#dc2626' : due.total > 0 ? '#d97706' : '#16a34a'}
+          sub={due.overdue > 0
+            ? <span className="text-[#dc2626]">{fmtCurrency(due.overdue)} overdue · worst {due.worstDays}d</span>
+            : due.cash > 0 ? `${fmtCurrency(due.cash)} on cash jobs` : 'all on track'}
+          help={<>Money a client has agreed to pay on a payment schedule and has not paid yet.
+            Separate from Outstanding payments above, which counts invoices — this is the only
+            place <b>cash work</b> shows up, since it is never invoiced
+            {due.cash > 0 && <> ({fmtCurrency(due.cash)} of this is cash work)</>}.
+            <TipCalc>Every milestone across every pay schedule that is not ticked received.
+            Overdue means its due date has passed; a milestone with no date set — a final payment
+            usually has none until the job is nearly done — counts as pending rather than being
+            dropped. A job that is both invoiced and on a schedule will appear in both figures,
+            so do not add the two together.</TipCalc></>}
         />
         <Metric
           label="GST this quarter" badge={qLabel} borderColor="#0369a1" onClick={() => nav('/reports')}
