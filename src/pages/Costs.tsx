@@ -4,9 +4,11 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase, selectAll } from '@/lib/supabase'
 import { useAuth } from '@/lib/auth'
 import { fmtCurrency } from '@/lib/utils'
-import { Loader2, X, BarChart3, Edit2, Info } from 'lucide-react'
+import { Loader2, X, BarChart3, Edit2, Info, ChevronDown, ChevronRight } from 'lucide-react'
 import { invalidateTable } from '../lib/queryKeys'
 import { SyncedInput } from '@/components/ui/SyncedInput'
+import InfoTip, { TipCalc } from '@/components/InfoTip'
+import { jobHours, hoursSummary, hoursColour, hoursLabel } from '@/lib/hours'
 
 const JS_OPTS = ['Not Started','Scheduled','In Progress','Hourly Rate Accepted','Finished','Closed']
 const QS_OPTS = ['Info Collected','Site Visit','Quote Created','Sent','Negotiating','Accepted','Booked','Not Accepted','Lost']
@@ -98,6 +100,7 @@ export default function Costs() {
   const [q, setQ] = useState('')
   const [jobStatus, setJobStatus] = useState('')
   const [quoteStatus, setQuoteStatus] = useState('')
+  const [showHours, setShowHours] = useState(true)
   const anyFilter = !!(q || jobStatus || quoteStatus)
 
   const labourOf = (id: string) => labour.filter(l => l.job_id === id)
@@ -126,11 +129,10 @@ export default function Costs() {
   const totMatSpent = costJobs.reduce((s, j) => s + matSpentOf(j.id), 0)
   const totSpent = totLabSpent + totMatSpent
   const totGP = totAgreed - totSpent
-  const totHrsRemaining = costJobs.reduce((s, j) => {
-    if (!j.est_labour_ex) return s
-    const rate = j.labour_rate || rate0
-    return s + (j.est_labour_ex / rate - hrsOf(j.id))
-  }, 0)
+  // One derivation of the hours budget, shared with the per-job table below
+  // and with each job card, so the three cannot disagree about the rate.
+  const hours = useMemo(() => hoursSummary(costJobs, labour, rate0), [costJobs, labour, rate0])
+  const totHrsRemaining = hours.totalRemaining
   const spentRatio = totAgreed > 0 ? totSpent / totAgreed : 0
 
   if (isLoading) return (
@@ -148,11 +150,20 @@ export default function Costs() {
           { l: 'Labour spent', v: fmtCurrency(totLabSpent) },
           { l: 'Materials spent', v: fmtCurrency(totMatSpent) },
           { l: 'Total spent', v: fmtCurrency(totSpent), c: spentRatio > 0.9 ? '#dc2626' : spentRatio > 0.7 ? '#d97706' : undefined },
-          { l: 'Hours remaining', v: `${totHrsRemaining > 0 ? '+' : ''}${totHrsRemaining.toFixed(0)} hrs`, c: '#2563eb' },
+          {
+            l: 'Hours remaining', v: `${totHrsRemaining > 0 ? '+' : ''}${totHrsRemaining.toFixed(0)} hrs`, c: '#2563eb',
+            help: <>Hours left across every job with a labour estimate. A single figure, so a job
+              forty hours over cancels out two with twenty to spare — the table below is where
+              that shows.
+              <TipCalc>Each job&rsquo;s labour estimate divided by its quoted rate, less the hours
+              logged against it. Jobs with no labour estimate are not in it.</TipCalc></>,
+          },
           { l: 'Est. gross profit', v: fmtCurrency(totGP), c: totGP >= 0 ? '#16a34a' : '#dc2626' },
         ].map(m => (
           <div key={m.l} className="bg-[#f5f4f0] rounded-lg px-4 py-3.5">
-            <div className="text-[11px] text-[#666] mb-1">{m.l}</div>
+            <div className="text-[11px] text-[#666] mb-1 flex items-center gap-1">
+              {m.l}{(m as any).help && <InfoTip title={m.l}>{(m as any).help}</InfoTip>}
+            </div>
             <div className="text-xl font-semibold" style={m.c ? { color: m.c } : undefined}>{m.v}</div>
           </div>
         ))}
@@ -182,6 +193,93 @@ export default function Costs() {
         </div>
       </div>
 
+      {/* ── Labour hours by job ─────────────────────────────
+          The same figure each job card carries, gathered into one place: the
+          cards are tall, so comparing them meant scrolling past everything
+          else. Worst position first — that is the row worth reading. */}
+      {hours.rows.length > 0 && (
+        <div className="bg-white border border-black/[0.12] rounded-xl mb-3 overflow-hidden">
+          <button onClick={() => setShowHours(v => !v)}
+            className="w-full flex items-center justify-between gap-2 px-3.5 py-2.5 hover:bg-[#fafaf8] text-left">
+            <div className="flex items-center gap-1.5 text-[13px] font-bold text-gray-900">
+              {showHours ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+              Labour hours by job
+              <InfoTip title="Labour hours by job">
+                Where the hours are going, job by job, worst first. A job over its hours is
+                losing money on every hour after it, whatever the dollars say.
+                <TipCalc>Budget is the job&rsquo;s labour estimate divided by its quoted rate.
+                Remaining is that less the hours logged against it. Amber inside the last
+                quarter of the budget, red once it is past.</TipCalc>
+              </InfoTip>
+            </div>
+            <div className="flex items-center gap-2 text-[11px]">
+              {hours.overCount > 0 && (
+                <span className="font-semibold text-[#dc2626] bg-[#fee2e2] px-2 py-0.5 rounded-full">
+                  {hours.overCount} over budget
+                </span>
+              )}
+              {hours.tightCount > 0 && (
+                <span className="font-semibold text-[#92400e] bg-[#fef3c7] px-2 py-0.5 rounded-full">
+                  {hours.tightCount} running tight
+                </span>
+              )}
+              <span className="text-[#666]">
+                {hours.totalLogged.toFixed(0)} of {hours.totalBudgeted.toFixed(0)} hrs logged
+              </span>
+            </div>
+          </button>
+
+          {showHours && (
+            <div className="overflow-auto max-h-[45vh] border-t border-black/[0.12]">
+              <table className="w-full border-collapse text-[12.5px]">
+                <thead>
+                  <tr>
+                    {['Job', 'Budget', 'Logged', 'Remaining', 'Used', ''].map((h, i) => (
+                      <th key={h} className={`px-2.5 py-[7px] border-b border-black/[0.12] text-[#666] font-medium whitespace-nowrap bg-[#fafaf8] sticky top-0 z-[2] ${[1, 2, 3].includes(i) ? 'text-right' : 'text-left'}`}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {hours.rows.map(({ job, hours: h }) => (
+                    <tr key={job.id} className="border-b border-black/[0.06] hover:bg-[#fafaf8]">
+                      <td className="px-2.5 py-[7px]">
+                        <span className="text-[10px] font-extrabold text-[#2563eb] bg-[#dbeafe] px-1.5 py-0.5 rounded-full mr-1.5">{job.id}</span>
+                        <span className="font-medium">{job.client}</span>
+                        <span className="text-[11px] text-[#666]"> · {job.status || '—'} · ${h.rate}/hr</span>
+                      </td>
+                      <td className="px-2.5 py-[7px] text-right tabular-nums text-[#666]">{h.budgeted!.toFixed(1)}</td>
+                      <td className="px-2.5 py-[7px] text-right tabular-nums">{h.logged.toFixed(1)}</td>
+                      <td className="px-2.5 py-[7px] text-right tabular-nums font-bold" style={{ color: hoursColour(h) }}>
+                        {hoursLabel(h)}
+                        <span className="text-[10px] font-normal"> {h.over ? 'over' : 'left'}</span>
+                      </td>
+                      <td className="px-2.5 py-[7px] text-right tabular-nums" style={{ color: hoursColour(h) }}>
+                        {h.used !== null ? Math.round(h.used * 100) + '%' : '—'}
+                      </td>
+                      <td className="px-2.5 py-[7px] w-[110px]">
+                        <div className="h-1.5 rounded-full bg-black/[0.07] overflow-hidden">
+                          <div className="h-full rounded-full" style={{
+                            width: Math.min(100, (h.used ?? 0) * 100) + '%',
+                            background: hoursColour(h),
+                          }} />
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {hours.unbudgeted.length > 0 && (
+                <div className="px-3.5 py-2 text-[11px] text-[#666] border-t border-black/[0.06] bg-[#fafaf8]">
+                  {hours.unbudgeted.length} job{hours.unbudgeted.length !== 1 ? 's have' : ' has'} hours
+                  logged with no labour estimate to judge them against
+                  {' '}({hours.unbudgeted.map(u => u.job.id).join(', ')}) — set one on the job to see it here.
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
       {costJobs.length === 0 ? (
         <div className="bg-white border border-black/[0.12] rounded-xl text-center py-8 text-[#666]">
           <BarChart3 size={32} className="mx-auto mb-2 text-gray-300" />
@@ -201,10 +299,11 @@ export default function Costs() {
         const totalSpent = labSpent + matSpent
         const estGP = agreed - totalSpent
         const estMg = agreed > 0 ? (estGP / agreed) * 100 : null
-        const hrsBudgeted = labBudget > 0 ? labBudget / rate : null
-        const hrsRemaining = hrsBudgeted !== null ? hrsBudgeted - hrsLogged : null
+        const jh = jobHours(j, labour, rate0)
+        const hrsBudgeted = jh.budgeted
+        const hrsRemaining = jh.remaining
         const mgCol = estMg === null ? '#666' : estMg >= 30 ? '#16a34a' : estMg >= 15 ? '#d97706' : '#dc2626'
-        const hrRemCol = hrsRemaining === null ? '#666' : hrsRemaining < 0 ? '#dc2626' : hrsRemaining < (hrsBudgeted || 1) * 0.25 ? '#d97706' : '#16a34a'
+        const hrRemCol = hoursColour(jh)
 
         const labPct = labBudget > 0 ? labSpent / labBudget : null
         const labOver = labPct !== null && labPct > 1
@@ -291,7 +390,7 @@ export default function Costs() {
                   </div>
                   <div className="text-center">
                     <div className="text-lg font-extrabold tabular-nums" style={{ color: hrRemCol }}>
-                      {hrsRemaining === null ? '—' : hrsRemaining < 0 ? hrsRemaining.toFixed(1) : '+' + hrsRemaining.toFixed(1)}
+                      {hoursLabel(jh)}
                     </div>
                     <div className="text-[9px] font-bold text-[#666] uppercase tracking-wide mt-0.5">
                       {hrsRemaining !== null && hrsRemaining < 0 ? 'Hrs over' : 'Hrs remaining'}
@@ -379,7 +478,7 @@ export default function Costs() {
               <Stat value={fmtCurrency(estGP)} label="Est. gross profit" color={estGP >= 0 ? '#16a34a' : '#dc2626'} />
               <div className="w-px h-7 bg-black/[0.12] shrink-0" />
               <Stat
-                value={hrsRemaining === null ? '—' : hrsRemaining < 0 ? `${hrsRemaining.toFixed(1)} hrs over` : `+${hrsRemaining.toFixed(1)} hrs left`}
+                value={jh.remaining === null ? '—' : jh.over ? `${jh.remaining.toFixed(1)} hrs over` : `+${jh.remaining.toFixed(1)} hrs left`}
                 label="Labour hrs" color={hrRemCol} />
               <div className="w-px h-7 bg-black/[0.12] shrink-0" />
               <Stat value={fmtCurrency(labSpent)} label="Labour spent" />
