@@ -9,7 +9,7 @@ import InfoTip, { TipCalc } from '@/components/InfoTip'
 import { fyLabel, fyRange, currentFY, currentQuarter, quarterRange, quarterLabel } from '@/lib/fy'
 import { dueTotals } from '@/lib/scheduled'
 import {
-  AlertCircle, UserPlus, Clock, Users, ExternalLink, Plus,
+  AlertCircle, UserPlus, Clock, Users, ExternalLink, Plus, Banknote,
   CalendarDays, BarChart3, CheckSquare, CalendarPlus,
 } from 'lucide-react'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts'
@@ -231,12 +231,13 @@ export default function Dashboard() {
     new_enquiry: <UserPlus size={13} />,
     quote_follow_up: <Clock size={13} />,
     no_crew: <Users size={13} />,
+    payment_overdue: <Banknote size={13} />,
   }
   const COLORS: Record<AttentionKind, string> = {
     invoice_overdue: '#dc2626', new_enquiry: '#d97706',
-    quote_follow_up: '#7c3aed', no_crew: '#0369a1',
+    quote_follow_up: '#7c3aed', no_crew: '#0369a1', payment_overdue: '#b91c1c',
   }
-  const alerts = attentionList({ jobs, invoices, enquiries, assignments }, todayStr)
+  const alerts = attentionList({ jobs, invoices, enquiries, assignments, schedules }, todayStr)
 
   // ── Monthly revenue chart (last 8 months) ─────────────────
   const chartData = []

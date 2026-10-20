@@ -12,6 +12,7 @@
 // screen.
 
 import { calcOwed, normaliseDate, today } from '@/lib/utils'
+import { duePayments } from '@/lib/scheduled'
 
 type Row = Record<string, any>
 
@@ -22,6 +23,7 @@ export const CREW_WARN_DAYS = 3
 
 export type AttentionKind =
   | 'invoice_overdue' | 'new_enquiry' | 'quote_follow_up' | 'no_crew'
+  | 'payment_overdue'
 
 export interface AttentionItem {
   kind: AttentionKind
@@ -84,6 +86,8 @@ export function unstaffedJobs(jobs: Row[], assignments: Row[], todayStr = today(
  */
 export function attentionList(d: {
   jobs: Row[]; invoices: Row[]; enquiries: Row[]; assignments: Row[]
+  /** Pay schedules. Optional: a caller without them gets the other rules. */
+  schedules?: Row[]
 }, todayStr = today()): AttentionItem[] {
   const out: AttentionItem[] = []
 
@@ -94,6 +98,19 @@ export function attentionList(d: {
       amount: owed, days: daysSince(i.due_date, todayStr) ?? undefined,
       label: `Invoice overdue — ${i.client || 'client'} (${i.id || i.job_id}) · ${owed.toFixed(2)} owed`,
       route: '/invoices',
+    })
+  }
+
+  // A milestone past its due date. On a cash job this is the only record of
+  // the money, so without it the work is invisible to every rule here.
+  for (const p of duePayments(d.schedules ?? [], d.jobs, todayStr)) {
+    if (!p.overdue) continue
+    out.push({
+      kind: 'payment_overdue', id: `${p.jobId}:${p.label}`, jobId: p.jobId, client: p.client,
+      amount: p.amount, days: p.daysOverdue,
+      label: `Payment overdue — ${p.client || 'client'} (${p.jobId}) · ${p.label}`
+        + ` · ${p.amount.toFixed(2)} due ${p.dueDate}${p.cash ? ' · cash job' : ''}`,
+      route: '/payments',
     })
   }
 

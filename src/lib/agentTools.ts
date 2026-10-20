@@ -318,14 +318,19 @@ export function buildTools(ctx: ToolContext): AgentTool[] {
 
     {
       name: 'needs_attention',
-      description: 'Overdue invoices, quotes due a chase, jobs starting with no crew, '
-        + 'and new enquiries — worst first, by money then by lateness.',
+      description: 'Overdue invoices, overdue scheduled payments, quotes due a chase, '
+        + 'jobs starting with no crew, and new enquiries — worst first, by money '
+        + 'then by lateness.',
       input_schema: { type: 'object', additionalProperties: false, properties: {} },
       run: async () => {
-        const [jobs, invoices, enquiries, assignments] = await Promise.all([
+        const [jobs, invoices, enquiries, assignments, schedules] = await Promise.all([
           load('np_jobs'), load('np_invoices'), load('np_enquiries'), load('np_assignments'),
+          load('np_pay_schedules'),
         ])
-        return { today: today(), items: attentionList({ jobs, invoices, enquiries, assignments }) }
+        return {
+          today: today(),
+          items: attentionList({ jobs, invoices, enquiries, assignments, schedules }),
+        }
       },
       describe: (_i, out: any) => `${out.items.length} things wanting attention`,
     },
