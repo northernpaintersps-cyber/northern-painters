@@ -160,7 +160,7 @@ export default function Dashboard() {
   // Agreed but not received. An invoice is not the only promise of payment,
   // and on a cash job the pay schedule is the only record there is — that
   // money appears in no invoice, so `owed` above cannot see a dollar of it.
-  const due = useMemo(() => dueTotals(schedules, jobs, todayStr), [schedules, jobs, todayStr])
+  const due = useMemo(() => dueTotals(schedules, jobs, todayStr, invoices), [schedules, jobs, todayStr, invoices])
 
   // The Australian financial year and its BAS quarters — the same periods the
   // Tax page reports on, so a figure here and a figure there agree.
@@ -299,15 +299,17 @@ export default function Dashboard() {
           sub={due.overdue > 0
             ? <span className="text-[#dc2626]">{fmtCurrency(due.overdue)} overdue · worst {due.worstDays}d</span>
             : due.cash > 0 ? `${fmtCurrency(due.cash)} on cash jobs` : 'all on track'}
-          help={<>Money a client has agreed to pay on a payment schedule and has not paid yet.
-            Separate from Outstanding payments above, which counts invoices — this is the only
-            place <b>cash work</b> shows up, since it is never invoiced
-            {due.cash > 0 && <> ({fmtCurrency(due.cash)} of this is cash work)</>}.
-            <TipCalc>Every milestone across every pay schedule that is not ticked received.
-            Overdue means its due date has passed; a milestone with no date set — a final payment
-            usually has none until the job is nearly done — counts as pending rather than being
-            dropped. A job that is both invoiced and on a schedule will appear in both figures,
-            so do not add the two together.</TipCalc></>}
+          help={<>Money a client has agreed to pay on a payment schedule and has not been invoiced
+            for yet. It does not overlap Outstanding payments above — once a milestone is
+            invoiced it is counted there instead, so the two figures add up to what you are
+            owed. This is also the only place <b>cash work</b> shows up, since it is never
+            invoiced{due.cash > 0 && <> ({fmtCurrency(due.cash)} of this is cash work)</>}.
+            <TipCalc>Every milestone on every pay schedule that is neither ticked received nor
+            covered by an invoice{due.invoicedIncGST > 0
+              ? ` — a further ${fmtCurrency(due.invoicedIncGST)} is invoiced and sits in Outstanding payments`
+              : ''}. Overdue means its due date has passed; a milestone with no date set — a
+            final payment usually has none until the job is nearly done — counts as pending
+            rather than being dropped.</TipCalc></>}
         />
         <Metric
           label="GST this quarter" badge={qLabel} borderColor="#0369a1" onClick={() => nav('/reports')}

@@ -74,5 +74,19 @@ ok(today.length === 0, 'a payment due today is not yet overdue')
 const ydayList = attentionList({ ...base, schedules: [{ id: 'NP-1', worker: 'S', notes: ms(mk('Yesterday', 100, '2026-10-19')) }] }, TODAY)
 ok(ydayList.length === 1 && ydayList[0].days === 1, 'one day later it is, by a day')
 
+// ── An invoiced milestone is the invoice's problem ───────────
+// Otherwise one late payment raises two alerts: the milestone's and the
+// invoice's.
+const invoiced = attentionList({
+  ...base, schedules: SCHEDULES,
+  invoices: [{ id: 'INV-1', job_id: 'NP-1', client: 'Smith', total_inc_gst: 4000, received: 0,
+    due_date: '2026-10-01', extra: { milestone_index: 1, milestone_job_id: 'NP-1' } }],
+}, TODAY)
+const payAlerts = invoiced.filter(i => i.kind === 'payment_overdue')
+ok(payAlerts.length === 1, 'the invoiced milestone raises no alert of its own')
+ok(payAlerts[0].jobId === 'NP-2', 'while the uninvoiced overdue one still does')
+ok(invoiced.some(i => i.kind === 'invoice_overdue'),
+  'and the overdue invoice raises its own — one late payment, one alert')
+
 console.log(fail ? `\n${fail} FAILED` : '\nall passed')
 process.exit(fail ? 1 : 0)

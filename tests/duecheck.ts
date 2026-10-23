@@ -89,5 +89,51 @@ const orphan = dueTotals([{ id: 'GONE', worker: 'Nobody', notes: ms(mk('Final', 
 ok(near(orphan.overdue, 800), 'a schedule with no job behind it is still counted')
 ok(orphan.cash === 0, 'and is treated as on the books, which is the conservative read')
 
+// ── Invoiced money belongs to the invoice ────────────────────
+//
+// A milestone that has been invoiced is counted by the invoice from then on.
+// Counting it here as well showed the same dollars in two places, and left a
+// milestone that had been invoiced AND paid still raising an overdue alert.
+
+const INVOICED = [
+  // Covers milestone 1 of NP-1 — the overdue progress claim.
+  { id: 'INV-1', job_id: 'NP-1', total_inc_gst: 4000, received: 0,
+    extra: { milestone_index: 1, milestone_job_id: 'NP-1' } },
+]
+
+const covered = dueTotals(SCHEDULES, JOBS, TODAY, INVOICED)
+ok(covered.overdue === 0, 'the overdue milestone is invoiced, so it is no longer due here')
+ok(covered.overdueCount === 0 && covered.worstDays === 0, 'and raises no overdue figures')
+ok(near(covered.invoicedIncGST, 4000), 'it is reported as invoiced rather than silently dropped')
+ok(near(covered.total, 15000 - 4000), 'the total falls by exactly that milestone')
+ok(near(covered.total + covered.invoicedIncGST, t.total),
+  'nothing is lost: due plus invoiced is what the old figure counted')
+
+// Paid or unpaid, the invoice owns it — an unpaid invoice is still the live claim.
+const paidToo = dueTotals(SCHEDULES, JOBS, TODAY,
+  [{ ...INVOICED[0], received: 4000, manual_paid: true }])
+ok(near(paidToo.total, 11000) && paidToo.overdue === 0,
+  'a settled invoice removes it too, and no longer shows as money due')
+
+// The link is per job: index 1 of another job is not this milestone.
+const elsewhere = dueTotals(SCHEDULES, JOBS, TODAY, [
+  { id: 'INV-X', job_id: 'NP-9', total_inc_gst: 4000, extra: { milestone_index: 1, milestone_job_id: 'NP-9' } },
+])
+ok(near(elsewhere.total, 15000), "another job's milestone index covers nothing here")
+ok(elsewhere.invoicedIncGST === 0, 'and nothing is reported as invoiced')
+
+// An invoice on the job that names no milestone covers nothing.
+const unlinked = dueTotals(SCHEDULES, JOBS, TODAY,
+  [{ id: 'INV-2', job_id: 'NP-1', total_inc_gst: 4000, extra: {} }])
+ok(near(unlinked.total, 15000),
+  'an unlinked invoice leaves every milestone due — nothing says which it covers')
+
+const statuses = duePayments(SCHEDULES, JOBS, TODAY, INVOICED)
+ok(statuses.filter(d => d.status === 'due').length === 3, 'three milestones are still due')
+ok(statuses.filter(d => d.status === 'invoiced').length === 1, 'one is invoiced')
+ok(statuses[0].status === 'due', 'and the due ones sort above it — it is counted, not chased')
+ok(statuses.every(d => d.status !== 'received'),
+  'the received deposit never appears at all, since a paid milestone is not a payment to come')
+
 console.log(fail ? `\n${fail} FAILED` : '\nall passed')
 process.exit(fail ? 1 : 0)

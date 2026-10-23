@@ -13,53 +13,13 @@ import {
 import { billingBasis } from '@/lib/jobBilling'
 import { Plus, Loader2, Trash2, Copy, Check, Banknote } from 'lucide-react'
 import { useBusinessSettings } from '@/pages/SettingsPage'
+import { STRUCTURES, buildMS, scheduleRowFor } from '@/lib/paySchedule'
 import { jobAddOns } from '@/lib/invoiceLines'
 import { invalidateTable } from '../lib/queryKeys'
 import { SyncedInput } from '@/components/ui/SyncedInput'
 
 type Milestone = { label: string; pct: number; amount: number; dueDate: string; received: boolean; receivedDate: string }
 type Row = Record<string, any>
-
-const STRUCTURES = [
-  { id: 'df',   label: 'Deposit + Final' },
-  { id: 'dpf',  label: 'Deposit + Progress + Final' },
-  { id: 'd2pf', label: 'Deposit + 2x Progress + Final' },
-  { id: 'wk',   label: 'Weekly claims' },
-]
-
-// V16 buildMS()
-function buildMS(agreed: number, struct: string, dep: number, start: string, gstFree = false): Milestone[] {
-  // Cash work is not invoiced, so the agreed figure is the whole amount.
-  const inc = gstFree ? agreed : agreed * 1.1
-  const rem = 100 - dep
-  const addD = (d: string, n: number) => {
-    if (!d) return ''
-    const dt = new Date(d); dt.setDate(dt.getDate() + n)
-    return localDate(dt)
-  }
-  const mk = (label: string, pct: number, dueDate: string): Milestone =>
-    ({ label, pct, amount: Math.round((inc * pct) / 100), dueDate, received: false, receivedDate: '',
-       ...(gstFree ? { gstFree: true } : {}) })
-
-  if (struct === 'df') return [mk('Deposit', dep, start), mk('Final payment', rem, '')]
-  if (struct === 'dpf') return [
-    mk('Deposit', dep, start),
-    mk('Progress claim 50%', Math.round(rem / 2), addD(start, 7)),
-    mk('Final payment', rem - Math.round(rem / 2), ''),
-  ]
-  if (struct === 'd2pf') return [
-    mk('Deposit', dep, start),
-    mk('Progress 1 — 33%', Math.round(rem / 3), addD(start, 7)),
-    mk('Progress 2 — 66%', Math.round(rem / 3), addD(start, 14)),
-    mk('Final payment', rem - 2 * Math.round(rem / 3), ''),
-  ]
-  return [
-    mk('Deposit', dep, start),
-    mk('Week 1 claim', Math.round(rem / 3), addD(start, 7)),
-    mk('Week 2 claim', Math.round(rem / 3), addD(start, 14)),
-    mk('Final payment', rem - 2 * Math.round(rem / 3), ''),
-  ]
-}
 
 // Milestones are persisted as JSON in np_pay_schedules.notes
 const msOf = parseMilestones
@@ -159,18 +119,9 @@ export default function Payments() {
 
   async function create() {
     if (!value || value <= 0) { alert('Enter agreed value'); return }
-    const j = jobs.find(x => x.id === jobId)
-    const ms = buildMS(value, struct, depPct, start, gstFree)
-    await upsert.mutateAsync({
-      id: jobId || genId('ps'),
-      worker: j?.client || 'Unknown',
-      amount: value,
-      period_start: ms[0]?.dueDate || null,
-      period_end: ms[ms.length - 1]?.dueDate || null,
-      paid: false,
-      notes: JSON.stringify(ms),
-      created_at: new Date().toISOString(),
-    })
+    await upsert.mutateAsync(scheduleRowFor(jobs.find(x => x.id === jobId), {
+      value, struct, depositPct: depPct, start, gstFree,
+    }))
     setModal(false)
   }
 

@@ -103,8 +103,10 @@ export function attentionList(d: {
 
   // A milestone past its due date. On a cash job this is the only record of
   // the money, so without it the work is invisible to every rule here.
-  for (const p of duePayments(d.schedules ?? [], d.jobs, todayStr)) {
-    if (!p.overdue) continue
+  for (const p of duePayments(d.schedules ?? [], d.jobs, todayStr, d.invoices)) {
+    // An invoiced milestone is the invoice's problem now, and the invoice
+    // raises its own alert — one late payment should produce one alert.
+    if (!p.overdue || p.status !== 'due') continue
     out.push({
       kind: 'payment_overdue', id: `${p.jobId}:${p.label}`, jobId: p.jobId, client: p.client,
       amount: p.amount, days: p.daysOverdue,

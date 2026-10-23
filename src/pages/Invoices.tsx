@@ -28,6 +28,7 @@ import {
 import { invalidateTable } from '../lib/queryKeys'
 import { takeHandoff } from '@/lib/handoff'
 import { depositPct } from '@/lib/deposit'
+import { STRUCTURES, buildMS, scheduleRowFor, hasSchedule } from '@/lib/paySchedule'
 import { SyncedInput } from '@/components/ui/SyncedInput'
 
 type Invoice = Record<string, any>
@@ -122,6 +123,20 @@ function useUpsertInvoice() {
       invalidateTable(qc, 'np_invoices')
       if (isSettledDeposit(inv)) invalidateTable(qc, 'np_jobs')
     },
+  })
+}
+
+/** Creating a schedule for a job that has none, from the invoice modal. */
+function useUpsertPaySchedule() {
+  const qc = useQueryClient()
+  const { user } = useAuth()
+  return useMutation({
+    mutationFn: async (row: Record<string, any>) => {
+      const { error } = await (supabase.from('np_pay_schedules') as any)
+        .upsert({ ...row, user_id: user!.id, updated_at: new Date().toISOString() })
+      if (error) throw error
+    },
+    onSuccess: () => invalidateTable(qc, 'np_pay_schedules'),
   })
 }
 
@@ -232,6 +247,41 @@ export default function Invoices() {
       markupPct: invMarkupPct, exceptInvoiceId: selectedId,
     })
   }, [jobs, form.job_id, invoices, labour, materials, variations, invMarkupPct, selectedId])
+
+  // A job with no payment schedule is offered one here rather than being
+  // given one: the dates on a schedule are promises to a client, and
+  // generated behind your back they are fiction — and they drive the overdue
+  // alerts. Inline rather than a link to the Payments page, which would lose
+  // a half-written invoice.
+  const [schedOpen, setSchedOpen] = useState(false)
+  const [schedStruct, setSchedStruct] = useState<string>('df')
+  const [schedStart, setSchedStart] = useState('')
+  const [schedPct, setSchedPct] = useState<string>('')
+  const [schedSaving, setSchedSaving] = useState(false)
+  const upsertSchedule = useUpsertPaySchedule()
+
+  const schedJob = jobs.find(j => j.id === form.job_id)
+  const needsSchedule = !!form.job_id && !hasSchedule(paySchedules, form.job_id)
+  const schedValue = Number(suggest?.jobTotalExGST) || 0
+  const schedDepPct = schedPct === '' ? depPct : Number(schedPct) || 0
+  const schedPreview = needsSchedule && schedValue > 0
+    ? buildMS(schedValue, schedStruct, schedDepPct, schedStart, jobGstRate(schedJob) === 0)
+    : []
+
+  async function createSchedule() {
+    if (!schedJob || schedValue <= 0) return
+    setSchedSaving(true)
+    try {
+      await upsertSchedule.mutateAsync(scheduleRowFor(schedJob, {
+        value: schedValue, struct: schedStruct,
+        depositPct: schedDepPct, start: schedStart,
+        gstFree: jobGstRate(schedJob) === 0,
+      }))
+      setSchedOpen(false)
+    } catch (e: any) {
+      alert('Could not create the schedule: ' + (e?.message ?? 'unknown error'))
+    } finally { setSchedSaving(false) }
+  }
 
   /** Put a figure in the amount box, in whichever mode makes sense for it. */
   function useAmount(ex: number) {
@@ -859,6 +909,72 @@ export default function Invoices() {
                   Deposit {depPct}% · {fmtCurrency(Math.round(suggest.jobTotalIncGST * depPct) / 100)}
                 </button>
               </div>
+            </div>
+          )}
+
+          {needsSchedule && schedValue > 0 && (
+            <div className="col-span-2 rounded-lg border border-dashed border-black/20 px-3 py-2">
+              {!schedOpen ? (
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <span className="text-[11px] text-[#666]">
+                    This job has no payment schedule, so nothing tracks what is still to come.
+                  </span>
+                  <button type="button" onClick={() => setSchedOpen(true)}
+                    className="text-[11px] font-semibold text-[#2563eb] hover:underline whitespace-nowrap">
+                    Set one up
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <div className="text-[11px] font-bold uppercase tracking-wide text-[#666] mb-1.5">
+                    Payment schedule · {fmtCurrency(schedValue)} ex GST
+                  </div>
+                  <div className="grid grid-cols-3 gap-2">
+                    <div>
+                      <label className="block text-[10px] text-[#666] mb-0.5">Structure</label>
+                      <select value={schedStruct} onChange={e => setSchedStruct(e.target.value)}
+                        className="w-full bg-white border border-black/20 rounded px-1.5 py-1 text-[12px]">
+                        {STRUCTURES.map(st => <option key={st.id} value={st.id}>{st.label}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-[10px] text-[#666] mb-0.5">Deposit %</label>
+                      <input type="number" min={0} max={100} value={schedPct} placeholder={String(depPct)}
+                        onChange={e => setSchedPct(e.target.value)}
+                        className="w-full bg-white border border-black/20 rounded px-1.5 py-1 text-[12px] text-right" />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] text-[#666] mb-0.5">First due</label>
+                      <input type="date" value={schedStart} onChange={e => setSchedStart(e.target.value)}
+                        className="w-full bg-white border border-black/20 rounded px-1.5 py-1 text-[12px]" />
+                    </div>
+                  </div>
+
+                  <div className="mt-2 text-[11px]">
+                    {schedPreview.map((m, i) => (
+                      <div key={i} className="flex justify-between border-b border-black/[0.05] py-0.5">
+                        <span>{m.label} <span className="text-[#666]">{m.dueDate || 'no date yet'}</span></span>
+                        <span className="tabular-nums">{fmtCurrency(m.amount)}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="text-[10px] text-[#666] mt-1">
+                    Dates are a promise to the client — a milestone past its due date raises an
+                    alert. Leave &ldquo;first due&rdquo; empty if you have not agreed one yet.
+                  </div>
+
+                  <div className="flex justify-end gap-2 mt-2">
+                    <button type="button" onClick={() => setSchedOpen(false)}
+                      className="px-2.5 py-1 text-[11px] rounded-lg border border-black/20 hover:bg-[#f5f4f0]">
+                      Not now
+                    </button>
+                    <button type="button" onClick={createSchedule} disabled={schedSaving}
+                      className="px-2.5 py-1 text-[11px] font-semibold rounded-lg bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50">
+                      {schedSaving ? 'Creating…' : 'Create schedule'}
+                    </button>
+                  </div>
+                </>
+              )}
             </div>
           )}
 
