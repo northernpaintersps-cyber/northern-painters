@@ -22,11 +22,12 @@ import {
 } from '@/lib/invoiceLines'
 import {
   computeJobBilling, billingBreakdown, unbilledSummary,
-  invoiceableLines, selectedTotal, billedLinesOf,
+  invoiceableLines, selectedTotal, billedLinesOf, invoiceSuggestion,
   billingStage, BILLING_STAGES, type BillingStage, type JobBilling,
 } from '@/lib/jobBilling'
 import { invalidateTable } from '../lib/queryKeys'
 import { takeHandoff } from '@/lib/handoff'
+import { DEPOSIT_PCT } from '@/lib/deposit'
 import { SyncedInput } from '@/components/ui/SyncedInput'
 
 type Invoice = Record<string, any>
@@ -215,6 +216,26 @@ export default function Invoices() {
   }, [jobs, form.job_id, invoices, selectedId, labour, materials, invMarkupPct, invHourlyRate])
 
   const pickedTotal = selectedTotal(lines, picked)
+
+  // What the job is worth and what is left of it, so neither has to be
+  // fetched from another screen and typed in. The invoice being edited is
+  // excluded from "already invoiced" — otherwise editing a $5,000 invoice
+  // would offer $5,000 less than it should.
+  const suggest = useMemo(() => {
+    const job = jobs.find(j => j.id === form.job_id)
+    if (!job) return null
+    return invoiceSuggestion({
+      job, invoices, labour, materials, variations,
+      markupPct: invMarkupPct, exceptInvoiceId: selectedId,
+    })
+  }, [jobs, form.job_id, invoices, labour, materials, variations, invMarkupPct, selectedId])
+
+  /** Put a figure in the amount box, in whichever mode makes sense for it. */
+  function useAmount(ex: number) {
+    setInvMode('manual')
+    setPicked(new Set())
+    setForm(f => ({ ...f, ...amountFields(ex, f.job_id) }))
+  }
 
   // Lines written by hand, and what they come to.
   const writtenTotal = useMemo(() => linesTotal(editLines), [editLines])
@@ -753,6 +774,90 @@ export default function Invoices() {
             onChange={e => setExtra('covers_from', e.target.value)} />
           <Input label="Covers work to" type="date" value={form.extra?.covers_to || ''}
             onChange={e => setExtra('covers_to', e.target.value)} />
+          {suggest && suggest.hasValue && (
+            <div className="col-span-2 rounded-lg border border-black/[0.12] bg-[#fafaf8] px-3 py-2.5">
+              <div className="flex items-center justify-between mb-1.5">
+                <span className="text-[11px] font-bold uppercase tracking-wide text-[#666]">
+                  {suggest.basis === 'fixed' ? 'This job' : 'This job — logged so far'}
+                </span>
+                {suggest.overBilledIncGST > 0 && (
+                  <span className="text-[10px] font-semibold text-[#c0392b] bg-[#fee2e2] px-1.5 py-0.5 rounded-full">
+                    {fmtCurrency(suggest.overBilledIncGST)} over the job total
+                  </span>
+                )}
+              </div>
+
+              <div className="text-[12px] leading-[1.7]">
+                <div className="flex justify-between">
+                  <span className="text-[#666]">
+                    {suggest.basis === 'fixed' ? 'Agreed price' : 'Billable labour and materials'}
+                  </span>
+                  <span className="tabular-nums">{fmtCurrency(suggest.baseExGST)} ex GST</span>
+                </div>
+                {suggest.addOnsExGST > 0 && (
+                  <div className="flex justify-between">
+                    <span className="text-[#6b21a8]">+ approved add-ons</span>
+                    <span className="tabular-nums text-[#6b21a8]">{fmtCurrency(suggest.addOnsExGST)} ex GST</span>
+                  </div>
+                )}
+                <div className="flex justify-between font-semibold border-t border-black/[0.08] mt-1 pt-1">
+                  <span>Job total</span>
+                  <span className="tabular-nums">
+                    {fmtCurrency(suggest.jobTotalIncGST)}
+                    <span className="text-[10px] font-normal text-[#666]">
+                      {suggest.gstRate ? ' inc GST' : ' (cash, no GST)'}
+                    </span>
+                  </span>
+                </div>
+                {suggest.invoiceCount > 0 && (
+                  <>
+                    <div className="flex justify-between">
+                      <span className="text-[#666]">
+                        &minus; already invoiced ({suggest.invoiceCount})
+                      </span>
+                      <span className="tabular-nums text-[#666]">{fmtCurrency(suggest.invoicedIncGST)}</span>
+                    </div>
+                    {suggest.depositIncGST > 0 && (
+                      // Inside "already invoiced" above, never a second deduction.
+                      <div className="flex justify-between text-[11px] pl-3">
+                        <span className="text-[#666]">
+                          of which deposit{suggest.depositReceivedIncGST >= suggest.depositIncGST ? ' (paid)' : ''}
+                        </span>
+                        <span className="tabular-nums text-[#666]">{fmtCurrency(suggest.depositIncGST)}</span>
+                      </div>
+                    )}
+                    <div className="flex justify-between font-semibold border-t border-black/[0.08] mt-1 pt-1">
+                      <span>Left to invoice</span>
+                      <span className="tabular-nums text-[#2563eb]">{fmtCurrency(suggest.leftToInvoiceIncGST)}</span>
+                    </div>
+                  </>
+                )}
+                {suggest.receivedIncGST > 0 && (
+                  <div className="flex justify-between text-[11px]">
+                    <span className="text-[#666]">received to date</span>
+                    <span className="tabular-nums text-[#16a34a]">{fmtCurrency(suggest.receivedIncGST)}</span>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex gap-2 flex-wrap mt-2 pt-2 border-t border-black/[0.08]">
+                <button type="button" onClick={() => useAmount(suggest.leftToInvoiceExGST)}
+                  disabled={suggest.leftToInvoiceExGST <= 0}
+                  className="px-2.5 py-1 text-[11px] font-semibold rounded-lg bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-40">
+                  Bill the rest · {fmtCurrency(suggest.leftToInvoiceIncGST)}
+                </button>
+                <button type="button" onClick={() => useAmount(suggest.jobTotalExGST)}
+                  className="px-2.5 py-1 text-[11px] rounded-lg bg-white border border-black/20 hover:bg-[#f5f4f0]">
+                  Full job total · {fmtCurrency(suggest.jobTotalIncGST)}
+                </button>
+                <button type="button" onClick={() => useAmount(Math.round(suggest.jobTotalExGST * DEPOSIT_PCT) / 100)}
+                  className="px-2.5 py-1 text-[11px] rounded-lg bg-white border border-black/20 hover:bg-[#f5f4f0]">
+                  Deposit {DEPOSIT_PCT}% · {fmtCurrency(Math.round(suggest.jobTotalIncGST * DEPOSIT_PCT) / 100)}
+                </button>
+              </div>
+            </div>
+          )}
+
           <div className="col-span-2">
               {/* Writing lines needs no job — a one-off invoice can be split
                   across areas too. Picking logged work does need one. */}

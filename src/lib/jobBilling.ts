@@ -370,3 +370,97 @@ export function billingStage(b: JobBilling): BillingStage {
   if (b.owedIncGST > 0) return 'awaiting-payment'
   return b.invoicedIncGST > 0 ? 'paid' : 'nothing'
 }
+
+
+// ── What to put on the next invoice ─────────────────────────
+//
+// Raising an invoice meant going and finding what the job was worth, then
+// subtracting whatever had already been billed, in your head or in another
+// tab. Both numbers are already known here.
+//
+// Deposits need saying carefully, because the obvious handling double-counts
+// them. A booking deposit is itself an invoice, so it is already inside
+// `invoicedIncGST` and must NOT be subtracted a second time. It is reported
+// separately so you can see it came off, not so it can come off twice.
+
+export interface InvoiceSuggestion {
+  basis: BillingBasis
+  /** True when the job has a figure worth measuring against. */
+  hasValue: boolean
+  gstRate: number
+
+  /** The agreed price (fixed) or what has been logged (hourly), ex GST. */
+  baseExGST: number
+  /** Approved add-ons, ex GST. */
+  addOnsExGST: number
+  /** base + add-ons: the whole job as it stands today. */
+  jobTotalExGST: number
+  jobTotalIncGST: number
+
+  /** Already invoiced on this job's OTHER invoices, inc GST. */
+  invoicedIncGST: number
+  invoiceCount: number
+  /** Of that, deposit invoices — already inside invoicedIncGST, never again. */
+  depositIncGST: number
+  depositReceivedIncGST: number
+  /** Money in, inc GST, across those invoices. */
+  receivedIncGST: number
+
+  /** jobTotal − invoiced, floored at nothing. The figure to bill now. */
+  leftToInvoiceExGST: number
+  leftToInvoiceIncGST: number
+  /** Invoiced beyond the job total — shown rather than a negative remainder. */
+  overBilledIncGST: number
+}
+
+/**
+ * The figures the invoice modal offers, for a job.
+ *
+ * `exceptInvoiceId` is the invoice being edited: its own amount must not
+ * count as already billed, or editing a $5,000 invoice would offer $5,000
+ * less than it should.
+ */
+export function invoiceSuggestion(input: {
+  job: Row
+  invoices: Row[]
+  labour?: Row[]
+  materials?: Row[]
+  variations?: Row[]
+  markupPct?: number
+  exceptInvoiceId?: string | null
+}): InvoiceSuggestion {
+  const { job, exceptInvoiceId } = input
+  const others = (input.invoices ?? []).filter(i =>
+    i.job_id === job?.id && String(i.id) !== String(exceptInvoiceId ?? ''))
+
+  const b = computeJobBilling({ ...input, invoices: others })
+  const rate = jobGstRate(job)
+  const inc = (ex: number) => Math.round(ex * (1 + rate) * 100) / 100
+
+  const baseExGST = b.basis === 'fixed'
+    ? b.contractExGST
+    : b.labourBillableExGST + b.materialsBillableExGST
+  const jobTotalExGST = Math.round((baseExGST + b.variationsExGST) * 100) / 100
+  const jobTotalIncGST = inc(jobTotalExGST)
+
+  const deposits = others.filter(i => i.extra?.booking_deposit === true)
+  const remainder = Math.round((jobTotalIncGST - b.invoicedIncGST) * 100) / 100
+
+  return {
+    basis: b.basis,
+    hasValue: jobTotalExGST > 0,
+    gstRate: rate,
+    baseExGST: Math.round(baseExGST * 100) / 100,
+    addOnsExGST: b.variationsExGST,
+    jobTotalExGST,
+    jobTotalIncGST,
+    invoicedIncGST: b.invoicedIncGST,
+    invoiceCount: others.length,
+    depositIncGST: Math.round(deposits.reduce((s, i) => s + invIncGST(i), 0) * 100) / 100,
+    depositReceivedIncGST: Math.round(deposits.reduce((s, i) => s + (i.received || 0), 0) * 100) / 100,
+    receivedIncGST: b.receivedIncGST,
+    leftToInvoiceIncGST: Math.max(0, remainder),
+    leftToInvoiceExGST: Math.round((Math.max(0, remainder) / (1 + rate)) * 100) / 100,
+    overBilledIncGST: Math.max(0, -remainder),
+  }
+}
