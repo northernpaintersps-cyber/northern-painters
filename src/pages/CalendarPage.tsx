@@ -10,6 +10,7 @@ import { fmtDate, genId, today, addDays, getJobScheduledDates, localDate, parseL
 import { ChevronLeft, ChevronRight, Plus, Loader2, Trash2, X, CloudOff, CloudSun } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { invalidateTable } from '@/lib/queryKeys'
+import { onCalendar, isDoneJob, calendarDates } from '@/lib/calendarJobs'
 import { useWeather, isWet } from '@/lib/weather'
 import WeatherBadge from '@/components/WeatherBadge'
 import { ExposureIcon } from '@/components/ExposureMark'
@@ -32,6 +33,9 @@ const EVENT_COLORS: Record<string, string> = {
 }
 const JOB_SCHEDULED_COLOR = 'bg-blue-100 text-blue-900 border-l-2 border-blue-500 font-medium'
 const JOB_ACTIVE_COLOR    = 'bg-green-100 text-green-900 border-l-2 border-green-500 font-medium'
+// Work that has been done. Quieter than the live colours, because a finished
+// job is a record of where the crew was, not something to plan around.
+const JOB_DONE_COLOR      = 'bg-[#f1f0e8] text-[#5f5e5a] border-l-2 border-[#9ca3af]'
 
 function useCalendarEvents() {
   const { user } = useAuth()
@@ -162,19 +166,20 @@ export default function CalendarPage() {
   }, [year, month])
 
   // ── Items per day ────────────────────────────────────────────
-  const CONFIRMED_STATUSES = ['Not Started','Scheduled','In Progress','Hourly Rate Accepted','Booked']
   const itemsByDate = useMemo(() => {
-    const map: Record<string, Array<{ type: 'job' | 'event'; label: string; color: string; id: string; data: any; full?: string }>> = {}
+    const map: Record<string, Array<{ type: 'job' | 'event'; label: string; color: string; id: string; data: any; full?: string; done?: boolean }>> = {}
     const add = (date: string, item: any) => {
       if (!map[date]) map[date] = []
       map[date].push(item)
     }
     // Job scheduled dates
-    jobs.filter(j => CONFIRMED_STATUSES.includes(j.status)).forEach(j => {
-      const dates = getJobScheduledDates(j)
+    jobs.filter(onCalendar).forEach(j => {
+      const done = isDoneJob(j)
+      const dates = calendarDates(j, todayStr)
       dates.forEach((d, i) => {
         const isFirst = i === 0, isLast = i === dates.length - 1
-        const color = j.status === 'In Progress' ? JOB_ACTIVE_COLOR : JOB_SCHEDULED_COLOR
+        const color = done ? JOB_DONE_COLOR
+          : j.status === 'In Progress' ? JOB_ACTIVE_COLOR : JOB_SCHEDULED_COLOR
         const prefix = isFirst ? '▶ ' : isLast ? '⏹ ' : ''
         // The street, and nothing else. A cell this narrow truncated anything
         // longer, so client and number both read as half a word; the street
@@ -184,8 +189,8 @@ export default function CalendarPage() {
         const street = (j.address || '').split(',')[0].trim()
         const label = street || j.client || j.id
         add(d, {
-          type: 'job', label: `${prefix}${label}`, color, id: j.id, data: j,
-          full: [j.id, j.client, j.address].filter(Boolean).join(' — '),
+          type: 'job', label: `${prefix}${label}`, color, id: j.id, data: j, done,
+          full: [j.id, j.client, j.address, done ? `(${j.status})` : ''].filter(Boolean).join(' — '),
         })
       })
     })
@@ -194,7 +199,7 @@ export default function CalendarPage() {
       add(ev.date, { type: 'event', label: ev.title || ev.color || 'Event', color: EVENT_COLORS[ev.color || 'Other'] || EVENT_COLORS['Other'], id: ev.id, data: ev })
     })
     return map
-  }, [jobs, events])
+  }, [jobs, events, todayStr])
 
   // ── Navigation ────────────────────────────────────────────────
   function prev() { if (month === 0) { setMonth(11); setYear(y => y - 1) } else setMonth(m => m - 1) }
@@ -431,8 +436,10 @@ export default function CalendarPage() {
                       {(i.data.address || '').split(',')[0] || i.data.client || i.data.id}
                       <span className="text-[#666]"> · {i.data.id}</span>
                     </span>
-                    <button onClick={() => removeJobDay(i.data.id, selectedDate)}
-                      className="text-[#c0392b] text-[11px] hover:underline">Remove</button>
+                    {i.done
+                      ? <span className="text-[11px] text-[#666] whitespace-nowrap">{i.data.status}</span>
+                      : <button onClick={() => removeJobDay(i.data.id, selectedDate)}
+                          className="text-[#c0392b] text-[11px] hover:underline">Remove</button>}
                   </div>
                 ))}
               </div>
