@@ -11,8 +11,9 @@ import {
   fmtCurrency, genId, today, labBillable, labCost, isBillableLabour,
   findOverlappingLabour, labourSpan, jobBillingType, type LabourOverlap,
 } from '@/lib/utils'
-import { Plus, Loader2, Trash2, ArrowUpDown, X, Clock, AlertTriangle } from 'lucide-react'
+import { Plus, Loader2, Trash2, ArrowUpDown, X, Clock, AlertTriangle, MessageSquareText } from 'lucide-react'
 import { invalidateTable } from '../lib/queryKeys'
+import ReadHoursModal from '@/components/ReadHoursModal'
 import { SyncedInput } from '@/components/ui/SyncedInput'
 
 type Row = Record<string, any>
@@ -84,6 +85,7 @@ export default function Labour() {
   const { data: crew = [] } = useTable('np_crew')
   const upsert = useUpsert()
   const del = useDel()
+  const [readModal, setReadModal] = useState(false)
 
   const { data: settings } = useQuery({
     queryKey: ['np_settings', 'business', user?.id],
@@ -204,12 +206,24 @@ export default function Labour() {
 
   return (
     <div className="p-5">
+      <ReadHoursModal
+        open={readModal} onClose={() => setReadModal(false)}
+        jobs={jobs} crew={crew} labour={rows} biz={settings} apiKey={settings?.ai_api_key} />
+
       <div className="flex items-center justify-between flex-wrap gap-2 mb-4">
         <h2 className="text-[17px] font-semibold text-gray-900">Labour Log</h2>
-        <button onClick={openNew}
-          className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white font-medium text-[13px] px-3 py-1.5 rounded-lg">
-          <Plus size={14} /> Log Labour
-        </button>
+        <div className="flex gap-2">
+          {/* Hours usually arrive as a message. Reading one beats retyping a
+              week of them a field at a time. */}
+          <button onClick={() => setReadModal(true)}
+            className="flex items-center gap-1.5 bg-white border border-black/20 hover:bg-[#f5f4f0] font-medium text-[13px] px-3 py-1.5 rounded-lg">
+            <MessageSquareText size={14} /> Read a message
+          </button>
+          <button onClick={openNew}
+            className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white font-medium text-[13px] px-3 py-1.5 rounded-lg">
+            <Plus size={14} /> Log Labour
+          </button>
+        </div>
       </div>
 
       <div className="grid gap-2.5 mb-3.5" style={{ gridTemplateColumns: 'repeat(auto-fit,minmax(140px,1fr))' }}>

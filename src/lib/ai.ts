@@ -1604,3 +1604,138 @@ Record your findings with the record_rates tool.`
     notes: String(parsed.notes ?? ''),
   }
 }
+
+
+// ── Reading a message into hours ────────────────────────────
+//
+// The format parser in lib/readHours.ts reads a tidy message for nothing.
+// This is for the rest: "Mon and Tues I was at the Byron job, 8 hours each,
+// then half a day Weds at Esmonde". Extraction, not judgement, so a small
+// model and a forced schema.
+//
+// It is told the crew and the jobs so it answers with THEIR names, and told
+// to leave out anything it is unsure of — a missing line shows up in the
+// review table as unread, while an invented one gets logged.
+
+const HOURS_TOOL = {
+  name: 'log_hours',
+  description: 'The hours described in the message, one entry per worker per job per day.',
+  input_schema: {
+    type: 'object' as const,
+    additionalProperties: false,
+    required: ['entries'],
+    properties: {
+      entries: {
+        type: 'array',
+        description: 'One entry per worker per job per day. Empty if the message holds no hours.',
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['worker', 'hours'],
+          properties: {
+            worker: {
+              type: 'string',
+              description: 'The worker, spelled exactly as in the crew list where it is one of them.',
+            },
+            job: {
+              type: 'string',
+              description: 'The job number from the list, or the client or street as written. '
+                + 'Leave it out rather than guessing between two jobs.',
+            },
+            date: {
+              type: 'string',
+              description: 'YYYY-MM-DD. Work out weekdays and "yesterday" from today\'s date. '
+                + 'Leave it out if the message does not say.',
+            },
+            hours: {
+              type: 'number',
+              description: 'Hours worked, as a number. A start and finish time less any break.',
+            },
+            note: {
+              type: 'string',
+              description: 'What they did, in their own words: "second coat", "prep". Short.',
+            },
+          },
+        },
+      },
+      unreadable: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'Any part of the message that mentions work but could not be turned into '
+          + 'an entry, quoted. Better reported than guessed at.',
+      },
+    },
+  },
+}
+
+const HOURS_SYSTEM = `You read short messages from painters about hours worked and turn them into entries.
+
+RULES
+- One entry per worker per job per day. A message often covers several days and several jobs for one person.
+- Use the crew names and job numbers given to you, spelled exactly as given.
+- A time span means the hours between, less any break mentioned. "7:30 to 4 with half an hour" is 8.
+- Half a day is 4 hours. A full day is 8 unless the message says otherwise.
+- If you cannot tell which job is meant, leave the job out. Two jobs on the same street are not the same job.
+- If you cannot tell how many hours, do not invent a number — put the text in unreadable instead.
+- Never add an entry the message does not support. A missing entry is noticed; a wrong one is paid.`
+
+export interface AIHoursEntry {
+  worker: string
+  job?: string
+  date?: string
+  hours: number
+  note?: string
+}
+
+export async function readHoursMessage(
+  apiKey: string,
+  message: string,
+  ctx: { crew: string[]; jobs: Array<{ id: string; client?: string; address?: string }>; todayStr: string },
+): Promise<{ entries: AIHoursEntry[]; unreadable: string[] }> {
+  const text = String(message ?? '').trim()
+  if (!text) return { entries: [], unreadable: [] }
+
+  const jobList = ctx.jobs.slice(0, 60).map(j =>
+    `${j.id} — ${j.client ?? ''}${j.address ? ` — ${String(j.address).split(',')[0]}` : ''}`).join('\n')
+
+  const user = [
+    `Today is ${ctx.todayStr}.`,
+    `Crew: ${ctx.crew.join(', ') || '(none recorded)'}`,
+    `Jobs:\n${jobList || '(none recorded)'}`,
+    '',
+    'MESSAGE',
+    text,
+    '',
+    'Use the log_hours tool.',
+  ].join('\n')
+
+  const raw = await callClaude(
+    apiKey,
+    [{ role: 'user', content: user }],
+    HOURS_SYSTEM,
+    { model: 'claude-haiku-4-5-20251001', maxTokens: 2000, tool: HOURS_TOOL },
+  )
+
+  let parsed: any
+  try { parsed = JSON.parse(raw) } catch {
+    throw new Error('AI returned unexpected format while reading the message.')
+  }
+
+  const entries: AIHoursEntry[] = (Array.isArray(parsed.entries) ? parsed.entries : [])
+    .map((e: any) => ({
+      worker: String(e?.worker ?? '').trim(),
+      job: String(e?.job ?? '').trim() || undefined,
+      date: String(e?.date ?? '').trim() || undefined,
+      hours: Number(e?.hours) || 0,
+      note: String(e?.note ?? '').trim() || undefined,
+    }))
+    // An entry with no hours is not an entry. Dropping it here keeps the
+    // review table honest rather than showing a zero to be corrected.
+    .filter((e: AIHoursEntry) => e.hours > 0 && e.worker)
+
+  return {
+    entries,
+    unreadable: (Array.isArray(parsed.unreadable) ? parsed.unreadable : [])
+      .map((u: any) => String(u ?? '').trim()).filter(Boolean),
+  }
+}
