@@ -13,6 +13,7 @@ import {
 import { billingBasis } from '@/lib/jobBilling'
 import { Plus, Loader2, Trash2, Copy, Check, Banknote } from 'lucide-react'
 import { useBusinessSettings } from '@/pages/SettingsPage'
+import { jobAddOns } from '@/lib/invoiceLines'
 import { invalidateTable } from '../lib/queryKeys'
 import { SyncedInput } from '@/components/ui/SyncedInput'
 
@@ -105,6 +106,8 @@ const BADGE = 'inline-block px-2 py-0.5 rounded-full text-[11px] font-medium whi
 export default function Payments() {
   const { data: schedules = [], isLoading } = useTable('np_pay_schedules')
   const { data: jobs = [] } = useTable('np_jobs')
+  const { data: variations = [] } = useTable('np_variations')
+  const { data: invoices = [] } = useTable('np_invoices')
   const { data: biz } = useBusinessSettings()
   const upsert = useUpsert()
   const del = useDel()
@@ -191,6 +194,34 @@ export default function Payments() {
       dueDate: today(), received: false, receivedDate: '',
     })
     await saveMs(s, ms)
+  }
+
+  /**
+   * An add-on the client agreed to after the quote, as its own milestone.
+   *
+   * The schedule's agreed value grows by the same amount, because the job is
+   * now worth more — leaving it would make every percentage on the schedule
+   * describe a contract that no longer exists.
+   */
+  async function addAddOn(s: Row, addOn: { id: string; description: string; amountExGST: number }) {
+    const ms = msOf(s)
+    const job = jobs.find(j => j.id === s.id)
+    const noGst = isCashJob(job) || ms.some(m => m.gstFree)
+    ms.push({
+      label: `Add-on — ${addOn.description}`,
+      pct: 0,
+      amount: Math.round(addOn.amountExGST * (noGst ? 1 : 1.1)),
+      dueDate: '', received: false, receivedDate: '',
+      ...(noGst ? { gstFree: true } : {}),
+      // Which add-on this came from, so it is only ever added once.
+      variationId: addOn.id,
+    } as any)
+    await upsert.mutateAsync({
+      ...s,
+      amount: Math.round(((s.amount || 0) + addOn.amountExGST) * 100) / 100,
+      notes: JSON.stringify(ms),
+      paid: false,
+    })
   }
 
   async function patchMilestone(s: Row, idx: number, patch: Partial<Milestone>) {
@@ -403,10 +434,29 @@ export default function Payments() {
               </tbody>
             </table>
 
-            <button onClick={() => addPayment(s)}
-              className="mt-2 flex items-center gap-1 px-2.5 py-1 text-[11px] bg-white border border-dashed border-[#2563eb] text-[#2563eb] rounded-lg hover:bg-blue-50">
-              <Plus size={11} /> Add payment
-            </button>
+            <div className="mt-2 flex gap-2 flex-wrap items-center">
+              <button onClick={() => addPayment(s)}
+                className="flex items-center gap-1 px-2.5 py-1 text-[11px] bg-white border border-dashed border-[#2563eb] text-[#2563eb] rounded-lg hover:bg-blue-50">
+                <Plus size={11} /> Add payment
+              </button>
+              {/* Work agreed after the quote. Adding one here raises the
+                  agreed value too — the job really is worth more now. */}
+              {jobAddOns(variations, s.id, invoices)
+                .filter(a => !ms.some(m => (m as any).variationId === a.id))
+                .map(a => (
+                  <button key={a.id} onClick={() => addAddOn(s, a)}
+                    title={a.approved
+                      ? (a.billed ? 'Already invoiced — add it here only if the schedule should show it' : 'Approved add-on')
+                      : 'Not approved yet — worth checking before you schedule it'}
+                    className={`flex items-center gap-1 px-2.5 py-1 text-[11px] rounded-lg border ${
+                      a.approved
+                        ? 'border-[#c4b5fd] bg-[#f3e8ff] text-[#6b21a8] hover:brightness-95'
+                        : 'border-[#fde68a] bg-[#fffbeb] text-[#92400e] hover:brightness-95'}`}>
+                    <Plus size={11} /> {a.description} · {fmtCurrency(a.amountExGST)}
+                    {!a.approved && ' · pending'}{a.billed && ' · invoiced'}
+                  </button>
+                ))}
+            </div>
           </div>
         )
       })}

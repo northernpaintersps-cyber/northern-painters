@@ -23,7 +23,11 @@ import { EXPOSURE_OPTIONS, EXPOSURE_LABELS, deriveExposure, normalise } from '@/
 const TABS = ['details','schedule','crew','financials','costs','billing','variations','activity'] as const
 type Tab = typeof TABS[number]
 export type Job = Record<string, any>
-const TAB_LABELS: Partial<Record<Tab, string>> = { costs: 'Cost Tracker', activity: 'History' }
+// 'variations' stays the stored key and the contract word; "Add-ons" is what
+// it reads as on screen, because that is what the client calls it.
+const TAB_LABELS: Partial<Record<Tab, string>> = {
+  costs: 'Cost Tracker', activity: 'History', variations: 'Add-ons',
+}
 
 // V16 .ii / .is — borderless inline table inputs
 const II = 'border-none bg-transparent text-[12.5px] font-inherit text-inherit w-full focus:outline-none focus:bg-blue-50/60 rounded px-0.5'
@@ -90,13 +94,13 @@ function VariationsTab({ jobId }: { jobId: string | null }) {
 
   const totalApproved = vars.filter(v => v.var_status === 'Approved').reduce((s, v) => s + (v.amount_ex_gst ?? 0), 0)
 
-  if (!jobId) return <p className="text-sm text-gray-500 py-4">Save the job first to add variations.</p>
+  if (!jobId) return <p className="text-sm text-gray-500 py-4">Save the job first to add an add-on.</p>
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div className="text-sm text-gray-500">
-          Approved variations: <span className="text-gray-900 font-semibold">{fmtCurrency(totalApproved)}</span>
+          Approved add-ons: <span className="text-gray-900 font-semibold">{fmtCurrency(totalApproved)}</span>
           <span className="text-gray-600 mx-2">·</span>
           <span className="text-xs text-gray-500">{vars.length} total</span>
         </div>
@@ -126,23 +130,31 @@ function VariationsTab({ jobId }: { jobId: string | null }) {
                 </div>
                 <div className="flex flex-col gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                   <button onClick={() => setVarForm({ ...v })} className="text-gray-500 hover:text-blue-600"><Edit2 size={12} /></button>
-                  <button onClick={() => { if (confirm('Delete variation?')) del.mutate(v.id) }} className="text-gray-500 hover:text-red-400"><Trash2 size={12} /></button>
+                  <button onClick={() => { if (confirm('Delete this add-on?')) del.mutate(v.id) }} className="text-gray-500 hover:text-red-400"><Trash2 size={12} /></button>
                 </div>
               </div>
             ))}
-            {!vars.length && <p className="text-sm text-gray-500 text-center py-6">No variations yet</p>}
+            {!vars.length && (
+              <p className="text-sm text-gray-500 text-center py-6">
+                Nothing added yet.<br />
+                <span className="text-xs">Work the client asked for after the quote goes here — once it is
+                Approved it counts toward what the job is worth, and it can be dropped straight onto an
+                invoice as its own line.</span>
+              </p>
+            )}
           </div>
         )
       }
 
       {varForm && (
         <div className="bg-gray-50 rounded-xl border border-gray-200 p-4 space-y-3 mt-2">
-          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">{varForm.id ? 'Edit variation' : 'New variation'}</p>
+          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">{varForm.id ? 'Edit add-on' : 'New add-on'}</p>
           <div className="grid grid-cols-2 gap-3">
             <Input label="Date" type="date" value={varForm.date || ''} onChange={ef('date')} />
             <Select label="Status" value={varForm.var_status || 'Pending'} onChange={ef('var_status')} options={VAR_STATUSES} />
           </div>
-          <Input label="Description" value={varForm.var_desc || ''} onChange={ef('var_desc')} />
+          <Input label="Description" value={varForm.var_desc || ''} onChange={ef('var_desc')}
+            placeholder="Extra coat to the hallway" />
           <Input label="Amount ex GST ($)" type="number" value={varForm.amount_ex_gst ?? ''} onChange={ef('amount_ex_gst')} />
           <TextArea label="Notes" value={varForm.notes || ''} onChange={ef('notes')} />
           <div className="flex justify-end gap-2 pt-1">

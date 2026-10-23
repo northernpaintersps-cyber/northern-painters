@@ -17,6 +17,10 @@ import {
 } from 'lucide-react'
 import { useBusinessSettings } from '@/pages/SettingsPage'
 import {
+  blankLine, lineTotal, linesTotal, toStored, fromStored, isBlank,
+  jobAddOns, addOnLine, variationIdsOf, type EditLine,
+} from '@/lib/invoiceLines'
+import {
   computeJobBilling, billingBreakdown, unbilledSummary,
   invoiceableLines, selectedTotal, billedLinesOf,
   billingStage, BILLING_STAGES, type BillingStage, type JobBilling,
@@ -167,9 +171,12 @@ export default function Invoices() {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [modalOpen, setModalOpen] = useState(false)
   const [saving, setSaving] = useState(false)
-  // An invoice is either a typed amount or a selection of logged lines.
-  const [invMode, setInvMode] = useState<'manual' | 'lines'>('manual')
+  // An invoice is a typed amount, a selection of logged lines, or lines
+  // written by hand — one invoice split across areas of a building, with the
+  // add-ons agreed along the way on their own lines.
+  const [invMode, setInvMode] = useState<'manual' | 'lines' | 'written'>('manual')
   const [picked, setPicked] = useState<Set<string>>(new Set())
+  const [editLines, setEditLines] = useState<EditLine[]>([])
   // Kept on the invoice itself, so reopening it re-prices the same way.
   const invMarkupPct = Number(form.extra?.markup_pct ?? DEFAULT_MARKUP_PCT) || 0
   const invHourlyRate = Number(form.extra?.hourly_rate ?? DEFAULT_HOURLY_RATE) || 0
@@ -208,6 +215,16 @@ export default function Invoices() {
   }, [jobs, form.job_id, invoices, selectedId, labour, materials, invMarkupPct, invHourlyRate])
 
   const pickedTotal = selectedTotal(lines, picked)
+
+  // Lines written by hand, and what they come to.
+  const writtenTotal = useMemo(() => linesTotal(editLines), [editLines])
+
+  // Add-ons agreed on this job after the quote — np_variations. Billed ones
+  // are flagged rather than hidden, so it is obvious what has been charged.
+  const addOns = useMemo(
+    () => form.job_id ? jobAddOns(variations, form.job_id, invoices, selectedId ?? undefined) : [],
+    [variations, form.job_id, invoices, selectedId])
+  const unbilledAddOns = addOns.filter(a => !a.billed && !editLines.some(l => l.variationId === a.id))
 
   /** The shared derivation, with this page's job lookup in front of it. */
   const amountFields = (ex: number, jobId?: string | null) =>
@@ -315,11 +332,35 @@ export default function Invoices() {
     set(k, val)
   }
 
-  function openNew(prefill?: Invoice, opts?: { mode?: 'manual' | 'lines'; pick?: string[] }) {
+  /** Change one written line and re-total the invoice in the same update. */
+  function patchLine(id: string, patch: Partial<EditLine>) {
+    setEditLines(prev => {
+      const next = prev.map(l => l.id === id ? { ...l, ...patch } : l)
+      setForm(f => ({ ...f, ...amountFields(linesTotal(next)) }))
+      return next
+    })
+  }
+  function addLine(line?: EditLine) {
+    setEditLines(prev => {
+      const next = [...prev, line ?? blankLine()]
+      setForm(f => ({ ...f, ...amountFields(linesTotal(next)) }))
+      return next
+    })
+  }
+  function removeLine(id: string) {
+    setEditLines(prev => {
+      const next = prev.filter(l => l.id !== id)
+      setForm(f => ({ ...f, ...amountFields(linesTotal(next)) }))
+      return next
+    })
+  }
+
+  function openNew(prefill?: Invoice, opts?: { mode?: 'manual' | 'lines' | 'written'; pick?: string[] }) {
     setForm({ ...emptyForm(), ...(prefill ?? {}) })
     setSelectedId(null)
     setInvMode(opts?.mode ?? 'manual')
     setPicked(new Set(opts?.pick ?? []))
+    setEditLines(fromStored((prefill as any)?.extra?.line_items))
     setNumberTouched(false)
     setModalOpen(true)
   }
@@ -328,7 +369,11 @@ export default function Invoices() {
     // Reopen in the mode it was built in, with its lines still ticked.
     const b = billedLinesOf(inv)
     const ids = [...b.labour, ...b.materials]
-    setInvMode(ids.length ? 'lines' : 'manual')
+    const written = fromStored(inv.extra?.line_items)
+    setEditLines(written)
+    // Picked lines are recorded as billed ids; anything else with line items
+    // was written by hand, and reopens in the editor rather than as a total.
+    setInvMode(ids.length ? 'lines' : written.length ? 'written' : 'manual')
     setPicked(new Set(ids))
     setNumberTouched(true)   // an existing number is never rewritten
     setModalOpen(true)
@@ -360,11 +405,31 @@ export default function Invoices() {
             })),
           },
         }
+      } else if (invMode === 'written') {
+        const stored = toStored(editLines)
+        const total = linesTotal(editLines)
+        payload = {
+          ...payload,
+          ...amountFields(total),
+          extra: {
+            ...(payload.extra ?? {}),
+            line_items: stored,
+            // Which add-ons this invoice charges for, so the next invoice on
+            // the job knows not to charge for them again.
+            billed_variations: variationIdsOf(editLines),
+            // These are not picked lines, so the logged work they might
+            // overlap with stays available.
+            billed_labour: undefined, billed_materials: undefined,
+          },
+        }
+        delete (payload.extra as any).billed_labour
+        delete (payload.extra as any).billed_materials
       } else if (selectedId) {
         // Switched back to a typed amount — drop the line record so those
         // lines become available to invoice again.
         const extra = { ...(payload.extra ?? {}) }
         delete extra.billed_labour; delete extra.billed_materials
+        delete extra.line_items; delete extra.billed_variations
         payload = { ...payload, extra }
       }
 
@@ -688,16 +753,118 @@ export default function Invoices() {
             onChange={e => setExtra('covers_from', e.target.value)} />
           <Input label="Covers work to" type="date" value={form.extra?.covers_to || ''}
             onChange={e => setExtra('covers_to', e.target.value)} />
-          {form.job_id && (
-            <div className="col-span-2">
+          <div className="col-span-2">
+              {/* Writing lines needs no job — a one-off invoice can be split
+                  across areas too. Picking logged work does need one. */}
               <div className="flex gap-1 mb-2 bg-gray-50 p-1 rounded-lg w-fit">
-                {([['manual', 'Enter an amount'], ['lines', 'Pick logged work']] as const).map(([id, label]) => (
-                  <button key={id} type="button" onClick={() => setInvMode(id)}
+                {([['manual', 'Enter an amount'], ['written', 'Write lines'], ['lines', 'Pick logged work']] as const)
+                  .filter(([id]) => id !== 'lines' || !!form.job_id)
+                  .map(([id, label]) => (
+                  <button key={id} type="button" onClick={() => {
+                    setInvMode(id)
+                    // Starting to write with nothing there gets a first row, so
+                    // the editor is never an empty box with no way into it.
+                    if (id === 'written' && editLines.length === 0) addLine()
+                    if (id === 'written') setForm(f => ({ ...f, ...amountFields(linesTotal(editLines)) }))
+                  }}
                     className={`text-xs px-3 py-1.5 rounded-md font-medium ${invMode === id ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500'}`}>
                     {label}
                   </button>
                 ))}
               </div>
+
+              {invMode === 'written' && (
+                <div className="border border-black/[0.12] rounded-lg overflow-hidden mb-3">
+                  <table className="w-full border-collapse text-[12px]">
+                    <thead>
+                      <tr>
+                        {['Description', 'Qty', 'Unit', 'Unit price', 'Line total', ''].map((h, i) => (
+                          <th key={h} className={`px-2 py-1.5 bg-[#f5f4f0] border-b border-black/[0.12] text-[11px] text-[#666] font-medium ${[1, 3, 4].includes(i) ? 'text-right' : 'text-left'}`}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {editLines.map(l => (
+                        <tr key={l.id} className="border-b border-black/[0.06]">
+                          <td className="px-1.5 py-1">
+                            <input value={l.description}
+                              onChange={e => patchLine(l.id, { description: e.target.value })}
+                              placeholder="Interior — ground floor"
+                              className="w-full px-1.5 py-1 bg-transparent border border-transparent hover:border-black/10 focus:border-blue-500 rounded outline-none" />
+                            {l.variationId && (
+                              <span className="ml-1.5 text-[9px] font-semibold text-[#6b21a8] bg-[#f3e8ff] px-1.5 py-0.5 rounded-full">add-on</span>
+                            )}
+                          </td>
+                          <td className="px-1.5 py-1 w-[62px]">
+                            <input type="number" step="0.01" value={l.qty}
+                              onChange={e => patchLine(l.id, { qty: parseFloat(e.target.value) || 0 })}
+                              className="w-full px-1.5 py-1 text-right tabular-nums bg-transparent border border-transparent hover:border-black/10 focus:border-blue-500 rounded outline-none" />
+                          </td>
+                          <td className="px-1.5 py-1 w-[70px]">
+                            <input value={l.unit} onChange={e => patchLine(l.id, { unit: e.target.value })}
+                              placeholder="lot"
+                              className="w-full px-1.5 py-1 bg-transparent border border-transparent hover:border-black/10 focus:border-blue-500 rounded outline-none" />
+                          </td>
+                          <td className="px-1.5 py-1 w-[110px]">
+                            <input type="number" step="0.01" value={l.unitPrice}
+                              onChange={e => patchLine(l.id, { unitPrice: parseFloat(e.target.value) || 0 })}
+                              className="w-full px-1.5 py-1 text-right tabular-nums bg-transparent border border-transparent hover:border-black/10 focus:border-blue-500 rounded outline-none" />
+                          </td>
+                          <td className="px-2 py-1 w-[100px] text-right tabular-nums font-semibold">{fmtCurrency(lineTotal(l))}</td>
+                          <td className="px-1.5 py-1 w-[30px]">
+                            <button type="button" onClick={() => removeLine(l.id)}
+                              className="text-[#c0392b] hover:bg-[#f5f4f0] rounded p-1" title="Remove line">
+                              <X size={12} />
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                      {editLines.length === 0 && (
+                        <tr><td colSpan={6} className="px-2.5 py-3 text-center text-[11px] text-[#666]">
+                          No lines yet — add one for each area or add-on this invoice covers.
+                        </td></tr>
+                      )}
+                    </tbody>
+                    <tfoot>
+                      <tr className="bg-[#f5f4f0]">
+                        <td colSpan={4} className="px-2 py-1.5 text-right text-[11px] font-semibold text-[#666]">
+                          {editLines.filter(l => !isBlank(l)).length} line{editLines.filter(l => !isBlank(l)).length !== 1 ? 's' : ''} · total ex GST
+                        </td>
+                        <td className="px-2 py-1.5 text-right tabular-nums font-bold text-[#2563eb]">{fmtCurrency(writtenTotal)}</td>
+                        <td />
+                      </tr>
+                    </tfoot>
+                  </table>
+                  <div className="flex gap-2 flex-wrap items-center px-2.5 py-2 border-t border-black/[0.12] bg-[#fafaf8]">
+                    <button type="button" onClick={() => addLine()}
+                      className="flex items-center gap-1 text-[11px] font-semibold text-[#2563eb] hover:underline">
+                      <Plus size={12} /> Add line
+                    </button>
+                    {unbilledAddOns.length > 0 && (
+                      <>
+                        <span className="text-black/15">|</span>
+                        <span className="text-[11px] text-[#666]">Add-ons on this job:</span>
+                        {unbilledAddOns.map(a => (
+                          <button key={a.id} type="button" onClick={() => addLine(addOnLine(a))}
+                            title={a.approved ? 'Approved add-on' : 'Not approved yet — worth checking before you bill it'}
+                            className={`flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full border ${
+                              a.approved
+                                ? 'border-[#c4b5fd] bg-[#f3e8ff] text-[#6b21a8] hover:bg-[#ede9fe]'
+                                : 'border-[#fde68a] bg-[#fffbeb] text-[#92400e] hover:bg-[#fef3c7]'}`}>
+                            <Plus size={10} /> {a.description} · {fmtCurrency(a.amountExGST)}{!a.approved && ' · pending'}
+                          </button>
+                        ))}
+                      </>
+                    )}
+                  </div>
+                  {addOns.some(a => a.billed) && (
+                    <div className="px-2.5 py-1.5 text-[10px] text-[#666] border-t border-black/[0.06]">
+                      {addOns.filter(a => a.billed).length} add-on{addOns.filter(a => a.billed).length !== 1 ? 's' : ''} on this
+                      job {addOns.filter(a => a.billed).length !== 1 ? 'have' : 'has'} already been billed on another invoice.
+                    </div>
+                  )}
+                </div>
+              )}
 
               {invMode === 'lines' && (
                 <div className="grid grid-cols-2 gap-3 mb-3">
@@ -758,8 +925,7 @@ export default function Invoices() {
                   </div>
                 </div>
               ))}
-            </div>
-          )}
+          </div>
           <div>
             <label className="block text-xs font-medium text-gray-500 mb-1">Detail on the invoice</label>
             <select value={form.extra?.pdf_detail ?? 'itemised'}
@@ -770,8 +936,8 @@ export default function Invoices() {
           </div>
           <Input label="Amount ex GST ($)" type="number" value={form.agreed_ex_gst || ''}
             onChange={fld('agreed_ex_gst')} min={0}
-            readOnly={invMode === 'lines' && !!form.job_id}
-            className={invMode === 'lines' && !!form.job_id ? 'opacity-60 cursor-not-allowed' : undefined} />
+            readOnly={invMode === 'written' || (invMode === 'lines' && !!form.job_id)}
+            className={invMode === 'written' || (invMode === 'lines' && !!form.job_id) ? 'opacity-60 cursor-not-allowed' : undefined} />
           <Input label="GST ($)" type="number" value={form.gst || ''} readOnly className="opacity-60 cursor-not-allowed" />
           <Input label="Total inc GST ($)" type="number" value={form.total_inc_gst || ''} readOnly className="opacity-60 cursor-not-allowed" />
           <Input label="Amount received ($)" type="number" value={form.received || ''} onChange={e => {
