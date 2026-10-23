@@ -19,7 +19,8 @@ import { invalidateTable } from '../lib/queryKeys'
 import ExposureMark from '@/components/ExposureMark'
 import { quoteFollowUp } from '@/lib/messages'
 import { needsFollowUp, snoozedUntil } from '@/lib/attention'
-import { DEPOSIT_PCT, jobValueEx, depositPath } from '@/lib/deposit'
+import { depositPct, jobValueEx, depositPath } from '@/lib/deposit'
+import { useBusinessSettings } from '@/pages/SettingsPage'
 import { SyncedInput } from '@/components/ui/SyncedInput'
 
 
@@ -90,6 +91,7 @@ export default function Jobs() {
   const quickEdit = useQuickEdit()
   const { user } = useAuth()
   const nav = useNavigate()
+  const { data: biz } = useBusinessSettings()
 
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('All')
@@ -200,7 +202,7 @@ export default function Jobs() {
       alert(`${j.id} has no quoted or agreed amount yet, so there is nothing to take a deposit on.`)
       return
     }
-    nav(depositPath(j, DEPOSIT_PCT))
+    nav(depositPath(j, depositPct(biz)))
   }
 
   return (

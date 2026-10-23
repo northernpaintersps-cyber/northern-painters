@@ -13,7 +13,7 @@ import { computeJobBilling, billingBreakdown, unbilledSummary } from '@/lib/jobB
 import { useBusinessSettings } from '@/pages/SettingsPage'
 import { useNavigate } from 'react-router-dom'
 import { useState } from 'react'
-import { DEPOSIT_PCT, jobValueEx, depositAmount, depositPath, hasDepositInvoice } from '@/lib/deposit'
+import { depositPct, jobValueEx, depositAmount, depositPath, hasDepositInvoice } from '@/lib/deposit'
 import { BookmarkCheck } from 'lucide-react'
 
 function Tile({ label, value, color, sub }: {
@@ -37,9 +37,10 @@ function Tile({ label, value, color, sub }: {
  * The percentage is a field rather than a prompt() so the amount is visible
  * before anything is created.
  */
-function DepositRow({ job, invoices }: { job: any; invoices: Array<any> }) {
+function DepositRow({ job, invoices, biz }: { job: any; invoices: Array<any>; biz?: any }) {
   const nav = useNavigate()
-  const [pct, setPct] = useState(String(DEPOSIT_PCT))
+  // Your own default, still editable here for the job that is different.
+  const [pct, setPct] = useState(String(depositPct(biz)))
   const value = jobValueEx(job)
   const n = parseFloat(pct)
   const valid = n > 0 && n <= 100
@@ -223,7 +224,7 @@ export default function JobBillingTab({ job, jobId }: { job: any; jobId: string 
         </div>
       )}
 
-      <DepositRow job={{ ...job, id: jobId }} invoices={b.invoices} />
+      <DepositRow job={{ ...job, id: jobId }} invoices={b.invoices} biz={biz} />
 
       <div>
         <div className="text-xs font-semibold mb-1.5">Invoices</div>

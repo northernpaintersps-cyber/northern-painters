@@ -10,8 +10,25 @@
 import { handOff } from '@/lib/handoff'
 import { today } from '@/lib/utils'
 
-/** The default deposit, as a percentage of the job value ex GST. */
-export const DEPOSIT_PCT = 20
+/**
+ * The default deposit, as a percentage of the job value ex GST.
+ *
+ * A fallback, not a rule: Settings → Defaults holds the real figure, and
+ * every screen that offers a deposit reads it through depositPct() so one
+ * change moves them all. This is what applies before anything is set.
+ */
+export const DEPOSIT_PCT = 10
+
+/**
+ * The deposit percentage to offer, from the business settings.
+ *
+ * Anything outside 1-100 is not a percentage of anything, so it falls back
+ * rather than quietly raising an invoice for nothing or for double.
+ */
+export function depositPct(biz?: { deposit_pct?: unknown } | null): number {
+  const n = Number(biz?.deposit_pct)
+  return Number.isFinite(n) && n > 0 && n <= 100 ? n : DEPOSIT_PCT
+}
 
 /** Every field optional, so the app's own `Record<string, any>` job rows are
  *  assignable: a bare index signature does not satisfy a required property. */

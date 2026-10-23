@@ -27,7 +27,7 @@ import {
 } from '@/lib/jobBilling'
 import { invalidateTable } from '../lib/queryKeys'
 import { takeHandoff } from '@/lib/handoff'
-import { DEPOSIT_PCT } from '@/lib/deposit'
+import { depositPct } from '@/lib/deposit'
 import { SyncedInput } from '@/components/ui/SyncedInput'
 
 type Invoice = Record<string, any>
@@ -216,6 +216,9 @@ export default function Invoices() {
   }, [jobs, form.job_id, invoices, selectedId, labour, materials, invMarkupPct, invHourlyRate])
 
   const pickedTotal = selectedTotal(lines, picked)
+
+  /** Your own deposit percentage, from Settings → Defaults. */
+  const depPct = depositPct(bizSettings)
 
   // What the job is worth and what is left of it, so neither has to be
   // fetched from another screen and typed in. The invoice being edited is
@@ -850,9 +853,10 @@ export default function Invoices() {
                   className="px-2.5 py-1 text-[11px] rounded-lg bg-white border border-black/20 hover:bg-[#f5f4f0]">
                   Full job total · {fmtCurrency(suggest.jobTotalIncGST)}
                 </button>
-                <button type="button" onClick={() => useAmount(Math.round(suggest.jobTotalExGST * DEPOSIT_PCT) / 100)}
+                <button type="button" onClick={() => useAmount(Math.round(suggest.jobTotalExGST * depPct) / 100)}
+                  title="Your default deposit — change it in Settings → Defaults"
                   className="px-2.5 py-1 text-[11px] rounded-lg bg-white border border-black/20 hover:bg-[#f5f4f0]">
-                  Deposit {DEPOSIT_PCT}% · {fmtCurrency(Math.round(suggest.jobTotalIncGST * DEPOSIT_PCT) / 100)}
+                  Deposit {depPct}% · {fmtCurrency(Math.round(suggest.jobTotalIncGST * depPct) / 100)}
                 </button>
               </div>
             </div>

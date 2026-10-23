@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
+import { DEPOSIT_PCT } from '@/lib/deposit'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import InstallCard from '@/components/InstallCard'
 import { useAuth } from '@/lib/auth'
@@ -50,6 +51,8 @@ export interface BusinessSettings {
   default_markup_pct: number
   invoice_terms: string
   quote_valid_days: number
+  /** Booking deposit, as a percentage of the job value ex GST. */
+  deposit_pct: number
   quote_footer: string
   invoice_footer: string
   rates: LabourRates
@@ -107,6 +110,7 @@ const DEFAULT_SETTINGS: BusinessSettings = {
   default_markup_pct: 20,
   invoice_terms: 'Payment due within 14 days of invoice date.',
   quote_valid_days: 30,
+  deposit_pct: DEPOSIT_PCT,
   quote_footer: 'All surfaces to be cleaned and prepared before painting.\nAll furniture and floor coverings to be protected during works.',
   invoice_footer: 'This invoice is issued in accordance with the Building and Construction Industry Security of Payment Act 1999 (NSW).',
   rates: DEFAULT_RATES,
@@ -369,6 +373,7 @@ export default function SettingsPage() {
             <Field label="Default labour rate ($/hr)" value={biz.default_labour_rate} onChange={set('default_labour_rate')} type="number" />
             <Field label="Default markup %" value={biz.default_markup_pct} onChange={set('default_markup_pct')} type="number" />
             <Field label="Quote valid (days)" value={biz.quote_valid_days} onChange={set('quote_valid_days')} type="number" />
+            <Field label="Booking deposit %" value={biz.deposit_pct} onChange={set('deposit_pct')} type="number" />
             <Field label="Invoice terms (days)" value={biz.invoice_terms} onChange={set('invoice_terms')} />
           </div>
         </div>
