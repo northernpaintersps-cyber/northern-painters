@@ -7,10 +7,16 @@ interface ModalProps {
   onClose: () => void
   title?: string
   children: React.ReactNode
-  size?: 'sm' | 'md' | 'lg' | 'xl'
+  size?: 'sm' | 'md' | 'lg' | 'xl' | 'wide'
 }
 
-const sizes = { sm: 'max-w-sm', md: 'max-w-lg', lg: 'max-w-2xl', xl: 'max-w-4xl' }
+// 'wide' is for a modal holding a table of fields to check rather than a
+// form to fill: at xl the columns were cut off, which defeats the point of
+// showing everything that was detected.
+const sizes = {
+  sm: 'max-w-sm', md: 'max-w-lg', lg: 'max-w-2xl', xl: 'max-w-4xl',
+  wide: 'max-w-[min(1280px,96vw)]',
+}
 
 export function Modal({ open, onClose, title, children, size = 'md' }: ModalProps) {
   useEffect(() => {

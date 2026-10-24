@@ -29,13 +29,15 @@ type Row = Record<string, any>
 const INL = 'w-full px-1.5 py-1 bg-transparent border border-transparent hover:border-black/10 focus:border-blue-500 rounded outline-none text-[12px]'
 
 export default function ReadHoursModal({
-  open, onClose, jobs, crew, labour, biz, apiKey,
+  open, onClose, jobs, crew, labour, assignments, biz, apiKey,
 }: {
   open: boolean
   onClose: () => void
   jobs: Row[]
   crew: Row[]
   labour: Row[]
+  /** Who was booked where. The best clue to a job the message never names. */
+  assignments: Row[]
   biz: Row | undefined
   apiKey?: string
 }) {
@@ -53,7 +55,9 @@ export default function ReadHoursModal({
   const [copied, setCopied] = useState(false)
 
   const todayStr = today()
-  const ctx = { jobs, crew, todayStr }
+  const ctx = useMemo(
+    () => ({ jobs, crew, todayStr, assignments, labour }),
+    [jobs, crew, todayStr, assignments, labour])
 
   function reset() {
     setText(''); setDrafts([]); setDropped(new Set()); setUnparsed([])
@@ -145,7 +149,8 @@ export default function ReadHoursModal({
   }
 
   return (
-    <Modal open={open} onClose={onClose} title="Read a message into hours">
+    <Modal open={open} onClose={onClose} title="Read a message into hours"
+      size={readYet ? 'wide' : 'lg'}>
       {!readYet ? (
         <>
           <textarea
@@ -196,8 +201,8 @@ export default function ReadHoursModal({
                 <table className="w-full border-collapse text-[12px]">
                   <thead>
                     <tr>
-                      {['', 'Date', 'Worker', 'Job', 'Hrs', 'Cost', 'Note'].map((h, i) => (
-                        <th key={h} className={`px-2 py-1.5 bg-[#f5f4f0] border-b border-black/[0.12] text-[11px] text-[#666] font-medium sticky top-0 ${[4, 5].includes(i) ? 'text-right' : 'text-left'}`}>{h}</th>
+                      {['', 'Date', 'Worker', 'Job', 'Hrs', 'Rate', 'Cost', 'Note', 'Read from'].map((h, i) => (
+                        <th key={h} className={`px-2 py-1.5 bg-[#f5f4f0] border-b border-black/[0.12] text-[11px] text-[#666] font-medium sticky top-0 ${[4, 5, 6].includes(i) ? 'text-right' : 'text-left'}`}>{h}</th>
                       ))}
                     </tr>
                   </thead>
@@ -224,7 +229,7 @@ export default function ReadHoursModal({
                               onChange={e => patch(d.key, { worker: e.target.value })} />
                             {!d.workerMatched && <div className="text-[9px] text-[#92400e] px-1.5">not on the crew</div>}
                           </td>
-                          <td className="px-1.5 py-1 w-[190px]">
+                          <td className="px-1.5 py-1 w-[260px]">
                             <select value={d.job_id ?? ''} className={`${INL} cursor-pointer`}
                               onChange={e => patch(d.key, { job_id: e.target.value || null, jobCandidates: undefined })}>
                               <option value="">— no job —</option>
@@ -244,10 +249,13 @@ export default function ReadHoursModal({
                             <input type="number" step="0.25" value={d.hours} className={`${INL} text-right tabular-nums`}
                               onChange={e => patch(d.key, { hours: parseFloat(e.target.value) || 0 })} />
                           </td>
-                          <td className="px-2 py-1 w-[76px] text-right tabular-nums text-[#666]">
+                          <td className="px-2 py-1 w-[70px] text-right tabular-nums text-[#666]">
+                            {Number(change.row.rate) ? fmtCurrency(Number(change.row.rate)) : '—'}
+                          </td>
+                          <td className="px-2 py-1 w-[86px] text-right tabular-nums text-[#666]">
                             {fmtCurrency(Number(change.row.cost) || 0)}
                           </td>
-                          <td className="px-1.5 py-1">
+                          <td className="px-1.5 py-1 min-w-[160px]">
                             <input value={d.description ?? ''} className={INL} placeholder="—"
                               onChange={e => patch(d.key, { description: e.target.value })} />
                             {bad && <div className="text-[9px] text-[#c0392b] px-1.5">{change.errors[0]}</div>}
@@ -256,7 +264,22 @@ export default function ReadHoursModal({
                                 already logged — same worker, job, day and hours
                               </div>
                             )}
-                            {d.via === 'ai' && <span className="text-[9px] text-[#6b21a8]">read by AI</span>}
+                          </td>
+                          <td className="px-2 py-1 max-w-[220px]">
+                            <div className="text-[10px] text-[#666] truncate" title={d.source}>{d.source}</div>
+                            <div className="flex gap-1 flex-wrap mt-0.5">
+                              {d.via === 'ai' && (
+                                <span className="text-[9px] text-[#6b21a8] bg-[#f3e8ff] px-1.5 rounded-full">AI</span>
+                              )}
+                              {d.inferredFrom && (
+                                <span className="text-[9px] text-[#1e40af] bg-[#dbeafe] px-1.5 rounded-full"
+                                  title="The message did not name a job. This came from what the app already knew.">
+                                  job from {d.inferredFrom === 'booked' ? 'the crew booking'
+                                    : d.inferredFrom === 'scheduled' ? "that day's schedule"
+                                    : 'recent hours'}
+                                </span>
+                              )}
+                            </div>
                           </td>
                         </tr>
                       )

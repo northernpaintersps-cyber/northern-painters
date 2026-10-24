@@ -26,7 +26,7 @@
 //
 // Pure — no hooks, no Supabase, no network.
 
-import { normaliseDate } from './utils'
+import { normaliseDate, getJobScheduledDates } from './utils'
 import { hoursBetween } from './derive'
 import type { LabourRequest } from './writes'
 
@@ -37,6 +37,11 @@ export interface ReadContext {
   crew: Row[]
   /** 'YYYY-MM-DD'. Passed in so the parser is testable on a fixed day. */
   todayStr: string
+  /** Who was booked on which job on which day. The strongest clue there is:
+   *  the message rarely names the job, but the diary already knows. */
+  assignments?: Row[]
+  /** Hours already logged, for "the job he has been on all week". */
+  labour?: Row[]
 }
 
 export interface DraftEntry extends LabourRequest {
@@ -52,6 +57,10 @@ export interface DraftEntry extends LabourRequest {
   /** What the message called the job. Shown when nothing matched, so the
    *  gap says "it tried 'the Byron job'" rather than just being empty. */
   saidJob?: string
+  /** The job came from the diary rather than the message. Shown, because a
+   *  figure the app worked out deserves a different kind of glance from one
+   *  that was written down. */
+  inferredFrom?: 'booked' | 'scheduled' | 'recent'
   /** The worker name was matched against the crew rather than taken as typed. */
   workerMatched: boolean
 }
@@ -265,6 +274,106 @@ export function matchJob(text: string, jobs: Row[]): JobMatch {
   return { job: null, candidates: [] }
 }
 
+/**
+ * The job the diary says this person was on.
+ *
+ * A painter writing up their week rarely names the job the way the app
+ * spells it, and often does not name it at all — "Monday 8h, Tuesday 8h".
+ * But the app already knows where everybody was: who was booked on what,
+ * which jobs were scheduled that day, and what they have been logging hours
+ * against all week.
+ *
+ * Used only to settle what the message left open: to choose between
+ * candidates that all fit the words, or to fill a job nobody named. It never
+ * overrides a job the message actually identified — a guess, however good,
+ * does not outrank what someone wrote down.
+ *
+ * Each answer says where it came from, so the review table can show it and
+ * you can disbelieve it in one tap.
+ */
+export function inferJob(
+  entry: { worker?: string; date?: string },
+  ctx: ReadContext,
+  within: Row[] | null = null,
+): { job: Row; from: 'booked' | 'scheduled' | 'recent' } | null {
+  const worker = norm(entry?.worker)
+  const date = String(entry?.date ?? '').slice(0, 10)
+  const pool = within && within.length ? within : ctx.jobs
+  const inPool = (id: unknown) => pool.find(j => String(j.id) === String(id))
+
+  // 1. Booked on it that day. The diary said so before the work happened.
+  if (worker && date) {
+    const booked = [...new Set((ctx.assignments ?? [])
+      .filter(a => String(a.date ?? '').slice(0, 10) === date &&
+        norm(crewName(a.crew_name, ctx.crew)) === worker)
+      .map(a => String(a.job_id ?? '')))]
+      .map(inPool).filter(Boolean) as Row[]
+    if (booked.length === 1) return { job: booked[0], from: 'booked' }
+  }
+
+  // 2. The only job scheduled to run that day.
+  if (date) {
+    const running = pool.filter(j => getJobScheduledDates(j).includes(date))
+    if (running.length === 1) return { job: running[0], from: 'scheduled' }
+  }
+
+  // 3. The job they have been logging hours against lately — the most hours
+  //    in the fortnight around this entry, and only when it is the clear one.
+  if (worker && date) {
+    const from = shiftDays(date, -14), to = shiftDays(date, 14)
+    const hours = new Map<string, number>()
+    for (const l of ctx.labour ?? []) {
+      const d = String(l.date ?? '').slice(0, 10)
+      if (!l.job_id || d < from || d > to) continue
+      if (norm(l.sub) !== worker) continue
+      if (!inPool(l.job_id)) continue
+      const id = String(l.job_id)
+      hours.set(id, (hours.get(id) ?? 0) + (Number(l.hours) || 0))
+    }
+    const ranked = [...hours.entries()].sort((a, b) => b[1] - a[1])
+    // Only when one job clearly dominates: a close second means two jobs
+    // that fortnight and no way to tell which this entry belongs to.
+    if (ranked.length === 1 || (ranked.length > 1 && ranked[0][1] >= ranked[1][1] * 2)) {
+      const job = inPool(ranked[0][0])
+      if (job) return { job, from: 'recent' }
+    }
+  }
+
+  return null
+}
+
+const crewName = (ref: unknown, crew: Row[]): string => {
+  const r = String(ref ?? '')
+  return crew.find(c => String(c.id) === r)?.name ?? r
+}
+
+/** A local date shifted by days. Never through UTC parsing of a string. */
+function shiftDays(iso: string, days: number): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso)
+  if (!m) return iso
+  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]) + days)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+/**
+ * Settle a draft's job with the diary, where the message left it open.
+ *
+ * Three cases: nothing matched, several matched, or one did. Only the first
+ * two are touched.
+ */
+export function settleJob(entry: DraftEntry, ctx: ReadContext): DraftEntry {
+  if (entry.job_id) return entry                       // the message named it
+
+  const guess = inferJob(entry, ctx, entry.jobCandidates ?? null)
+  if (!guess) return entry
+  return {
+    ...entry,
+    job_id: String(guess.job.id),
+    jobCandidates: entry.jobCandidates,
+    inferredFrom: guess.from,
+  }
+}
+
 /** A crew member from a first name or a full one, returning their real name. */
 export function matchWorker(text: string, crew: Row[]): { name: string; matched: boolean } {
   const raw = String(text ?? '').trim()
@@ -321,7 +430,7 @@ export function parseHoursMessage(text: string, ctx: ReadContext): ReadResult {
 
     const got = readEntryLine(line, { worker, workerMatched, lastDate }, ctx)
     if (!got.length) { unparsed.push(line); continue }
-    entries.push(...got)
+    entries.push(...got.map(e => settleJob(e, ctx)))
     lastDate = got[got.length - 1].date ?? lastDate
   }
 
@@ -470,7 +579,7 @@ export function draftsFromAI(
       saidJob: e.jobSaid || e.job || undefined,
       description: e.note || undefined,
     }
-  }).filter(d => d.hours > 0)
+  }).map(d => settleJob(d, ctx)).filter(d => d.hours > 0)
 }
 
 /**

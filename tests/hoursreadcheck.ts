@@ -7,7 +7,7 @@
 
 import {
   parseDate, parseHours, matchJob, matchWorker, parseHoursMessage,
-  findDuplicateEntry, draftsFromAI, FORMAT_HINT,
+  findDuplicateEntry, draftsFromAI, inferJob, FORMAT_HINT,
 } from '@/lib/readHours'
 import { buildLabour, emptyContext } from '@/lib/writes'
 
@@ -236,6 +236,68 @@ ok(draftsFromAI([{ worker: 'Francisco', hours: 0 }], CTX).length === 0,
 
 ok(FORMAT_HINT.split('\n').length >= 4 && parseHoursMessage(FORMAT_HINT, CTX).unparsed.length === 0,
   'the format shown to the crew is one the parser can actually read')
+
+// ── The diary settles what the message leaves open ───────────
+//
+// A painter writing up their week often names no job at all. The app
+// already knows where everyone was, so it fills the gap — and says it did.
+
+const DIARY = {
+  ...CTX,
+  assignments: [
+    { job_id: 'NP-0083', crew_name: 'Francisco Rojas', date: '2026-10-22' },
+    { job_id: 'NP-0091', crew_name: 'Jake Miller', date: '2026-10-22' },
+    // Francisco on two jobs the next day: nothing to choose between.
+    { job_id: 'NP-0083', crew_name: 'Francisco Rojas', date: '2026-10-23' },
+    { job_id: 'NP-0091', crew_name: 'Francisco Rojas', date: '2026-10-23' },
+  ],
+  labour: [
+    { sub: 'Francisco Rojas', job_id: 'NP-0091', date: '2026-10-19', hours: 24 },
+    { sub: 'Francisco Rojas', job_id: 'NP-0083', date: '2026-10-19', hours: 2 },
+  ],
+}
+
+const booked = inferJob({ worker: 'Francisco Rojas', date: '2026-10-22' }, DIARY)
+ok(booked?.job.id === 'NP-0083', 'the job he was booked on that day')
+ok(booked?.from === 'booked', 'and it says where that came from')
+
+const bookedTwice = inferJob({ worker: 'Francisco Rojas', date: '2026-10-23' }, DIARY)
+ok(bookedTwice?.from !== 'booked', 'booked on two jobs that day settles nothing by booking')
+
+const lately = inferJob({ worker: 'Francisco Rojas', date: '2026-10-20' }, DIARY)
+ok(lately?.job.id === 'NP-0091' && lately?.from === 'recent',
+  'with no booking, the job he has been putting his hours into')
+ok(inferJob({ worker: 'Nobody At All', date: '2026-10-22' }, DIARY) === null,
+  'a worker the diary knows nothing about gets no guess')
+ok(inferJob({ worker: 'Francisco Rojas', date: '2026-10-22' }, CTX) === null,
+  'and with no diary at all, nothing is inferred')
+
+// A line with hours and no job on it at all.
+const noJobLine = parseHoursMessage('Francisco\n22/10  8h', DIARY)
+ok(noJobLine.entries.length === 1, 'a line naming no job is still read')
+ok(noJobLine.entries[0].job_id === 'NP-0083', 'and the booking fills it in')
+ok(noJobLine.entries[0].inferredFrom === 'booked', 'flagged as inferred, not as written down')
+
+// Ambiguity settled: two Esmonde jobs, one of them booked that day.
+const ESMONDE = {
+  ...DIARY,
+  assignments: [{ job_id: 'NP-0100', crew_name: 'Francisco Rojas', date: '2026-10-22' }],
+}
+const settled = parseHoursMessage('Francisco\n22/10  Esmonde  8h', ESMONDE)
+ok(settled.entries[0].job_id === 'NP-0100',
+  'two jobs fit "Esmonde", and the booking chooses between them')
+ok(settled.entries[0].inferredFrom === 'booked', 'and says so')
+
+// The diary never overrides a job the message actually named.
+const named = parseHoursMessage('Francisco\n22/10  NP-0091  8h', DIARY)
+ok(named.entries[0].job_id === 'NP-0091',
+  'a job written down beats a booking that says otherwise')
+ok(named.entries[0].inferredFrom === undefined, 'and is not flagged as inferred')
+
+// It reaches the AI's entries too.
+const aiNoJob = draftsFromAI([{ worker: 'Francisco', date: '2026-10-22', hours: 8 }], DIARY)
+ok(aiNoJob[0].job_id === 'NP-0083' && aiNoJob[0].inferredFrom === 'booked',
+  "an AI entry with no job gets the same help")
 
 console.log(fail ? `\n${fail} FAILED` : '\nall passed')
 process.exit(fail ? 1 : 0)

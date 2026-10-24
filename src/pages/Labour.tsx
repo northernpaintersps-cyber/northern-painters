@@ -83,6 +83,8 @@ export default function Labour() {
   const { data: rows = [], isLoading } = useTable('np_labour')
   const { data: jobs = [] } = useTable('np_jobs')
   const { data: crew = [] } = useTable('np_crew')
+  // The crew diary, so a message that names no job can still find one.
+  const { data: assignments = [] } = useTable('np_assignments')
   const upsert = useUpsert()
   const del = useDel()
   const [readModal, setReadModal] = useState(false)
@@ -208,7 +210,8 @@ export default function Labour() {
     <div className="p-5">
       <ReadHoursModal
         open={readModal} onClose={() => setReadModal(false)}
-        jobs={jobs} crew={crew} labour={rows} biz={settings} apiKey={settings?.ai_api_key} />
+        jobs={jobs} crew={crew} labour={rows} assignments={assignments}
+        biz={settings} apiKey={settings?.ai_api_key} />
 
       <div className="flex items-center justify-between flex-wrap gap-2 mb-4">
         <h2 className="text-[17px] font-semibold text-gray-900">Labour Log</h2>
