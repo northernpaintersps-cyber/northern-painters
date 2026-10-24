@@ -331,5 +331,53 @@ ok(bare.entries.length === 1 && bare.entries[0].job_id == null,
 ok(bare.entries[0].hours === 8 && !bare.entries[0].inferredFrom,
   'with its hours kept and nothing pretended about the job')
 
+// ── The fields the review table lets you set ─────────────────
+//
+// Charge rate, billing type and ABN/Cash all default from what is already
+// recorded and can be overridden per entry. The last of them decides
+// whether the cost is deductible, so it has to reach paid_by.
+
+const CREW2 = [
+  { id: 'c1', name: 'Francisco Rojas', rate: 65, charge_rate: 95, payment_type: 'ABN' },
+  { id: 'c2', name: 'Danny Cash', rate: 50, charge_rate: 80, payment_type: 'Cash' },
+]
+const FIXED = { id: 'NP-0083', client: 'Smith', terms: 'Fixed Quote' }
+const HOURLY = { id: 'NP-0091', client: 'Jones', terms: 'Hourly rate' }
+const ctxF = { ...emptyContext(), jobs: [FIXED, HOURLY], crew: CREW2, biz: { rates: { standard: 65 } } }
+
+const plain = buildLabour(ctxF as any, { worker: 'Francisco Rojas', hours: 8, date: TODAY, job_id: 'NP-0083' })
+ok(plain.row.charge_rate === 95, "the charge rate defaults to the worker's own")
+ok(plain.row.billable === 760, 'and the billable figure follows it')
+ok(plain.row.billing_type === 'Fixed Quote', "the billing type defaults to the job's terms")
+ok(plain.row.worker_payment_type === 'ABN', 'and ABN is the default arrangement')
+ok(plain.row.paid_by === 'Bank', 'which records as paid by bank, so it is deductible')
+
+const onHourly = buildLabour(ctxF as any, { worker: 'Francisco Rojas', hours: 8, date: TODAY, job_id: 'NP-0091' })
+ok(onHourly.row.billing_type === 'Hourly', 'an hourly job defaults the other way')
+
+const overridden = buildLabour(ctxF as any, {
+  worker: 'Francisco Rojas', hours: 8, date: TODAY, job_id: 'NP-0083',
+  charge_rate: 110, billing_type: 'Hourly', worker_payment_type: 'Cash',
+})
+ok(overridden.row.charge_rate === 110 && overridden.row.billable === 880,
+  'a charge rate set by hand wins, and the billable follows')
+ok(overridden.row.billing_type === 'Hourly', 'so does a billing type set by hand')
+ok(overridden.row.worker_payment_type === 'Cash', 'and so does paying cash')
+ok(overridden.row.paid_by === 'Cash',
+  'which reaches paid_by — the field the tax side reads, where cash is not deductible')
+ok(overridden.row.rate === 65 && overridden.row.cost === 520,
+  'none of it touches what the hour actually cost')
+
+const cashWorker = buildLabour(ctxF as any, { worker: 'Danny Cash', hours: 8, date: TODAY, job_id: 'NP-0083' })
+ok(cashWorker.row.worker_payment_type === 'Cash' && cashWorker.row.paid_by === 'Cash',
+  'someone whose crew record says cash defaults to cash')
+ok(cashWorker.row.charge_rate === 80, 'with their own charge rate')
+
+const junkBilling = buildLabour(ctxF as any, {
+  worker: 'Francisco Rojas', hours: 8, date: TODAY, job_id: 'NP-0083', billing_type: 'Nonsense',
+})
+ok(junkBilling.row.billing_type === 'Fixed Quote',
+  'a billing type that is not one of the three falls back to the job rather than being stored')
+
 console.log(fail ? `\n${fail} FAILED` : '\nall passed')
 process.exit(fail ? 1 : 0)

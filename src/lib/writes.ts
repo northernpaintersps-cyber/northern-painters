@@ -17,7 +17,7 @@ import { invalidateTable } from '@/lib/queryKeys'
 import {
   genId, today, fmtCurrency, fmtDate, normaliseDate,
   findOverlappingLabour, findDuplicateMaterial, jobBillingType,
-  deriveScheduledDates, getJobScheduledDates, findCrew, crewLabel,
+  deriveScheduledDates, getJobScheduledDates, findCrew, crewLabel, BILLING_TYPES,
 } from '@/lib/utils'
 import { workingDatesFrom } from '@/lib/derive'
 import { jobPhases, findPhaseByName } from '@/lib/phases'
@@ -128,6 +128,12 @@ export interface LabourRequest {
   notes?: string
   /** The phase of the job, matched against its quoted steps by name. */
   phase?: string
+  /** 'Fixed Quote' | 'Hourly' | 'Hourly/Estimate'. Taken from the job when
+   *  omitted — one-off lines on a job genuinely do differ. */
+  billing_type?: string
+  /** 'ABN' | 'Cash'. How the worker was paid, which decides whether the cost
+   *  is deductible — see lib/cashBooks. Taken from their crew record. */
+  worker_payment_type?: string
 }
 
 /**
@@ -155,6 +161,13 @@ export function buildLabour(ctx: WriteContext, r: LabourRequest): Change {
   const cost = hours * rate
   const billable = hours * chargeRate
 
+  // Both default from what is already recorded — the job's terms and the
+  // worker's own arrangement — and both can be overridden per entry.
+  const billingType = (BILLING_TYPES as readonly string[]).includes(String(r.billing_type))
+    ? String(r.billing_type)
+    : jobBillingType(job)
+  const paidCash = String(r.worker_payment_type ?? member?.payment_type ?? 'ABN').trim() === 'Cash'
+
   c.row = {
     id: genId('lab'),
     date,
@@ -166,7 +179,11 @@ export function buildLabour(ctx: WriteContext, r: LabourRequest): Change {
     charge_rate: chargeRate,
     cost,
     billable,
-    billing_type: jobBillingType(job),
+    billing_type: billingType,
+    worker_payment_type: paidCash ? 'Cash' : 'ABN',
+    // Kept in step with the ABN/Cash choice, as the Labour form does: this
+    // is the field the tax side reads, and cash is not deductible.
+    paid_by: paidCash ? 'Cash' : 'Bank',
     labour_desc: r.description ?? null,
     notes: r.notes ?? null,
     // Matched by name against the job's quoted phases: the model will say
@@ -198,6 +215,9 @@ export function buildLabour(ctx: WriteContext, r: LabourRequest): Change {
     { label: 'Date', to: fmtDate(date) },
     { label: 'Hours', to: String(hours) },
     { label: 'Cost rate', to: `${money(rate)}/hr` },
+    { label: 'Charge rate', to: `${money(chargeRate)}/hr` },
+    { label: 'Billing', to: billingType },
+    { label: 'Paid', to: paidCash ? 'Cash — not deductible' : 'ABN' },
     { label: 'Cost', to: money(cost) },
     { label: 'Charge rate', to: `${money(chargeRate)}/hr` },
     { label: 'Billable', to: money(billable) },

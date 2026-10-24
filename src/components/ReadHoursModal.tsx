@@ -14,7 +14,7 @@ import { useState, useMemo } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { Modal } from '@/components/ui/Modal'
 import { useAuth } from '@/lib/auth'
-import { fmtCurrency, today } from '@/lib/utils'
+import { fmtCurrency, today, jobBillingType, findCrew, BILLING_TYPES } from '@/lib/utils'
 import { buildLabour, applyChange, emptyContext } from '@/lib/writes'
 import {
   parseHoursMessage, draftsFromAI, findDuplicateEntry, FORMAT_HINT,
@@ -111,6 +111,24 @@ export default function ReadHoursModal({
     () => ({ ...emptyContext(), jobs, crew, biz: biz ?? {} }),
     [jobs, crew, biz])
 
+  /**
+   * What a row's billing type, charge rate and payment type default to.
+   *
+   * The job's terms and the worker's own arrangement — the same places the
+   * Labour form takes them from. Recomputed as the row's job or worker
+   * changes, so correcting the job corrects these too, unless they have
+   * been set by hand on that row.
+   */
+  function defaultsFor(d: DraftEntry) {
+    const job = jobs.find(j => j.id === d.job_id)
+    const member = findCrew(crew, d.worker)
+    return {
+      billing_type: jobBillingType(job),
+      charge_rate: Number(member?.charge_rate) || Number(member?.rate) || 0,
+      worker_payment_type: String(member?.payment_type ?? 'ABN') === 'Cash' ? 'Cash' : 'ABN',
+    }
+  }
+
   /** Each draft as the row it would write, with its own checks run. */
   const rows = useMemo(() => drafts.map(d => {
     // The note becomes a phase tag only when it actually names one of the
@@ -119,9 +137,13 @@ export default function ReadHoursModal({
     // file "dropped the ladder off" as a phase of the work.
     const job = jobs.find(j => j.id === d.job_id)
     const phase = d.description ? findPhaseByName(jobPhases(job), d.description) : null
+    const fallback = defaultsFor(d)
     const change = buildLabour(writeCtx as any, {
       worker: d.worker, hours: d.hours, date: d.date, job_id: d.job_id,
       description: d.description, phase: phase?.name,
+      charge_rate: d.charge_rate ?? (fallback.charge_rate || undefined),
+      billing_type: d.billing_type ?? fallback.billing_type,
+      worker_payment_type: d.worker_payment_type ?? fallback.worker_payment_type,
     })
     return { draft: d, change, duplicate: findDuplicateEntry(d, labour) }
   }), [drafts, writeCtx, labour, jobs])
@@ -130,6 +152,8 @@ export default function ReadHoursModal({
   const badCount = live.filter(r => r.change.errors.length).length
   const totalHours = live.reduce((s, r) => s + (r.draft.hours || 0), 0)
   const totalCost = live.reduce((s, r) => s + (Number(r.change.row.cost) || 0), 0)
+  const totalBillable = live.reduce((s, r) => s + (Number(r.change.row.billable) || 0), 0)
+  const cashRows = live.filter(r => String(r.change.row.worker_payment_type) === 'Cash').length
 
   async function logAll() {
     if (!user) return
@@ -199,8 +223,8 @@ export default function ReadHoursModal({
                 <table className="w-full border-collapse text-[12px]">
                   <thead>
                     <tr>
-                      {['', 'Date', 'Worker', 'Job', 'Hrs', 'Rate', 'Cost', 'Note', 'Read from'].map((h, i) => (
-                        <th key={h} className={`px-2 py-1.5 bg-[#f5f4f0] border-b border-black/[0.12] text-[11px] text-[#666] font-medium sticky top-0 ${[4, 5, 6].includes(i) ? 'text-right' : 'text-left'}`}>{h}</th>
+                      {['', 'Date', 'Worker', 'Job', 'Hrs', 'Cost/hr', 'Charge/hr', 'Billing', 'Paid', 'Cost', 'Note', 'Read from'].map((h, i) => (
+                        <th key={h} className={`px-2 py-1.5 bg-[#f5f4f0] border-b border-black/[0.12] text-[11px] text-[#666] font-medium whitespace-nowrap sticky top-0 ${[4, 5, 6, 9].includes(i) ? 'text-right' : 'text-left'}`}>{h}</th>
                       ))}
                     </tr>
                   </thead>
@@ -250,6 +274,31 @@ export default function ReadHoursModal({
                           <td className="px-2 py-1 w-[70px] text-right tabular-nums text-[#666]">
                             {Number(change.row.rate) ? fmtCurrency(Number(change.row.rate)) : '—'}
                           </td>
+                          <td className="px-1.5 py-1 w-[78px]">
+                            <input type="number" step="0.01" placeholder={String(Number(change.row.charge_rate) || '')}
+                              value={d.charge_rate ?? ''} className={`${INL} text-right tabular-nums`}
+                              onChange={e => patch(d.key, {
+                                charge_rate: e.target.value === '' ? undefined : parseFloat(e.target.value) || 0,
+                              })} />
+                          </td>
+                          <td className="px-1.5 py-1 w-[112px]">
+                            <select value={d.billing_type ?? String(change.row.billing_type ?? '')}
+                              className={`${INL} cursor-pointer`}
+                              onChange={e => patch(d.key, { billing_type: e.target.value })}>
+                              {BILLING_TYPES.map(b => <option key={b} value={b}>{b}</option>)}
+                            </select>
+                          </td>
+                          <td className="px-1.5 py-1 w-[74px]">
+                            <select value={d.worker_payment_type ?? String(change.row.worker_payment_type ?? 'ABN')}
+                              className={`${INL} cursor-pointer ${
+                                String(change.row.worker_payment_type) === 'Cash' ? 'text-[#92400e] font-semibold' : ''}`}
+                              title={String(change.row.worker_payment_type) === 'Cash'
+                                ? 'Cash — not deductible, and claims no GST credit'
+                                : 'Paid against an ABN, so deductible as usual'}
+                              onChange={e => patch(d.key, { worker_payment_type: e.target.value })}>
+                              {['ABN', 'Cash'].map(v => <option key={v} value={v}>{v}</option>)}
+                            </select>
+                          </td>
                           <td className="px-2 py-1 w-[86px] text-right tabular-nums text-[#666]">
                             {fmtCurrency(Number(change.row.cost) || 0)}
                           </td>
@@ -292,7 +341,11 @@ export default function ReadHoursModal({
                   {badCount > 0 && <span className="text-[#c0392b] font-semibold"> · {badCount} cannot be saved</span>}
                 </span>
                 <span className="font-semibold">
-                  {totalHours.toFixed(2)} hrs · <span className="text-[#2563eb]">{fmtCurrency(totalCost)}</span> cost
+                  {totalHours.toFixed(2)} hrs · {fmtCurrency(totalCost)} cost
+                  {' · '}<span className="text-[#2563eb]">{fmtCurrency(totalBillable)}</span> billable
+                  {cashRows > 0 && (
+                    <span className="text-[#92400e] font-normal"> · {cashRows} paid cash, not deductible</span>
+                  )}
                 </span>
               </div>
             </div>
