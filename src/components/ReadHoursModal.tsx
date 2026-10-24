@@ -29,15 +29,13 @@ type Row = Record<string, any>
 const INL = 'w-full px-1.5 py-1 bg-transparent border border-transparent hover:border-black/10 focus:border-blue-500 rounded outline-none text-[12px]'
 
 export default function ReadHoursModal({
-  open, onClose, jobs, crew, labour, assignments, biz, apiKey,
+  open, onClose, jobs, crew, labour, biz, apiKey,
 }: {
   open: boolean
   onClose: () => void
   jobs: Row[]
   crew: Row[]
   labour: Row[]
-  /** Who was booked where. The best clue to a job the message never names. */
-  assignments: Row[]
   biz: Row | undefined
   apiKey?: string
 }) {
@@ -56,8 +54,8 @@ export default function ReadHoursModal({
 
   const todayStr = today()
   const ctx = useMemo(
-    () => ({ jobs, crew, todayStr, assignments, labour }),
-    [jobs, crew, todayStr, assignments, labour])
+    () => ({ jobs, crew, todayStr, labour }),
+    [jobs, crew, todayStr, labour])
 
   function reset() {
     setText(''); setDrafts([]); setDropped(new Set()); setUnparsed([])
@@ -274,8 +272,8 @@ export default function ReadHoursModal({
                               {d.inferredFrom && (
                                 <span className="text-[9px] text-[#1e40af] bg-[#dbeafe] px-1.5 rounded-full"
                                   title="The message did not name a job. This came from what the app already knew.">
-                                  job from {d.inferredFrom === 'booked' ? 'the crew booking'
-                                    : d.inferredFrom === 'scheduled' ? "that day's schedule"
+                                  job from {d.inferredFrom === 'scheduled' ? "that day's schedule"
+                                    : d.inferredFrom === 'in_progress' ? 'the job in progress'
                                     : 'recent hours'}
                                 </span>
                               )}

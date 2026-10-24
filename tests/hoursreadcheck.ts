@@ -237,67 +237,99 @@ ok(draftsFromAI([{ worker: 'Francisco', hours: 0 }], CTX).length === 0,
 ok(FORMAT_HINT.split('\n').length >= 4 && parseHoursMessage(FORMAT_HINT, CTX).unparsed.length === 0,
   'the format shown to the crew is one the parser can actually read')
 
-// ── The diary settles what the message leaves open ───────────
+// ── What is on the go settles what the message leaves open ──
 //
-// A painter writing up their week often names no job at all. The app
-// already knows where everyone was, so it fills the gap — and says it did.
+// A painter writing up their week often names no job at all. There are only
+// ever a few jobs running, and the app knows which — so it fills the gap,
+// and says that it did.
 
-const DIARY = {
-  ...CTX,
-  assignments: [
-    { job_id: 'NP-0083', crew_name: 'Francisco Rojas', date: '2026-10-22' },
-    { job_id: 'NP-0091', crew_name: 'Jake Miller', date: '2026-10-22' },
-    // Francisco on two jobs the next day: nothing to choose between.
-    { job_id: 'NP-0083', crew_name: 'Francisco Rojas', date: '2026-10-23' },
-    { job_id: 'NP-0091', crew_name: 'Francisco Rojas', date: '2026-10-23' },
+// The same three jobs, now with the statuses that decide this.
+const LIVEJOBS = [
+  { id: 'NP-0083', client: 'Smith', address: '81 Esmonde St, Lismore', status: 'In Progress' },
+  { id: 'NP-0091', client: 'Jones', address: '15 Kipling St, Byron Bay', status: 'Scheduled',
+    sched_start: '2026-10-26', est_days: 3 },
+  { id: 'NP-0100', client: 'Smithers', address: '2 Esmonde St, Lismore', status: 'Finished' },
+]
+const LIVE = { jobs: LIVEJOBS, crew: CREW, todayStr: TODAY }
+
+// ── The only job on the tools ────────────────────────────────
+const onTools = inferJob({ worker: 'Francisco Rojas', date: '2026-10-22' }, LIVE)
+ok(onTools?.job.id === 'NP-0083', 'with one job in progress, that is the job')
+ok(onTools?.from === 'in_progress', 'and it says so')
+
+const noJobLine = parseHoursMessage('Francisco\n22/10  8h', LIVE)
+ok(noJobLine.entries.length === 1, 'a line naming no job is still read')
+ok(noJobLine.entries[0].job_id === 'NP-0083', 'and the job in progress fills it in')
+ok(noJobLine.entries[0].inferredFrom === 'in_progress', 'flagged as inferred, not as written down')
+
+// ── Finished work is never inferred ──────────────────────────
+const allDone = inferJob({ worker: 'Francisco Rojas', date: '2026-10-22' },
+  { ...LIVE, jobs: LIVEJOBS.map(j => ({ ...j, status: 'Finished' })) })
+ok(allDone === null, 'nothing live means no guess — a finished job is never inferred')
+
+// ── Scheduled dates beat a job merely in progress ────────────
+const TWO_RUNNING = {
+  ...LIVE,
+  jobs: [
+    { ...LIVEJOBS[0], status: 'In Progress' },
+    { ...LIVEJOBS[1], status: 'In Progress', sched_start: '2026-10-26', est_days: 3 },
   ],
+}
+ok(inferJob({ worker: 'Francisco Rojas', date: '2026-10-22' }, TWO_RUNNING) === null,
+  'two jobs in progress and nothing else to go on settles nothing')
+const onThatDay = inferJob({ worker: 'Francisco Rojas', date: '2026-10-27' }, TWO_RUNNING)
+ok(onThatDay?.job.id === 'NP-0091' && onThatDay?.from === 'scheduled',
+  'but one of them scheduled for that very day does')
+
+// ── Recent hours, when they clearly point one way ────────────
+const BUSY = {
+  ...TWO_RUNNING,
   labour: [
     { sub: 'Francisco Rojas', job_id: 'NP-0091', date: '2026-10-19', hours: 24 },
     { sub: 'Francisco Rojas', job_id: 'NP-0083', date: '2026-10-19', hours: 2 },
   ],
 }
-
-const booked = inferJob({ worker: 'Francisco Rojas', date: '2026-10-22' }, DIARY)
-ok(booked?.job.id === 'NP-0083', 'the job he was booked on that day')
-ok(booked?.from === 'booked', 'and it says where that came from')
-
-const bookedTwice = inferJob({ worker: 'Francisco Rojas', date: '2026-10-23' }, DIARY)
-ok(bookedTwice?.from !== 'booked', 'booked on two jobs that day settles nothing by booking')
-
-const lately = inferJob({ worker: 'Francisco Rojas', date: '2026-10-20' }, DIARY)
+const lately = inferJob({ worker: 'Francisco Rojas', date: '2026-10-22' }, BUSY)
 ok(lately?.job.id === 'NP-0091' && lately?.from === 'recent',
-  'with no booking, the job he has been putting his hours into')
-ok(inferJob({ worker: 'Nobody At All', date: '2026-10-22' }, DIARY) === null,
-  'a worker the diary knows nothing about gets no guess')
-ok(inferJob({ worker: 'Francisco Rojas', date: '2026-10-22' }, CTX) === null,
-  'and with no diary at all, nothing is inferred')
-
-// A line with hours and no job on it at all.
-const noJobLine = parseHoursMessage('Francisco\n22/10  8h', DIARY)
-ok(noJobLine.entries.length === 1, 'a line naming no job is still read')
-ok(noJobLine.entries[0].job_id === 'NP-0083', 'and the booking fills it in')
-ok(noJobLine.entries[0].inferredFrom === 'booked', 'flagged as inferred, not as written down')
-
-// Ambiguity settled: two Esmonde jobs, one of them booked that day.
-const ESMONDE = {
-  ...DIARY,
-  assignments: [{ job_id: 'NP-0100', crew_name: 'Francisco Rojas', date: '2026-10-22' }],
+  'the job his hours have been going into')
+const EVEN = {
+  ...TWO_RUNNING,
+  labour: [
+    { sub: 'Francisco Rojas', job_id: 'NP-0091', date: '2026-10-19', hours: 10 },
+    { sub: 'Francisco Rojas', job_id: 'NP-0083', date: '2026-10-19', hours: 9 },
+  ],
 }
-const settled = parseHoursMessage('Francisco\n22/10  Esmonde  8h', ESMONDE)
-ok(settled.entries[0].job_id === 'NP-0100',
-  'two jobs fit "Esmonde", and the booking chooses between them')
-ok(settled.entries[0].inferredFrom === 'booked', 'and says so')
+ok(inferJob({ worker: 'Francisco Rojas', date: '2026-10-22' }, EVEN) === null,
+  'two jobs he has split his week across settle nothing — a close second is no answer')
+ok(inferJob({ worker: 'Jake Miller', date: '2026-10-22' }, BUSY) === null,
+  "and another painter's hours are not evidence about this one")
 
-// The diary never overrides a job the message actually named.
-const named = parseHoursMessage('Francisco\n22/10  NP-0091  8h', DIARY)
+// ── Settling a tie the words could not ───────────────────────
+// Two Esmonde St jobs; only one of them is live.
+const esmonde = parseHoursMessage('Francisco\n22/10  Esmonde  8h', LIVE)
+ok(esmonde.entries[0].job_id === 'NP-0083',
+  'two jobs fit "Esmonde", and only one is live — that is the one')
+ok(esmonde.entries[0].inferredFrom === 'in_progress', 'and it says where that came from')
+
+// ── Never over what was written down ─────────────────────────
+const named = parseHoursMessage('Francisco\n22/10  NP-0091  8h', LIVE)
 ok(named.entries[0].job_id === 'NP-0091',
-  'a job written down beats a booking that says otherwise')
+  'a job written down beats whatever is in progress')
 ok(named.entries[0].inferredFrom === undefined, 'and is not flagged as inferred')
 
-// It reaches the AI's entries too.
-const aiNoJob = draftsFromAI([{ worker: 'Francisco', date: '2026-10-22', hours: 8 }], DIARY)
-ok(aiNoJob[0].job_id === 'NP-0083' && aiNoJob[0].inferredFrom === 'booked',
-  "an AI entry with no job gets the same help")
+// ── The AI's entries get the same help ───────────────────────
+const aiNoJob = draftsFromAI([{ worker: 'Francisco', date: '2026-10-22', hours: 8 }], LIVE)
+ok(aiNoJob[0].job_id === 'NP-0083' && aiNoJob[0].inferredFrom === 'in_progress',
+  'an AI entry with no job is settled the same way')
+
+// ── With nothing to go on ────────────────────────────────────
+ok(inferJob({ worker: 'Francisco Rojas', date: '2026-10-22' }, CTX) === null,
+  'jobs with no status at all are not treated as live, so nothing is guessed')
+const bare = parseHoursMessage('Francisco\n22/10  8h', CTX)
+ok(bare.entries.length === 1 && bare.entries[0].job_id == null,
+  'a line with no job and nothing to infer from is still an entry, waiting for one')
+ok(bare.entries[0].hours === 8 && !bare.entries[0].inferredFrom,
+  'with its hours kept and nothing pretended about the job')
 
 console.log(fail ? `\n${fail} FAILED` : '\nall passed')
 process.exit(fail ? 1 : 0)
