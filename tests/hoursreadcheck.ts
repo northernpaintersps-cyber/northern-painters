@@ -7,7 +7,7 @@
 
 import {
   parseDate, parseHours, matchJob, matchWorker, parseHoursMessage,
-  findDuplicateEntry, FORMAT_HINT,
+  findDuplicateEntry, draftsFromAI, FORMAT_HINT,
 } from '@/lib/readHours'
 import { buildLabour, emptyContext } from '@/lib/writes'
 
@@ -73,6 +73,40 @@ ok(amb.job === null, 'an ambiguous street picks NOTHING — a confident wrong ma
 ok(amb.candidates.length === 2, 'it hands back both for a person to choose between')
 ok(matchJob('Nowhere Rd', JOBS).job === null, 'an unknown place matches nothing')
 ok(matchJob('', JOBS).job === null, 'and so does an empty string')
+
+// ── A job number as a person writes it ───────────────────────
+// Nobody types NP-0083. This is most of why hours were landing on no job.
+ok(matchJob('NP-83', JOBS).job?.id === 'NP-0083', 'NP-83 finds NP-0083')
+ok(matchJob('np83', JOBS).job?.id === 'NP-0083', 'np83 too')
+ok(matchJob('#83', JOBS).job?.id === 'NP-0083', 'and #83')
+ok(matchJob('83', JOBS).job?.id === 'NP-0083', 'and a bare 83')
+ok(matchJob('NP 0083', JOBS).job?.id === 'NP-0083', 'a space instead of the dash')
+ok(matchJob('np-0091', JOBS).job?.id === 'NP-0091', 'and the exact thing still works')
+ok(matchJob('NP-0999', JOBS).job === null, 'a number that is no job matches nothing')
+
+// A street number must not be read as a job number. 15 Kipling St is NP-0091;
+// taking the 15 as an id would have found nothing, or worse, job 15.
+ok(matchJob('15 Kipling St', JOBS).job?.id === 'NP-0091',
+  'a street with a number in it is matched as a street')
+const NUMBERED = [...JOBS, { id: 'NP-0015', client: 'Walsh', address: '9 Other Rd, Casino' }]
+ok(matchJob('15 Kipling St', NUMBERED).job?.id === 'NP-0091',
+  'even when a job numbered 15 exists — the street is tried before the bare number')
+ok(matchJob('15', NUMBERED).job?.id === 'NP-0015',
+  'while a bare 15 on its own is the job number')
+
+// ── A phrase, not a name ─────────────────────────────────────
+// What the AI hands back when the message says "the Byron job".
+ok(matchJob('the Byron job', JOBS).job?.id === 'NP-0091',
+  'a suburb inside a phrase finds the job')
+ok(matchJob("Smithy's place", JOBS).job?.id === undefined
+  || matchJob("Smith's place", JOBS).job?.id === 'NP-0083',
+  'a surname inside a phrase does too')
+ok(matchJob('the Lismore one', JOBS).candidates.length === 2,
+  'a phrase matching two jobs picks neither — both Lismore jobs come back')
+ok(matchJob('the job', JOBS).job === null && matchJob('the job', JOBS).candidates.length === 0,
+  'a phrase of nothing but filler matches nothing, rather than everything')
+ok(matchJob('that site out there', JOBS).job === null,
+  'and neither does vague prose')
 
 // ── Matching a worker ────────────────────────────────────────
 ok(matchWorker('Francisco Rojas', CREW).name === 'Francisco Rojas', 'a full name')
@@ -175,6 +209,30 @@ const existing = [{ id: 'l1', sub: 'Francisco Rojas', job_id: 'NP-0083', date: '
 ok(findDuplicateEntry(fran[0], existing) !== null, 'pasting the same message twice is spotted')
 ok(findDuplicateEntry(fran[1], existing) === null, 'a different job on the same day is not a duplicate')
 ok(findDuplicateEntry(fran[0], []) === null, 'nothing logged, nothing duplicated')
+
+// ── What the AI gives back ───────────────────────────────────
+// Its answer is put through the same matchers as a typed line, and an id it
+// invented must never reach a row.
+const fromAI = draftsFromAI([
+  { worker: 'Francisco', job: 'NP-0083', jobSaid: 'the Esmonde job', date: '2026-10-22', hours: 8, note: 'cutting in' },
+  { worker: 'Jake', job: 'NP-9999', jobSaid: 'Kipling St', date: '2026-10-22', hours: 6 },
+  { worker: 'Jake', jobSaid: 'the Byron job', date: '2026-10-21', hours: 4 },
+  { worker: 'Dave', jobSaid: 'somewhere', date: '2026-10-20', hours: 5 },
+], CTX)
+
+ok(fromAI.length === 4, 'every entry comes through')
+ok(fromAI.every(d => d.via === 'ai'), 'marked as read by AI, so the table can say so')
+ok(fromAI[0].job_id === 'NP-0083' && fromAI[0].worker === 'Francisco Rojas',
+  'a good id and a first name both resolve')
+ok(fromAI[1].job_id === 'NP-0091',
+  'an id that does not exist falls back to what the message said — Kipling St')
+ok(fromAI[2].job_id === 'NP-0091', 'and a description with no id at all still finds the job')
+ok(fromAI[3].job_id == null && fromAI[3].saidJob === 'somewhere',
+  'an unmatchable one keeps what it tried, so the gap explains itself')
+ok(!fromAI[3].workerMatched, 'and a worker who is not on the crew is flagged')
+ok(fromAI[0].hours === 8 && fromAI[0].date === '2026-10-22', 'hours and dates survive')
+ok(draftsFromAI([{ worker: 'Francisco', hours: 0 }], CTX).length === 0,
+  'an entry with no hours is not an entry')
 
 ok(FORMAT_HINT.split('\n').length >= 4 && parseHoursMessage(FORMAT_HINT, CTX).unparsed.length === 0,
   'the format shown to the crew is one the parser can actually read')

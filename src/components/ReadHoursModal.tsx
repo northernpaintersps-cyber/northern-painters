@@ -69,19 +69,33 @@ export default function ReadHoursModal({
     setReadYet(true)
   }
 
-  async function readRest() {
+  /**
+   * Ask the AI to read the message.
+   *
+   * `all` throws away what the plain parser found and takes the AI's reading
+   * of the whole thing instead — for when the format was close enough to
+   * parse but the jobs came out wrong, which no amount of re-reading the
+   * leftovers would fix.
+   */
+  async function readWithAI(all = false) {
     if (!apiKey) { setErr('No AI API key set. Add your Anthropic key in Settings.'); return }
     setAiBusy(true); setErr('')
     try {
-      // Only what the format parser could not read, so a tidy message is
-      // never sent anywhere and a mixed one only sends its loose ends.
-      const got = await readHoursMessage(apiKey, unparsed.join('\n'), {
+      // The whole message, with the lines already read listed separately.
+      // Sending only the leftovers stripped the worker heading off the top,
+      // so the AI could not tell whose hours it was reading — which is most
+      // of what made it inaccurate.
+      const got = await readHoursMessage(apiKey, text, {
         crew: crew.map(c => String(c.name ?? '')).filter(Boolean),
-        jobs: jobs.map(j => ({ id: String(j.id), client: j.client, address: j.address })),
+        jobs: jobs.map(j => ({
+          id: String(j.id), client: j.client, address: j.address, status: j.status,
+        })),
         todayStr,
+        alreadyRead: all ? [] : drafts.filter(d => d.via === 'format').map(d => d.source),
       })
       const more = draftsFromAI(got.entries, ctx)
-      setDrafts(d => [...d, ...more])
+      setDrafts(d => all ? more : [...d, ...more])
+      setDropped(new Set())
       setUnparsed(got.unreadable)
     } catch (e: any) {
       setErr(e?.message ?? 'The AI could not read it.')
@@ -220,9 +234,11 @@ export default function ReadHoursModal({
                                 </option>
                               ))}
                             </select>
-                            {d.jobCandidates?.length && !d.job_id
-                              ? <div className="text-[9px] text-[#92400e] px-1.5">{d.jobCandidates.length} jobs fit — pick one</div>
-                              : null}
+                            {!d.job_id && (d.jobCandidates?.length
+                              ? <div className="text-[9px] text-[#92400e] px-1.5">{d.jobCandidates.length} jobs fit &ldquo;{d.saidJob}&rdquo; — pick one</div>
+                              : d.saidJob
+                                ? <div className="text-[9px] text-[#92400e] px-1.5">no job matches &ldquo;{d.saidJob}&rdquo;</div>
+                                : null)}
                           </td>
                           <td className="px-1.5 py-1 w-[62px]">
                             <input type="number" step="0.25" value={d.hours} className={`${INL} text-right tabular-nums`}
@@ -268,7 +284,7 @@ export default function ReadHoursModal({
                 {unparsed.length} line{unparsed.length !== 1 ? 's' : ''} not read
               </div>
               <pre className="text-[11px] text-[#92400e] whitespace-pre-wrap font-mono">{unparsed.join('\n')}</pre>
-              <button onClick={readRest} disabled={aiBusy || !apiKey}
+              <button onClick={() => readWithAI()} disabled={aiBusy || !apiKey}
                 className="mt-2 flex items-center gap-1.5 px-2.5 py-1 text-[11px] rounded-lg bg-white border border-[#c4b5fd] text-[#6b21a8] hover:bg-[#f3e8ff] disabled:opacity-50">
                 {aiBusy ? <Loader2 size={11} className="animate-spin" /> : <Sparkles size={11} />}
                 {aiBusy ? 'Reading…' : apiKey ? 'Read the rest with AI (uses an API call)' : 'No AI key set'}
@@ -279,10 +295,20 @@ export default function ReadHoursModal({
           {err && <div className="mt-3 text-[12px] text-[#c0392b]">{err}</div>}
 
           <div className="flex justify-between items-center mt-4 pt-3 border-t border-black/10">
-            <button onClick={reset}
-              className="flex items-center gap-1.5 text-[12px] text-[#666] hover:text-gray-900">
-              <Trash2 size={13} /> Start again
-            </button>
+            <div className="flex items-center gap-3">
+              <button onClick={reset}
+                className="flex items-center gap-1.5 text-[12px] text-[#666] hover:text-gray-900">
+                <Trash2 size={13} /> Start again
+              </button>
+              {apiKey && drafts.length > 0 && (
+                <button onClick={() => readWithAI(true)} disabled={aiBusy}
+                  title="Replaces what is in the table with the AI's reading of the whole message"
+                  className="flex items-center gap-1.5 text-[12px] text-[#6b21a8] hover:underline disabled:opacity-50">
+                  {aiBusy ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
+                  Jobs wrong? Re-read it all with AI
+                </button>
+              )}
+            </div>
             <div className="flex gap-2">
               <button onClick={onClose} className="px-3 py-1.5 text-[13px] rounded-lg border border-black/20 hover:bg-[#f5f4f0]">Cancel</button>
               <button onClick={logAll} disabled={saving || live.filter(r => !r.change.errors.length).length === 0}

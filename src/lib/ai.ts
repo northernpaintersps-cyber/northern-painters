@@ -1639,8 +1639,17 @@ const HOURS_TOOL = {
             },
             job: {
               type: 'string',
-              description: 'The job number from the list, or the client or street as written. '
-                + 'Leave it out rather than guessing between two jobs.',
+              description: 'The job id from the JOBS list, copied EXACTLY as it appears there '
+                + '(for example NP-0083). Never abbreviate it, never invent one, and never put '
+                + 'a client name or a street here. If you cannot tell which job is meant, or two '
+                + 'could fit, leave this out entirely — a missing job is fixed in one tap, a '
+                + 'wrong one is somebody\'s hours on the wrong invoice.',
+            },
+            job_said: {
+              type: 'string',
+              description: 'What the message itself called the job, quoted: "the Byron job", '
+                + '"Esmonde". Always fill this in when the message names a place or a client, '
+                + 'even when you have also given an id, and especially when you have not.',
             },
             date: {
               type: 'string',
@@ -1668,43 +1677,105 @@ const HOURS_TOOL = {
   },
 }
 
-const HOURS_SYSTEM = `You read short messages from painters about hours worked and turn them into entries.
+const HOURS_SYSTEM = `You read short messages from painters about hours worked and turn them into entries for a timesheet.
 
-RULES
-- One entry per worker per job per day. A message often covers several days and several jobs for one person.
-- Use the crew names and job numbers given to you, spelled exactly as given.
-- A time span means the hours between, less any break mentioned. "7:30 to 4 with half an hour" is 8.
+THE JOB IS THE PART THAT MATTERS MOST
+Every entry you return gets logged against a job, and that decides whose invoice the hours
+land on. So:
+- Copy the job id EXACTLY from the JOBS list — "NP-0083", not "NP-83", not "83", not "Esmonde".
+- Match on whatever the message gives you: the number, the client's name, the street, the
+  suburb, or a nickname that plainly means one of them ("the Byron job", "Smithy's place").
+- Put what the message actually said in job_said, every time, whether or not you found an id.
+- If two jobs could fit — two jobs on the same street, two clients with the same surname —
+  leave job EMPTY and still fill job_said. The person reviewing will pick in one tap.
+- Never invent an id that is not in the list. An id that does not exist is worse than none.
+
+THE REST
+- One entry per worker per job per day. A message often covers several days and several
+  jobs for one person, and a day is often split across two jobs.
+- A name at the top of a message, or on its own line, applies to every line under it until
+  another name appears.
+- Copy crew names exactly as they appear in the CREW list. A first name in the message means
+  the crew member it belongs to.
+- A time span means the hours between, less any break. "7:30 to 4 with half an hour" is 8.
 - Half a day is 4 hours. A full day is 8 unless the message says otherwise.
-- If you cannot tell which job is meant, leave the job out. Two jobs on the same street are not the same job.
-- If you cannot tell how many hours, do not invent a number — put the text in unreadable instead.
-- Never add an entry the message does not support. A missing entry is noticed; a wrong one is paid.`
+- Work out weekdays, "yesterday" and "the other day" from today's date. A weekday with no
+  other clue means the most recent one, not next week's.
+- If you cannot tell how many hours, do not invent a number — quote the text in unreadable.
+- Never add an entry the message does not support, and never repeat a line listed under
+  ALREADY READ. A missing entry is noticed; a wrong one is paid.`
 
 export interface AIHoursEntry {
   worker: string
+  /** A job id copied from the list, when it was sure enough to name one. */
   job?: string
+  /** What the message called the job, for the app's own matcher to try. */
+  jobSaid?: string
   date?: string
   hours: number
   note?: string
 }
 
+export interface AIHoursJob {
+  id: string
+  client?: string | null
+  address?: string | null
+  status?: string | null
+}
+
+/** Jobs a painter might plausibly have worked on, the likeliest first. */
+const LIVE_FIRST = ['In Progress', 'Scheduled', 'Hourly Rate Accepted', 'Booked', 'Not Started']
+
+function jobLines(jobs: AIHoursJob[]): string {
+  // Live work first, then the rest — so that when the list has to be cut, what
+  // is cut is a job from two years ago rather than the one being painted today.
+  const rank = (j: AIHoursJob) => {
+    const i = LIVE_FIRST.indexOf(String(j.status ?? ''))
+    return i === -1 ? LIVE_FIRST.length : i
+  }
+  return [...jobs]
+    .sort((a, b) => rank(a) - rank(b))
+    .slice(0, 150)
+    .map(j => {
+      const addr = String(j.address ?? '').trim()
+      const street = addr.split(',')[0].trim()
+      const suburb = addr.split(',').slice(1).join(',').trim()
+      return [j.id, j.client, street, suburb, j.status].filter(Boolean).join(' · ')
+    })
+    .join('\n')
+}
+
 export async function readHoursMessage(
   apiKey: string,
   message: string,
-  ctx: { crew: string[]; jobs: Array<{ id: string; client?: string; address?: string }>; todayStr: string },
+  ctx: {
+    crew: string[]
+    jobs: AIHoursJob[]
+    todayStr: string
+    /** Lines the format parser already turned into entries, so the AI has the
+     *  whole message for context without reading any line twice. */
+    alreadyRead?: string[]
+  },
 ): Promise<{ entries: AIHoursEntry[]; unreadable: string[] }> {
   const text = String(message ?? '').trim()
   if (!text) return { entries: [], unreadable: [] }
 
-  const jobList = ctx.jobs.slice(0, 60).map(j =>
-    `${j.id} — ${j.client ?? ''}${j.address ? ` — ${String(j.address).split(',')[0]}` : ''}`).join('\n')
+  const known = new Set(ctx.jobs.map(j => String(j.id)))
+  const done = (ctx.alreadyRead ?? []).filter(Boolean)
 
   const user = [
-    `Today is ${ctx.todayStr}.`,
-    `Crew: ${ctx.crew.join(', ') || '(none recorded)'}`,
-    `Jobs:\n${jobList || '(none recorded)'}`,
+    `Today is ${ctx.todayStr}, a ${new Date(ctx.todayStr + 'T00:00:00').toLocaleDateString('en-AU', { weekday: 'long' })}.`,
     '',
+    `CREW\n${ctx.crew.join('\n') || '(none recorded)'}`,
+    '',
+    `JOBS (id · client · street · suburb · status)\n${jobLines(ctx.jobs) || '(none recorded)'}`,
+    '',
+    // The whole message, always. Sending only the leftover lines stripped the
+    // worker heading off the top, so the AI could not tell whose hours it was
+    // reading — which is most of what made it inaccurate.
     'MESSAGE',
     text,
+    ...(done.length ? ['', 'ALREADY READ — do not return entries for these lines', ...done] : []),
     '',
     'Use the log_hours tool.',
   ].join('\n')
@@ -1713,7 +1784,10 @@ export async function readHoursMessage(
     apiKey,
     [{ role: 'user', content: user }],
     HOURS_SYSTEM,
-    { model: 'claude-haiku-4-5-20251001', maxTokens: 2000, tool: HOURS_TOOL },
+    // Sonnet, not Haiku: this is matching a scribbled reference against a list
+    // of a hundred jobs, which is judgement rather than extraction, and the
+    // cost of getting it wrong is hours on the wrong client's invoice.
+    { model: 'claude-sonnet-5', maxTokens: 2000, tool: HOURS_TOOL },
   )
 
   let parsed: any
@@ -1722,13 +1796,23 @@ export async function readHoursMessage(
   }
 
   const entries: AIHoursEntry[] = (Array.isArray(parsed.entries) ? parsed.entries : [])
-    .map((e: any) => ({
-      worker: String(e?.worker ?? '').trim(),
-      job: String(e?.job ?? '').trim() || undefined,
-      date: String(e?.date ?? '').trim() || undefined,
-      hours: Number(e?.hours) || 0,
-      note: String(e?.note ?? '').trim() || undefined,
-    }))
+    .map((e: any) => {
+      const said = String(e?.job_said ?? '').trim()
+      const claimed = String(e?.job ?? '').trim()
+      // An id it invented is worse than none: it would log the hours against
+      // a job that does not exist, or worse, one that does and is wrong. Only
+      // an id from the list is kept; anything else falls back to what the
+      // message said, which the app's own matcher then tries.
+      const job = claimed && known.has(claimed) ? claimed : undefined
+      return {
+        worker: String(e?.worker ?? '').trim(),
+        job,
+        jobSaid: said || (claimed && !job ? claimed : undefined),
+        date: String(e?.date ?? '').trim() || undefined,
+        hours: Number(e?.hours) || 0,
+        note: String(e?.note ?? '').trim() || undefined,
+      }
+    })
     // An entry with no hours is not an entry. Dropping it here keeps the
     // review table honest rather than showing a zero to be corrected.
     .filter((e: AIHoursEntry) => e.hours > 0 && e.worker)

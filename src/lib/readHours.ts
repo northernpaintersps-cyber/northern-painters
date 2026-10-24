@@ -49,6 +49,9 @@ export interface DraftEntry extends LabourRequest {
   via: 'format' | 'ai'
   /** Jobs that fit the text when more than one did — nothing is chosen. */
   jobCandidates?: Row[]
+  /** What the message called the job. Shown when nothing matched, so the
+   *  gap says "it tried 'the Byron job'" rather than just being empty. */
+  saidJob?: string
   /** The worker name was matched against the crew rather than taken as typed. */
   workerMatched: boolean
 }
@@ -178,30 +181,88 @@ export interface JobMatch {
 
 const streetOf = (job: Row) => String(job?.address ?? '').split(',')[0].trim()
 
+/** Words that carry no job in them, so a phrase can be matched on the rest. */
+const FILLER = new Set([
+  'the', 'job', 'jobs', 'site', 'place', 'house', 'one', 'and', 'for', 'with',
+  'that', 'this', 'out', 'rd', 'road', 'st', 'street', 'ave', 'avenue', 'lane',
+  'court', 'drive', 'way', 'nsw', 'unit',
+])
+
+/**
+ * The number inside a job reference, or null.
+ *
+ * Nobody writes NP-0083. They write NP-83, np83, #83 or just 83, and an
+ * exact-string match finds none of those — which is most of why the reader
+ * was putting hours on no job at all.
+ *
+ * `loose` allows a bare number. That is only safe once the exact passes have
+ * run, because "15" is also a street number, and matching it as a job id
+ * before trying 15 Kipling St would be confidently wrong.
+ */
+function jobNumber(text: string, loose = false): string | null {
+  const t = norm(text).replace(/[#\s]/g, '')
+  const m = loose
+    ? /^[a-z]{0,4}-?(\d{1,6})$/.exec(t)
+    : /^[a-z]{1,4}-?(\d{1,6})$/.exec(t)
+  return m ? String(Number(m[1])) : null   // "0083" and "83" are the same job
+}
+
 /**
  * A job from what the message called it.
  *
- * Precedence is exact id, then exact client, then exact street, then a
- * contains-match across all three — the same shape as matchPhase, because
- * matching confidently on a partial is the failure that writes hours onto
- * somebody else's job.
+ * Precedence, strictest first, because matching confidently on a partial is
+ * what writes somebody's hours onto the wrong job:
+ *
+ *   1. the id, exactly
+ *   2. the id written loosely — NP-83 for NP-0083
+ *   3. the client, exactly
+ *   4. the street, exactly
+ *   5. a bare number as an id, now that street numbers have had their turn
+ *   6. a contains-match across all three
+ *
+ * A tie at any level returns the candidates and chooses nothing.
  */
 export function matchJob(text: string, jobs: Row[]): JobMatch {
   const t = norm(text)
   if (!t) return { job: null, candidates: [] }
 
-  const exact = (pick: (j: Row) => string) => jobs.filter(j => norm(pick(j)) === t)
-  for (const pick of [(j: Row) => j.id, (j: Row) => j.client, streetOf]) {
-    const hit = exact(pick as (j: Row) => string)
-    if (hit.length === 1) return { job: hit[0], candidates: [] }
-    if (hit.length > 1) return { job: null, candidates: hit }
+  const resolve = (hits: Row[]): JobMatch | null => {
+    if (hits.length === 1) return { job: hits[0], candidates: [] }
+    if (hits.length > 1) return { job: null, candidates: hits }
+    return null
   }
 
-  const loose = jobs.filter(j =>
-    norm(j.id).includes(t) || norm(j.client).includes(t) ||
-    norm(j.address).includes(t) || t.includes(norm(streetOf(j))) && !!streetOf(j))
-  if (loose.length === 1) return { job: loose[0], candidates: [] }
-  return { job: null, candidates: loose }
+  const num = jobNumber(t)
+  const passes: Array<() => Row[]> = [
+    () => jobs.filter(j => norm(j.id) === t),
+    () => num ? jobs.filter(j => jobNumber(String(j.id ?? ''), true) === num) : [],
+    () => jobs.filter(j => norm(j.client) === t),
+    () => jobs.filter(j => norm(streetOf(j)) === t),
+    () => {
+      const bare = jobNumber(t, true)
+      return bare ? jobs.filter(j => jobNumber(String(j.id ?? ''), true) === bare) : []
+    },
+    () => jobs.filter(j =>
+      norm(j.id).includes(t) || norm(j.client).includes(t) ||
+      norm(j.address).includes(t) || (!!streetOf(j) && t.includes(norm(streetOf(j))))),
+    // "the Byron job", "Smithy's place" — a phrase rather than a name. Match
+    // on the words that carry meaning: the suburb, the surname, the street.
+    // Last, so a real name never loses to a word that merely appears in one.
+    () => {
+      const words = t.split(/[^a-z0-9]+/).filter(w => w.length >= 3 && !FILLER.has(w))
+      if (!words.length) return []
+      return jobs.filter(j => {
+        const hay = `${norm(j.id)} ${norm(j.client)} ${norm(j.address)}`
+        return words.some(w => hay.includes(w))
+      })
+    },
+  ]
+
+  for (const pass of passes) {
+    const got = resolve(pass())
+    if (got) return got
+  }
+  return { job: null, candidates: [] }
 }
 
 /** A crew member from a first name or a full one, returning their real name. */
@@ -356,6 +417,7 @@ function readEntryLine(
       date,
       job_id: match.job?.id ?? null,
       jobCandidates: match.candidates.length ? match.candidates : undefined,
+      saidJob: forJob.join(' ') || undefined,
       description: note || undefined,
     })
     bucket = []
@@ -379,16 +441,25 @@ function readEntryLine(
  * arrives flagged rather than written to a row.
  */
 export function draftsFromAI(
-  aiEntries: Array<{ worker: string; job?: string; date?: string; hours: number; note?: string }>,
+  aiEntries: Array<{
+    worker: string; job?: string; jobSaid?: string
+    date?: string; hours: number; note?: string
+  }>,
   ctx: ReadContext,
 ): DraftEntry[] {
   return aiEntries.map(e => {
     const w = matchWorker(e.worker, ctx.crew)
-    const m = e.job ? matchJob(e.job, ctx.jobs) : { job: null, candidates: [] }
+    // The id it named, checked against the real jobs — then, failing that,
+    // whatever the message itself called the place. Two chances at the job,
+    // and neither of them trusted on the model's say-so.
+    const byId = e.job ? matchJob(e.job, ctx.jobs) : { job: null, candidates: [] }
+    const m = byId.job || byId.candidates.length
+      ? byId
+      : e.jobSaid ? matchJob(e.jobSaid, ctx.jobs) : byId
     const date = e.date ? parseDate(e.date, ctx.todayStr) : null
     return {
       key: key(),
-      source: [e.date, e.worker, e.job, `${e.hours}h`, e.note].filter(Boolean).join('  '),
+      source: [e.date, e.worker, e.jobSaid || e.job, `${e.hours}h`, e.note].filter(Boolean).join('  '),
       via: 'ai' as const,
       worker: w.name,
       workerMatched: w.matched,
@@ -396,6 +467,7 @@ export function draftsFromAI(
       date: date ?? ctx.todayStr,
       job_id: m.job?.id ?? null,
       jobCandidates: m.candidates.length ? m.candidates : undefined,
+      saidJob: e.jobSaid || e.job || undefined,
       description: e.note || undefined,
     }
   }).filter(d => d.hours > 0)
