@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase, selectAll } from '@/lib/supabase'
 import { useAuth } from '@/lib/auth'
@@ -243,7 +243,8 @@ export default function Costs() {
                   {hours.rows.map(({ job, hours: h }) => (
                     <tr key={job.id} className="border-b border-black/[0.06] hover:bg-[#fafaf8]">
                       <td className="px-2.5 py-[7px]">
-                        <span className="text-[10px] font-extrabold text-[#2563eb] bg-[#dbeafe] px-1.5 py-0.5 rounded-full mr-1.5">{job.id}</span>
+                        <Link to={`/jobs/${job.id}`} title="Open this job"
+                          className="text-[10px] font-extrabold text-[#2563eb] bg-[#dbeafe] px-1.5 py-0.5 rounded-full mr-1.5 hover:bg-[#bfdbfe]">{job.id}</Link>
                         <span className="font-medium">{job.client}</span>
                         <span className="text-[11px] text-[#666]"> · {job.status || '—'} · ${h.rate}/hr</span>
                       </td>
@@ -325,7 +326,8 @@ export default function Costs() {
           <div key={j.id} className="bg-white border border-black/[0.12] rounded-xl overflow-hidden mb-3">
             {/* Header */}
             <div className="flex items-start gap-3 px-4.5 pt-3.5 pb-3 border-b border-black/[0.12] bg-[#fafaf8] flex-wrap" style={{ paddingLeft: 18, paddingRight: 18 }}>
-              <span className="text-xs font-extrabold text-[#2563eb] bg-[#dbeafe] px-2.5 py-1 rounded-full whitespace-nowrap shrink-0">{j.id}</span>
+              <Link to={`/jobs/${j.id}`} title="Open this job"
+                className="text-xs font-extrabold text-[#2563eb] bg-[#dbeafe] px-2.5 py-1 rounded-full whitespace-nowrap shrink-0 hover:bg-[#bfdbfe]">{j.id}</Link>
               <div className="flex-1 min-w-0">
                 <div className="text-sm font-bold text-[#1a1a18]">{j.client}</div>
                 {j.address && <div className="text-[11px] text-[#666] mt-px truncate">{j.address}</div>}

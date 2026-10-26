@@ -29,6 +29,7 @@ Each one exists because something specific went wrong, or was about to:
 | `helpcheck` | Every Dashboard KPI explains itself |
 | `hourscheck` | The labour hours budget, and what is left of it |
 | `hoursreadcheck` | Reading a message into logged hours |
+| `jobpagecheck` | The job page's headline and its table agree; cost is never charge |
 | `keycheck` | No two queries share a cache key while returning different columns |
 | `labourtilescheck` | Only hourly work counts as billable; fixed-quote hours do not |
 | `linecheck` | Invoice lines, and add-ons becoming lines without being billed twice |

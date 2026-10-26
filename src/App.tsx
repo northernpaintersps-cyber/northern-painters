@@ -18,6 +18,7 @@ import QuotingTool from '@/pages/QuotingTool'
 import Quotes from '@/pages/Quotes'
 import Materials from '@/pages/Materials'
 import Assets from '@/pages/Assets'
+import JobDashboard from '@/pages/JobDashboard'
 import Pipeline from '@/pages/Pipeline'
 import Clients from '@/pages/Clients'
 import LegalDocs from '@/pages/LegalDocs'
@@ -78,6 +79,8 @@ export default function App() {
         <Route path="/labour" element={<Labour />} />
         <Route path="/expenses" element={<Expenses />} />
         <Route path="/assets" element={<Assets />} />
+        {/* One job, everything about it. The modal stays for editing. */}
+        <Route path="/jobs/:id" element={<JobDashboard />} />
         <Route path="/schedule" element={<Schedule />} />
         <Route path="/settings" element={<SettingsPage />} />
       </Route>

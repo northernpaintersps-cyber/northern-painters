@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase, selectAll } from '@/lib/supabase'
 import { useAuth } from '@/lib/auth'
@@ -317,7 +317,12 @@ export default function Jobs() {
                     const scheduled = ['Scheduled','In Progress','Hourly Rate Accepted'].includes(j.status || '')
                     return (
                       <tr key={j.id} className="border-b border-black/[0.06] hover:bg-[#fafaf8]">
-                        <td className="px-2.5 py-[7px] text-[#2563eb] font-medium whitespace-nowrap">{j.id}</td>
+                        <td className="px-2.5 py-[7px] whitespace-nowrap">
+                          {/* The number opens the job's own page; Edit still
+                              opens the modal, which is the quick form. */}
+                          <Link to={`/jobs/${j.id}`} title="Open this job"
+                            className="text-[#2563eb] font-medium hover:underline">{j.id}</Link>
+                        </td>
                         <td className="px-2.5 py-[7px]">
                           <SyncedInput value={j.client ?? ''} className={II}
                             onBlur={e => { if (e.target.value !== (j.client ?? '')) quickEdit.mutate({ job: j, field: 'client', value: e.target.value }) }} />

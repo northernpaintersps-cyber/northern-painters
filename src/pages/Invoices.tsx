@@ -370,7 +370,11 @@ export default function Invoices() {
         total_inc_gst: +(ex * (1 + rate)).toFixed(2),
       } : {}),
       ...(pre.bookingDeposit ? { extra: { booking_deposit: true } } : {}),
-    })
+    }, Array.isArray(pre.pick) && pre.pick.length
+      // Sent from the job's own page with the unbilled lines already chosen,
+      // so "bill the rest" opens an invoice that is already right.
+      ? { mode: 'lines', pick: pre.pick.map(String) }
+      : undefined)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [jobs.length])
 
