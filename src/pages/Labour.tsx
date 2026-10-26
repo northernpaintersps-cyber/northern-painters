@@ -14,6 +14,7 @@ import {
 import { Plus, Loader2, Trash2, ArrowUpDown, X, Clock, AlertTriangle, MessageSquareText } from 'lucide-react'
 import { invalidateTable } from '../lib/queryKeys'
 import ReadHoursModal from '@/components/ReadHoursModal'
+import InfoTip, { TipCalc } from '@/components/InfoTip'
 import { SyncedInput } from '@/components/ui/SyncedInput'
 
 type Row = Record<string, any>
@@ -130,10 +131,23 @@ export default function Labour() {
     [jobs, form.job_id])
 
   const totCost = labs.reduce((a, b) => a + labCost(b), 0)
-  const totBill = labs.reduce((a, b) => a + labBillable(b), 0)
-  const hBill = labs.filter(isBill).reduce((a, b) => a + labBillable(b), 0)
-  const hCost = labs.filter(isBill).reduce((a, b) => a + labCost(b), 0)
+
+  // Only hourly and estimate work is billed by the hour. A fixed-quote entry
+  // has a charge rate — it records what the hour would be worth billed out —
+  // but nobody is ever invoiced for it: the client pays the agreed price, and
+  // the job's margin is that price less what it cost. Summing it here read as
+  // money owed by somebody, and made this tile disagree with the two beside
+  // it, which were filtered all along.
+  const hourly = labs.filter(isBill)
+  const hBill = hourly.reduce((a, b) => a + labBillable(b), 0)
+  const hCost = hourly.reduce((a, b) => a + labCost(b), 0)
   const labMargin = hBill > 0 ? ((hBill - hCost) / hBill) * 100 : 0
+  const fixedCost = labs.filter(l => !isBill(l)).reduce((a, b) => a + labCost(b), 0)
+  // The table's own column total, which includes fixed-quote rows because
+  // the column above it shows a figure on every row. The tiles are the place
+  // that figure is judged; a footer that did not sum its own column would be
+  // a different kind of wrong.
+  const totBill = labs.reduce((a, b) => a + labBillable(b), 0)
 
   // Inline edit — recompute cost and billable the way V16 does
   function quick(l: Row, patch: Row) {
@@ -228,13 +242,41 @@ export default function Labour() {
 
       <div className="grid gap-2.5 mb-3.5" style={{ gridTemplateColumns: 'repeat(auto-fit,minmax(140px,1fr))' }}>
         {[
-          { l: 'Total cost (paid out)', v: fmtCurrency(totCost) },
-          { l: 'Total billable (to clients)', v: fmtCurrency(totBill), c: '#2563eb' },
-          { l: 'Labour margin', v: `${labMargin.toFixed(1)}%`, c: labMargin >= 20 ? '#16a34a' : labMargin >= 0 ? '#d97706' : '#dc2626' },
-          { l: 'Gross profit (hourly jobs)', v: fmtCurrency(hBill - hCost), c: '#16a34a' },
+          {
+            l: 'Total cost (paid out)', v: fmtCurrency(totCost),
+            help: <>What these hours cost you, across every job, hourly and fixed alike.
+              <TipCalc>Hours times the cost rate on each entry. This is the figure every job&rsquo;s
+              margin is worked out from — so a cost rate that leaves out super, insurance and
+              downtime makes every job look better than it is.</TipCalc></>,
+          },
+          {
+            l: 'Billable (hourly work)', v: fmtCurrency(hBill), c: '#2563eb',
+            help: <>What you can invoice for these hours. <b>Hourly and estimate jobs only</b> —
+              a fixed-quote job is paid at the agreed price however many hours it takes, so its
+              hours are not billable by the hour and are not counted here.
+              <TipCalc>Hours times the charge rate, for entries whose billing type is Hourly or
+              Hourly/Estimate{fixedCost > 0
+                ? `. A further ${fmtCurrency(fixedCost)} of cost sits on fixed-quote work, which is covered by the agreed price instead`
+                : ''}.</TipCalc></>,
+          },
+          {
+            l: 'Labour margin (hourly)', v: `${labMargin.toFixed(1)}%`,
+            c: labMargin >= 20 ? '#16a34a' : labMargin >= 0 ? '#d97706' : '#dc2626',
+            help: <>What is left of the hourly rate after paying the person who worked it.
+              <TipCalc>(Billable &minus; cost) &divide; billable, on hourly and estimate work only.
+              It says nothing about fixed-quote jobs, whose margin is the agreed price less
+              everything it cost — that is on the Costs page.</TipCalc></>,
+          },
+          {
+            l: 'Gross profit (hourly jobs)', v: fmtCurrency(hBill - hCost), c: '#16a34a',
+            help: <>The same thing in dollars: what the hourly work earned over what it cost.
+              <TipCalc>Billable less cost, on hourly and estimate entries.</TipCalc></>,
+          },
         ].map(m => (
           <div key={m.l} className="bg-[#f5f4f0] rounded-lg px-4 py-3.5">
-            <div className="text-[11px] text-[#666] mb-1">{m.l}</div>
+            <div className="text-[11px] text-[#666] mb-1 flex items-center gap-1">
+              {m.l}<InfoTip title={m.l}>{m.help}</InfoTip>
+            </div>
             <div className="text-xl font-semibold" style={m.c ? { color: m.c } : undefined}>{m.v}</div>
           </div>
         ))}
@@ -397,7 +439,10 @@ export default function Labour() {
                   <td colSpan={6} className="px-2.5 py-2 text-right">Totals</td>
                   <td className="px-2.5 py-2" style={{ color: '#64748b' }}>{fmtCurrency(totCost)}</td>
                   <td className="px-2.5 py-2" />
-                  <td className="px-2.5 py-2" style={{ color: '#2563eb' }}>{fmtCurrency(totBill)}</td>
+                  <td className="px-2.5 py-2" style={{ color: '#2563eb' }}
+                    title="Every row in the column, fixed-quote work included. Fixed-quote hours are not invoiced by the hour — see the Billable tile above.">
+                    {fmtCurrency(totBill)}
+                  </td>
                   <td colSpan={5} />
                 </tr>
               </tfoot>

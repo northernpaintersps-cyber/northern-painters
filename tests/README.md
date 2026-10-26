@@ -30,7 +30,10 @@ Each one exists because something specific went wrong, or was about to:
 | `hourscheck` | The labour hours budget, and what is left of it |
 | `hoursreadcheck` | Reading a message into logged hours |
 | `keycheck` | No two queries share a cache key while returning different columns |
+| `labourtilescheck` | Only hourly work counts as billable; fixed-quote hours do not |
 | `linecheck` | Invoice lines, and add-ons becoming lines without being billed twice |
+| `payschedcheck` | Building a payment schedule, and its milestones |
+| `depositcheck` | The booking deposit percentage, and what it comes to |
 | `suggestcheck` | What the invoice modal offers, and the deposit counted once |
 
 An earlier set covering the quote builder, the agent and the quote PDF was
