@@ -35,6 +35,7 @@ import {
 } from '@/lib/quoteDoc'
 import {
   splitQuote, presetParts, quotedKeys, newPart, partLines, scaleTo,
+  autoLandsOn, stepLabour,
   type PartDef, type SplitBy,
 } from '@/lib/quoteSplit'
 import { useRateCard, cardHoursPerUnit, cardSummary } from '@/lib/rateCard'
@@ -72,6 +73,15 @@ type Process = {
   id: string; name: string; hours: number; np: number
   covers?: string[]
   service?: string
+  /**
+   * The priced part this step's labour belongs to, when the split is in use.
+   *
+   * Masking the interior and masking the exterior paint nothing, so `covers`
+   * cannot place them and their cost spreads across every part. Pinned, the
+   * whole step belongs to one part. Blank means work it out from `covers`,
+   * which is right for a step that does paint something.
+   */
+  part?: string
 }
 /** `part` names the priced group this belongs to. Blank means all of them. */
 type Equip = { id: string; name: string; cost: number; part?: string }
@@ -455,7 +465,9 @@ export default function QuotingTool() {
   // V16 calcProcessTotal: hours are elapsed crew time, so a step costs
   // hrs × the average painter rate × however many painters are on that step.
   const avgRate = painters.length ? rateSum / painters.length : rates.standard
-  const stepCost = (p: Process) => (p.hours || 0) * avgRate * Math.max(1, p.np || painters.length)
+  // One definition, shared with the split, so the step cost shown in the
+  // programme and the labour the split distributes cannot disagree.
+  const stepCost = (p: Process) => stepLabour(p, avgRate, painters.length)
   const procHours = processes.reduce((s, p) => s + (p.hours || 0), 0)
   const procCost = processes.reduce((s, p) => s + stepCost(p), 0)
 
@@ -674,7 +686,7 @@ export default function QuotingTool() {
     defs: splitParts,
     labourByKey: byQty ? labourByKey : undefined,
     materialsByKey: materials.byKey,
-    processes, avgRate, weight: bookWeight,
+    processes, avgRate, weight: bookWeight, defaultNp: painters.length,
     pricing: {
       labourCost, materialsTotal: materials.total,
       adjLab, adjMat, contingency, waste, overheadPct,
@@ -686,7 +698,7 @@ export default function QuotingTool() {
     },
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }), [substrates, splitBy, jobType, extraServices, splitParts, byQty, labourByKey,
-       materials.byKey, materials.total, processes, avgRate, bookWeight, labourCost,
+       materials.byKey, materials.total, processes, avgRate, bookWeight, labourCost, painters.length,
        adjLab, adjMat, contingency, waste, overheadPct, consEffective, consByPart,
        extraMatTotal, extraMatByPart, equipTotal, equipByPart,
        travelCost, estimate])
@@ -2290,6 +2302,60 @@ export default function QuotingTool() {
                             </div>
                           </div>
                         ))}
+
+                        {/* Which part each step's labour belongs to.
+                            Only in process mode: in quantity mode the labour
+                            comes from the surfaces and there are no steps. */}
+                        {!byQty && processes.length > 0 && shownParts.length > 1 && (
+                          <div className="border border-black/[0.1] rounded-lg p-2 mb-1.5">
+                            <div className="flex items-center gap-2 mb-1.5 flex-wrap">
+                              <span className="text-[11px] font-semibold">Labour steps</span>
+                              <span className="text-[10px] text-[#666]">
+                                Masking and set-up paint nothing, so they spread across every part
+                                until you say whose they are.
+                              </span>
+                              {processes.some(x => x.service) && (
+                                <button
+                                  title="Every step tagged with a service goes to the part of the same name"
+                                  onClick={() => setProcesses(ps => ps.map(x => {
+                                    const match = shownParts.find(pt =>
+                                      x.service && pt.label.toLowerCase().includes(x.service.toLowerCase()))
+                                    return match ? { ...x, part: match.id } : x
+                                  }))}
+                                  className="ml-auto text-[10px] px-2 py-0.5 rounded-lg bg-white border border-black/[0.15] hover:bg-[#f5f4f0]">
+                                  Assign by service
+                                </button>
+                              )}
+                              {processes.some(x => x.part) && (
+                                <button onClick={() => setProcesses(ps => ps.map(x => ({ ...x, part: undefined })))}
+                                  className="text-[10px] px-2 py-0.5 rounded-lg bg-white border border-black/[0.15] hover:bg-[#f5f4f0]">
+                                  Clear
+                                </button>
+                              )}
+                            </div>
+                            {processes.filter(x => (x.hours || 0) > 0).map(x => {
+                              const auto = autoLandsOn(x, shownParts, quotedKeys(substrates))
+                              return (
+                                <div key={x.id} className="flex items-center gap-2 py-0.5 text-[10.5px]">
+                                  <span className="flex-1 truncate" title={x.name}>{x.name}</span>
+                                  <span className="text-[#666] tabular-nums whitespace-nowrap">
+                                    {(x.hours || 0).toFixed(1)}h · {fmtCurrency(stepLabour(x, avgRate, painters.length))}
+                                  </span>
+                                  <select value={x.part ?? ''}
+                                    onChange={e => setProcesses(ps => ps.map(y =>
+                                      y.id === x.id ? { ...y, part: e.target.value || undefined } : y))}
+                                    className={`w-[140px] px-1 py-0.5 border rounded text-[10.5px] ${
+                                      x.part ? 'border-[#2563eb] text-[#1e40af]' : 'border-black/[0.15]'}`}>
+                                    <option value="">
+                                      {auto.spread ? 'Auto — spread' : `Auto — ${auto.part?.label ?? ''}`}
+                                    </option>
+                                    {shownParts.map(pt => <option key={pt.id} value={pt.id}>{pt.label}</option>)}
+                                  </select>
+                                </div>
+                              )
+                            })}
+                          </div>
+                        )}
 
                         {split.unassigned.length > 0 && (
                           <div className="text-[10.5px] text-[#991b1b] bg-[#fee2e2] border border-[#fca5a5] rounded px-2 py-1 mb-1.5">

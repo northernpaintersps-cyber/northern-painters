@@ -67,6 +67,18 @@ export function quotedKeys(substrates: Record<string, SubEntry>): string[] {
     .sort((a, b) => order.indexOf(a) - order.indexOf(b))
 }
 
+/**
+ * What a step costs: hours times the rate times the painters on it.
+ *
+ * `defaultNp` is what to assume when the step does not say — the crew size,
+ * as the quote builder's own step figures assume. Defaulting to one painter
+ * in one place and the crew in the other made the split distribute less
+ * labour than the quote charged for exactly those steps.
+ */
+export const stepLabour = (step: SplitProcess, avgRate: number, defaultNp = 1): number =>
+  r2((Number(step.hours) || 0) * (Number(avgRate) || 0)
+    * Math.max(1, Number(step.np) || Number(defaultNp) || 1))
+
 // ── Direct cost per substrate ───────────────────────────────
 
 export interface DirectCosts {
@@ -74,6 +86,24 @@ export interface DirectCosts {
   materials: Record<string, number>
   /** Labour on phases that touch no surface: set-up, protect, clean-up. */
   unattributedLabour: number
+  /**
+   * Labour on phases pinned to a part by hand, by part id.
+   *
+   * Masking the interior and masking the exterior are different money
+   * against different parts, and neither paints a surface — so without
+   * this, one of them pays for some of the other.
+   */
+  labourByPart: Record<string, number>
+}
+
+/** A phase, as the quote builder holds it. `part` pins it to a priced part. */
+export interface SplitProcess {
+  name: string
+  hours: number
+  np: number
+  covers?: string[]
+  part?: string
+  service?: string
 }
 
 /**
@@ -88,21 +118,48 @@ export function directCosts(input: {
   keys: string[]
   labourByKey?: Record<string, number>
   materialsByKey?: Record<string, number>
-  processes?: Array<{ name: string; hours: number; np: number; covers?: string[] }>
+  processes?: SplitProcess[]
   avgRate?: number
   weight?: Record<string, number>
+  /** The parts in play, so a phase pinned to one that no longer exists can
+   *  fall back to its surfaces rather than taking its money with it. */
+  partIds?: string[]
+  /** Painters on a step that does not say. The quote builder defaults this
+   *  to the crew size, and costing it at one painter here instead would
+   *  distribute those steps' labour short of what the quote charged. */
+  defaultNp?: number
 }): DirectCosts {
-  const { keys, labourByKey, materialsByKey = {}, processes, avgRate = 0, weight = {} } = input
+  const {
+    keys, labourByKey, materialsByKey = {}, processes,
+    avgRate = 0, weight = {}, partIds, defaultNp = 1,
+  } = input
   const labour: Record<string, number> = Object.fromEntries(keys.map(k => [k, 0]))
   const materials: Record<string, number> = Object.fromEntries(keys.map(k => [k, 0]))
+  const labourByPart: Record<string, number> = {}
   let unattributedLabour = 0
+
+  const realPart = (id: unknown): string | null => {
+    const s = String(id ?? '').trim()
+    if (!s) return null
+    return !partIds || partIds.includes(s) ? s : null
+  }
 
   if (labourByKey && Object.keys(labourByKey).length) {
     for (const k of keys) labour[k] += Number(labourByKey[k]) || 0
   } else if (processes?.length) {
     for (const p of processes) {
-      const cost = (Number(p.hours) || 0) * avgRate * Math.max(1, Number(p.np) || 1)
+      const cost = stepLabour(p, avgRate, defaultNp)
       if (cost <= 0) continue
+
+      // Pinned by hand: the whole step belongs to that part. Its `covers`
+      // still say which surfaces it worked, which is what the rate data
+      // reads — a different question from which price the client sees.
+      const pinned = realPart(p.part)
+      if (pinned) {
+        labourByPart[pinned] = (labourByPart[pinned] ?? 0) + cost
+        continue
+      }
+
       const covers = (p.covers ?? []).filter(k => keys.includes(k))
       if (!covers.length) { unattributedLabour += cost; continue }
       const ws = covers.map(k => weight[k] ?? 0)
@@ -114,7 +171,7 @@ export function directCosts(input: {
   }
 
   for (const k of keys) materials[k] += Number(materialsByKey[k]) || 0
-  return { labour, materials, unattributedLabour }
+  return { labour, materials, unattributedLabour, labourByPart }
 }
 
 // ── The preset arrangements ─────────────────────────────────
@@ -223,7 +280,12 @@ export function priceGroups(
 ): PricedPart[] {
   if (!defs.length) return []
 
-  const labOf = (d: PartDef) => d.keys.reduce((t, k) => t + (direct.labour[k] ?? 0), 0)
+  // Pinned labour is the part's own, exactly as labour that arrived through
+  // one of its surfaces: contingency applies to it, a hand-set total scales
+  // it by the same ratio, and travel follows it.
+  const labOf = (d: PartDef) =>
+    d.keys.reduce((t, k) => t + (direct.labour[k] ?? 0), 0)
+    + (direct.labourByPart?.[d.id] ?? 0)
   const matOf = (d: PartDef) => d.keys.reduce((t, k) => t + (direct.materials[k] ?? 0), 0)
 
   // Phase labour that belongs to no surface is part of the job and has to be
@@ -339,9 +401,11 @@ export function splitQuote(input: {
   defs?: PartDef[]
   labourByKey?: Record<string, number>
   materialsByKey?: Record<string, number>
-  processes?: Array<{ name: string; hours: number; np: number; covers?: string[] }>
+  processes?: SplitProcess[]
   avgRate?: number
   weight?: Record<string, number>
+  /** Painters on a step that does not say its own. */
+  defaultNp?: number
   pricing: PricingInput
 }): SplitResult {
   const keys = quotedKeys(input.substrates)
@@ -356,6 +420,8 @@ export function splitQuote(input: {
     processes: input.processes,
     avgRate: input.avgRate,
     weight: input.weight,
+    partIds: defs.map(d => d.id),
+    defaultNp: input.defaultNp,
   })
 
   const assigned = new Set(defs.flatMap(d => d.keys))
@@ -373,6 +439,25 @@ export function splitQuote(input: {
     materials: sum(p => p.materials),
     shared: sum(p => p.shared),
   }
+}
+
+/**
+ * Where an unpinned step's labour actually lands, for the panel to show.
+ *
+ * A step whose surfaces all sit in one part is already landing correctly and
+ * is not worth pinning; one that straddles them, or covers nothing, is
+ * spread — and that is what the user is deciding about.
+ */
+export function autoLandsOn(
+  step: SplitProcess, defs: PartDef[], keys: string[],
+): { part: PartDef | null; spread: boolean } {
+  const covers = (step.covers ?? []).filter(k => keys.includes(k))
+  if (!covers.length) return { part: null, spread: true }
+  const hit = defs.filter(d => covers.some(k => d.keys.includes(k)))
+  // Covered surfaces that are in no part at all still count as spread: the
+  // money is going somewhere other than one clean part.
+  const allIn = covers.every(k => defs.some(d => d.keys.includes(k)))
+  return hit.length === 1 && allIn ? { part: hit[0], spread: false } : { part: null, spread: true }
 }
 
 /** The pricing lines the document prints. */
