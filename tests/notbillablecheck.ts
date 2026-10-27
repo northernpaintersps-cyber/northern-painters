@@ -12,6 +12,7 @@ import {
   isBillableLabour, isBillableMaterial, labCost, matCost,
 } from '@/lib/utils'
 import { computeJobBilling, invoiceableLines, jobProfit } from '@/lib/jobBilling'
+import * as fs from 'fs'
 
 let fail = 0
 const ok = (c: boolean, m: string) => { if (!c) { fail++; console.log('FAIL', m) } else console.log('ok  ', m) }
@@ -103,6 +104,23 @@ ok(invoiceableLines({ job: FIXED, invoices: [], labour: [BILLED], materials: [] 
   'an hourly entry on a fixed job is chargeable, as it always was')
 ok(invoiceableLines({ job: FIXED, invoices: [], labour: [DEFECT], materials: [] }).length === 0,
   'and marking one not billable is how you say it is not')
+
+// -- It is reachable from every place an entry is edited --------
+// A value you cannot select is not a feature. The inline select on the
+// Materials table had its options written out by hand and silently missed
+// this one.
+const sources: Array<[string, string]> = [
+  ['src/pages/Labour.tsx', 'the Labour form and its inline select'],
+  ['src/pages/Materials.tsx', 'the Materials form and its inline select'],
+  ['src/components/ReadHoursModal.tsx', 'the read-a-message table'],
+]
+for (const [file, where] of sources) {
+  const src = fs.readFileSync(file, 'utf8')
+  ok(/NOT_BILLABLE|ENTRY_BILLING_TYPES/.test(src), where + ' offers it')
+  // A hand-written option list is how one of them missed it the first time.
+  ok(!/<option>Fixed Quote<\/option>/.test(src),
+    where + ' builds its options from the list rather than by hand')
+}
 
 console.log(fail ? `\n${fail} FAILED` : '\nall passed')
 process.exit(fail ? 1 : 0)

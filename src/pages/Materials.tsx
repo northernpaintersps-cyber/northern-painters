@@ -423,9 +423,9 @@ export default function Materials() {
                     <td className="px-2.5 py-[7px]">
                       <select value={m.billing_type ?? 'Fixed Quote'} className={`${IS} text-[11px]`}
                         onChange={e => quickEdit(m, { billing_type: e.target.value })}>
-                        <option>Hourly</option>
-                        <option>Hourly/Estimate</option>
-                        <option>Fixed Quote</option>
+                        {/* From the one list, so a new billing type reaches
+                            the inline select as well as the form. */}
+                        {BILLING_TYPES.map(b => <option key={b} value={b}>{b}</option>)}
                       </select>
                     </td>
                     <td className="px-2.5 py-[7px]">
