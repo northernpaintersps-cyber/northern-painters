@@ -523,7 +523,7 @@ export default function Dashboard() {
               const crewNames = [...new Set(jobCrew.map(a => crewLabel(crew, a.crew_name)).filter(Boolean))]
               const noCrewAlert = !crewNames.length && ['Scheduled', 'Not Started'].includes(j.status)
               return (
-                <div key={j.id} onClick={() => nav('/jobs')}
+                <div key={j.id} onClick={() => nav(`/jobs/${j.id}`)}
                   style={{ background: isToday ? '#f0fdf4' : '#f5f4f0', border: `1px solid ${isToday ? '#86efac' : 'rgba(0,0,0,.12)'}` }}
                   className="flex items-center gap-2.5 px-3 py-2.5 rounded-lg cursor-pointer flex-wrap">
                   <div style={{ background: isToday ? '#059669' : '#64748b' }}
@@ -619,7 +619,8 @@ export default function Dashboard() {
               )
 
               return (
-                <div key={j.id} onClick={() => nav('/costs')}
+                // The job's own page, which carries these figures and the rest.
+                <div key={j.id} onClick={() => nav(`/jobs/${j.id}`)}
                   style={{
                     background: over ? '#fff1f2' : near ? '#fffbeb' : '#fff',
                     border: `1.5px solid ${over ? '#fca5a5' : near ? '#fde68a' : 'rgba(0,0,0,.12)'}`,
@@ -706,7 +707,7 @@ export default function Dashboard() {
                 className="px-2.5 py-1 text-[11px] bg-white border border-black/20 rounded-lg hover:bg-[#f5f4f0]">View all</button>
             </div>
             {followUps.slice(0, 4).map(j => (
-              <div key={j.id} onClick={() => nav('/jobs')} className="py-1.5 border-b border-black/[0.06] text-xs cursor-pointer">
+              <div key={j.id} onClick={() => nav(`/jobs/${j.id}`)} className="py-1.5 border-b border-black/[0.06] text-xs cursor-pointer">
                 <div className="font-semibold">{j.client} <span className="font-normal text-[#666]">· {j.id}</span></div>
                 <div className="text-[#666] text-[11px]">{fmtCurrency(j.quote_ex_gst)} ex GST · sent {j.quote_sent}</div>
               </div>

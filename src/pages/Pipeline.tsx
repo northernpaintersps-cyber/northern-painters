@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase, selectAll } from '@/lib/supabase'
 import { useAuth } from '@/lib/auth'
 import { fmtCurrency } from '@/lib/utils'
-import { Loader2, List } from 'lucide-react'
+import { Loader2, List, Edit2 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { invalidateTable } from '../lib/queryKeys'
 import JobModal from '@/components/JobModal'
@@ -210,8 +210,10 @@ export default function Pipeline() {
                   </div>
                 ))}
                 {col.jobs.map(j => (
+                  // The card opens the job's own page. Editing is a separate
+                  // act, on the pencil, so a glance never lands in a form.
                   <div key={j.id} className="bg-white border border-black/10 rounded-lg p-2.5 cursor-pointer hover:shadow-sm transition-shadow"
-                    onClick={() => setOpenJobId(j.id)}>
+                    onClick={() => navigate(`/jobs/${j.id}`)}>
                     <div className="flex justify-between items-start gap-1 mb-1">
                       <span className="text-[10px] text-gray-500 font-mono font-semibold">{j.id}</span>
                       {(j.agreed_ex_gst || j.quote_ex_gst) && (
@@ -227,8 +229,8 @@ export default function Pipeline() {
                     {j.sched_start && (
                       <div className="text-[10px] text-blue-700 mb-1">📅 {j.sched_start}{j.est_days ? ` · ${j.est_days}d` : ''}</div>
                     )}
-                    {/* Inline status selects */}
-                    <div className="flex gap-1 flex-wrap mt-1.5" onClick={e => e.stopPropagation()}>
+                    {/* Inline status selects, and the way into the edit form */}
+                    <div className="flex gap-1 flex-wrap items-center mt-1.5" onClick={e => e.stopPropagation()}>
                       <select
                         value={j.quote_status || ''}
                         onChange={e => updateJob.mutate({ id: j.id, field: 'quote_status', value: e.target.value })}
@@ -241,6 +243,10 @@ export default function Pipeline() {
                         className="text-[10px] px-1 py-0.5 border border-black/15 rounded bg-[#f5f4f0] text-gray-600 max-w-[100px]">
                         {JS_OPTS.map(s => <option key={s} value={s}>{s || '— job status'}</option>)}
                       </select>
+                      <button onClick={() => setOpenJobId(j.id)} title="Edit this job"
+                        className="ml-auto p-1 rounded text-gray-400 hover:text-gray-900 hover:bg-[#f5f4f0]">
+                        <Edit2 size={11} />
+                      </button>
                     </div>
                   </div>
                 ))}

@@ -106,5 +106,21 @@ ok(!/billable \+ cost|cost \+ billable/i.test(page),
 const routes = fs.readFileSync('src/App.tsx', 'utf8')
 ok(/path="\/jobs\/:id"/.test(routes), 'the page is routed at /jobs/:id')
 
+// ── The ways in ──────────────────────────────────────────────
+// A job is a thing you look at; editing it is a separate act. Every card
+// and row that represents one job opens the job, not a list and not a form.
+const pipeline = fs.readFileSync('src/pages/Pipeline.tsx', 'utf8')
+ok(/navigate\(`\/jobs\/\$\{j\.id\}`\)/.test(pipeline), 'a pipeline card opens the job')
+ok(/setOpenJobId\(j\.id\)/.test(pipeline), 'and the pencil on it still opens the edit form')
+
+const dash = fs.readFileSync('src/pages/Dashboard.tsx', 'utf8')
+ok(!/<div key=\{j\.id\} onClick=\{\(\) => nav\('\/(costs|jobs)'\)\}/.test(dash),
+  'no Dashboard card sends you to a list to find the job again')
+ok((dash.match(/nav\(`\/jobs\/\$\{j\.id\}`\)/g) ?? []).length >= 3,
+  'the cost cards, today and the fortnight ahead all open the job')
+
+const jobsList = fs.readFileSync('src/pages/Jobs.tsx', 'utf8')
+ok(/to=\{`\/jobs\/\$\{j\.id\}`\}/.test(jobsList), 'and the job number in the list is a link to it')
+
 console.log(fail ? `\n${fail} FAILED` : '\nall passed')
 process.exit(fail ? 1 : 0)
