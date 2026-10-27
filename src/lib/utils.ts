@@ -532,6 +532,28 @@ export const BILLING_TYPES = ['Fixed Quote', 'Hourly', 'Hourly/Estimate'] as con
 export type BillingType = typeof BILLING_TYPES[number]
 
 /**
+ * Work done on a job that the client is not charged for.
+ *
+ * Coming back to fix a defect costs you real labour and real paint, and
+ * that cost belongs on the job — it is exactly what you want to see when
+ * you ask whether the job made money. What it must not do is sit in "left
+ * to invoice" waiting to be billed to somebody who is never going to pay
+ * it.
+ *
+ * It is a billing type rather than a flag of its own because that is the
+ * field every billing test already reads: isBillableLabour and
+ * isBillableMaterial only admit the hourly types, so this is excluded by
+ * the rules that exist rather than by new ones threaded through them.
+ */
+export const NOT_BILLABLE = 'Not billable'
+
+/** What an entry's billing type can be. A JOB is only ever one of the three. */
+export const ENTRY_BILLING_TYPES = [...BILLING_TYPES, NOT_BILLABLE] as const
+
+export const isNotBillable = (row: { billing_type?: string | null } | null | undefined): boolean =>
+  String(row?.billing_type ?? '').trim() === NOT_BILLABLE
+
+/**
  * The billing type of a job.
  *
  * Prefers an explicit billing_type column if one is ever added, otherwise

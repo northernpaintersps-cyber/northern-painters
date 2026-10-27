@@ -8,7 +8,7 @@ import { Modal } from '@/components/ui/Modal'
 import JobPicker from '@/components/JobPicker'
 import { Input, Select } from '@/components/ui/Field'
 import {
-  fmtCurrency, genId, today, labBillable, labCost, isBillableLabour,
+  fmtCurrency, genId, today, labBillable, labCost, isBillableLabour, isNotBillable, NOT_BILLABLE,
   findOverlappingLabour, labourSpan, jobBillingType, type LabourOverlap,
 } from '@/lib/utils'
 import { Plus, Loader2, Trash2, ArrowUpDown, X, Clock, AlertTriangle, MessageSquareText } from 'lucide-react'
@@ -19,7 +19,10 @@ import { SyncedInput } from '@/components/ui/SyncedInput'
 
 type Row = Record<string, any>
 
-const BILLING = ['Hourly', 'Hourly/Estimate', 'Fixed Quote']
+// 'Not billable' is the one that is not a way of charging: it is work the
+// client never pays for — a defect you came back to fix. The cost still
+// counts against the job; it just never reaches an invoice.
+const BILLING = ['Hourly', 'Hourly/Estimate', 'Fixed Quote', NOT_BILLABLE]
 const II = 'border-none bg-transparent text-[12.5px] w-full focus:outline-none focus:bg-blue-50/60 rounded px-0.5'
 const IS = 'border-none bg-transparent text-xs cursor-pointer focus:outline-none'
 
@@ -330,6 +333,7 @@ export default function Labour() {
               {labs.map(l => {
                 const cr = l.charge_rate ?? l.rate ?? 0
                 const bill = labBillable(l)
+                const noCharge = isNotBillable(l)
                 const cost = labCost(l)
                 const mg = isBill(l) && bill > 0 ? ((bill - cost) / bill) * 100 : null
                 const job = jobs.find(j => j.id === l.job_id)
@@ -393,11 +397,14 @@ export default function Labour() {
                           if (v !== cr) quick(l, { charge_rate: v })
                         }} />
                     </td>
-                    <td className="px-2.5 py-[7px] font-bold" style={{ color: '#2563eb' }}>
-                      {fmtCurrency(bill)}
-                      {mg !== null && (
-                        <div className="text-[9px] font-semibold" style={{ color: mg >= 20 ? '#16a34a' : '#d97706' }}>{mg.toFixed(0)}% margin</div>
-                      )}
+                    <td className="px-2.5 py-[7px] font-bold" style={{ color: noCharge ? '#92400e' : '#2563eb' }}>
+                      {noCharge ? '—' : fmtCurrency(bill)}
+                      {noCharge
+                        ? <div className="text-[9px] font-semibold text-[#92400e]"
+                            title="Logged against the job and costing you, but never invoiced">not billed</div>
+                        : mg !== null && (
+                          <div className="text-[9px] font-semibold" style={{ color: mg >= 20 ? '#16a34a' : '#d97706' }}>{mg.toFixed(0)}% margin</div>
+                        )}
                     </td>
                     <td className="px-2.5 py-[7px]">
                       <select value={l.billing_type ?? 'Hourly'} className={`${IS} text-[11px]`}

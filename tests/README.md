@@ -32,6 +32,7 @@ Each one exists because something specific went wrong, or was about to:
 | `jobpagecheck` | The job page's headline and its table agree; cost is never charge |
 | `jobprofitcheck` | A job is valued on its own basis: agreed price, or work logged |
 | `keycheck` | No two queries share a cache key while returning different columns |
+| `notbillablecheck` | Work the client never pays for: in the cost, never in the billing |
 | `labourtilescheck` | Only hourly work counts as billable; fixed-quote hours do not |
 | `linecheck` | Invoice lines, and add-ons becoming lines without being billed twice |
 | `partlabourcheck` | Pinning a process step's labour to a part of a split quote |

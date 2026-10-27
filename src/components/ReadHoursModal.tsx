@@ -14,7 +14,7 @@ import { useState, useMemo } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { Modal } from '@/components/ui/Modal'
 import { useAuth } from '@/lib/auth'
-import { fmtCurrency, today, jobBillingType, findCrew, BILLING_TYPES } from '@/lib/utils'
+import { fmtCurrency, today, jobBillingType, findCrew, ENTRY_BILLING_TYPES } from '@/lib/utils'
 import { buildLabour, applyChange, emptyContext } from '@/lib/writes'
 import {
   parseHoursMessage, draftsFromAI, findDuplicateEntry, FORMAT_HINT,
@@ -285,7 +285,7 @@ export default function ReadHoursModal({
                             <select value={d.billing_type ?? String(change.row.billing_type ?? '')}
                               className={`${INL} cursor-pointer`}
                               onChange={e => patch(d.key, { billing_type: e.target.value })}>
-                              {BILLING_TYPES.map(b => <option key={b} value={b}>{b}</option>)}
+                              {ENTRY_BILLING_TYPES.map(b => <option key={b} value={b}>{b}</option>)}
                             </select>
                           </td>
                           <td className="px-1.5 py-1 w-[74px]">

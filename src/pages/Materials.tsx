@@ -10,6 +10,7 @@ import {
   findDuplicateMaterial, jobBillingType, type DuplicateHit, type InvoiceLineItem,
 } from '@/lib/utils'
 import { PAID_BY, isCashPaid } from '@/lib/cashBooks'
+import { NOT_BILLABLE } from '@/lib/utils'
 import { extractInvoice } from '@/lib/ai'
 import { useBusinessSettings } from '@/pages/SettingsPage'
 import {
@@ -20,7 +21,9 @@ import { invalidateTable } from '../lib/queryKeys'
 import { SyncedInput } from '@/components/ui/SyncedInput'
 
 const CATEGORIES = ['Paint', 'Primer/Undercoat', 'Filler/Putty', 'Tape/Masking', 'Brushes/Rollers', 'Sandpaper/Prep', 'Caulk/Sealant', 'Solvent/Cleaner', 'Hardware', 'Other']
-const BILLING_TYPES = ['Fixed Quote', 'Hourly', 'Hourly/Estimate']
+// 'Not billable' is work or paint the client never pays for — making good a
+// defect. It still costs you, so it still counts against the job.
+const BILLING_TYPES = ['Fixed Quote', 'Hourly', 'Hourly/Estimate', NOT_BILLABLE]
 
 // V16 .ii / .is — borderless inline table controls
 const II = 'border-none bg-transparent text-[12.5px] w-full focus:outline-none focus:bg-blue-50/60 rounded px-0.5'

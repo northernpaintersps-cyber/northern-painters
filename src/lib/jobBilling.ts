@@ -382,11 +382,14 @@ export type InvoiceableLine = {
   description: string
   /** Labour only — lets the invoice summarise as "Labour — 24 hrs". */
   hours?: number
-  /** What the client is charged for this line, ex GST. */
+  /** What the client is charged for this line, ex GST. Nil when the work is
+   *  not billable: a defect you came back to fix costs you, not them. */
   amountExGST: number
   /** Already covered by another invoice on this job. */
   billed: boolean
   billedOn: string | null
+  /** Logged, costing you money, and never going on an invoice. */
+  notBillable?: boolean
 }
 
 /**
@@ -403,6 +406,16 @@ export function invoiceableLines(input: {
    * for a line with no hours recorded, which keeps its own billable figure.
    */
   rateOverride?: number
+  /**
+   * Include work that will never be invoiced — fixed-price entries on a
+   * fixed job, and anything marked Not billable.
+   *
+   * The invoice picker must not see these: a line you cannot charge for has
+   * no business being tickable. The job's own page does, because it is
+   * showing what the job cost, and a cost that vanished from the list while
+   * still counting in the total would be the page contradicting itself.
+   */
+  includeUnbillable?: boolean
 }): InvoiceableLine[] {
   const jobId = input.job?.id
   const markupPct = input.markupPct ?? 0
@@ -414,33 +427,48 @@ export function invoiceableLines(input: {
 
   const out: InvoiceableLine[] = []
 
-  ;(input.labour ?? []).filter(l => l.job_id === jobId && isBillableLabour(l)).forEach(l => {
-    out.push({
-      kind: 'labour',
-      id: String(l.id),
-      date: l.date ?? '',
-      description: [l.sub, l.labour_desc].filter(Boolean).join(' — ')
-        || `${l.hours ?? 0} hrs labour`,
-      hours: Number(l.hours) || 0,
-      amountExGST: rate > 0 && Number(l.hours)
-        ? Math.round(Number(l.hours) * rate * 100) / 100
-        : labBillable(l),
-      billed: billed.labour.has(String(l.id)),
-      billedOn: whichInvoice('labour', String(l.id)),
-    })
-  })
+  const all = !!input.includeUnbillable
 
-  ;(input.materials ?? []).filter(m => m.job_id === jobId && isBillableMaterial(m)).forEach(m => {
-    out.push({
-      kind: 'material',
-      id: String(m.id),
-      date: m.date ?? '',
-      description: [m.supplier, m.mat_desc].filter(Boolean).join(' — ') || 'Materials',
-      amountExGST: Math.round(matCost(m) * (1 + markupPct / 100) * 100) / 100,
-      billed: billed.materials.has(String(m.id)),
-      billedOn: whichInvoice('materials', String(m.id)),
+  ;(input.labour ?? [])
+    .filter(l => l.job_id === jobId && (all || isBillableLabour(l)))
+    .forEach(l => {
+      const chargeable = isBillableLabour(l)
+      out.push({
+        kind: 'labour',
+        id: String(l.id),
+        date: l.date ?? '',
+        description: [l.sub, l.labour_desc].filter(Boolean).join(' — ')
+          || `${l.hours ?? 0} hrs labour`,
+        hours: Number(l.hours) || 0,
+        // Nothing to charge for work nobody is being charged for. The hours
+        // and their cost are untouched: they happened and they were paid.
+        amountExGST: !chargeable ? 0
+          : rate > 0 && Number(l.hours)
+            ? Math.round(Number(l.hours) * rate * 100) / 100
+            : labBillable(l),
+        billed: billed.labour.has(String(l.id)),
+        billedOn: whichInvoice('labour', String(l.id)),
+        ...(chargeable ? {} : { notBillable: true }),
+      })
     })
-  })
+
+  ;(input.materials ?? [])
+    .filter(m => m.job_id === jobId && (all || isBillableMaterial(m)))
+    .forEach(m => {
+      const chargeable = isBillableMaterial(m)
+      out.push({
+        kind: 'material',
+        id: String(m.id),
+        date: m.date ?? '',
+        description: [m.supplier, m.mat_desc].filter(Boolean).join(' — ') || 'Materials',
+        amountExGST: chargeable
+          ? Math.round(matCost(m) * (1 + markupPct / 100) * 100) / 100
+          : 0,
+        billed: billed.materials.has(String(m.id)),
+        billedOn: whichInvoice('materials', String(m.id)),
+        ...(chargeable ? {} : { notBillable: true }),
+      })
+    })
 
   return out.sort((a, b) => (a.date || '').localeCompare(b.date || '') || a.kind.localeCompare(b.kind))
 }

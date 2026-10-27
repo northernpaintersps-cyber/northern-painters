@@ -17,7 +17,7 @@ import { invalidateTable } from '@/lib/queryKeys'
 import {
   genId, today, fmtCurrency, fmtDate, normaliseDate,
   findOverlappingLabour, findDuplicateMaterial, jobBillingType,
-  deriveScheduledDates, getJobScheduledDates, findCrew, crewLabel, BILLING_TYPES,
+  deriveScheduledDates, getJobScheduledDates, findCrew, crewLabel, ENTRY_BILLING_TYPES,
 } from '@/lib/utils'
 import { workingDatesFrom } from '@/lib/derive'
 import { jobPhases, findPhaseByName } from '@/lib/phases'
@@ -163,7 +163,7 @@ export function buildLabour(ctx: WriteContext, r: LabourRequest): Change {
 
   // Both default from what is already recorded — the job's terms and the
   // worker's own arrangement — and both can be overridden per entry.
-  const billingType = (BILLING_TYPES as readonly string[]).includes(String(r.billing_type))
+  const billingType = (ENTRY_BILLING_TYPES as readonly string[]).includes(String(r.billing_type))
     ? String(r.billing_type)
     : jobBillingType(job)
   const paidCash = String(r.worker_payment_type ?? member?.payment_type ?? 'ABN').trim() === 'Cash'

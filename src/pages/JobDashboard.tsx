@@ -134,8 +134,12 @@ export default function JobDashboard() {
     markupPct,
   }) : null, [job, invoices, labour, materials, variations, schedules, id, markupPct])
 
+  // Everything logged, billable or not. A defect you came back to fix costs
+  // you and belongs on this page; it simply has nothing in the charge
+  // column. Leaving it out would make the table disagree with the cost it
+  // is sitting under.
   const lines = useMemo(() => job
-    ? invoiceableLines({ job, invoices, labour, materials, markupPct })
+    ? invoiceableLines({ job, invoices, labour, materials, markupPct, includeUnbillable: true })
     : [], [job, invoices, labour, materials, markupPct])
 
   const mine = <T extends Row>(rows: T[]) => rows.filter(r => String(r.job_id ?? '') === id)
@@ -175,7 +179,12 @@ export default function JobDashboard() {
 
   const cash = isCashJob(job)
   const gstNote = jobGstRate(job) ? 'ex GST' : 'cash, no GST'
-  const unbilledLines = lines.filter(l => !l.billed)
+  // Still to bill: logged, chargeable, and on no invoice. Work that is not
+  // billable is none of those things — it is never waiting to be invoiced.
+  const unbilledLines = lines.filter(l => !l.billed && !l.notBillable)
+  const notBillable = lines.filter(l => l.notBillable)
+  const notBillableCost = notBillable.reduce(
+    (t, l) => t + (lineCost(l, jobLabour, jobMaterials) ?? 0), 0)
   const shown = onlyUnbilled ? unbilledLines : lines
   const leftToInvoice = unbilledLines.reduce((s, l) => s + l.amountExGST, 0)
   const margin = b.billableToDateExGST > 0
@@ -299,10 +308,19 @@ export default function JobDashboard() {
             tone={margin == null ? undefined : margin >= 30 ? GOOD : margin >= 15 ? '#d97706' : BAD} />
           <div className="mt-2 pt-2 border-t border-black/[0.06]">
             <Figure label="Left to invoice" value={fmtCurrency(leftToInvoice)} tone={CHARGE}
-              sub={`${unbilledLines.length} logged ${unbilledLines.length === 1 ? 'line' : 'lines'} not yet billed`}
+              sub={<>
+                {unbilledLines.length} logged {unbilledLines.length === 1 ? 'line' : 'lines'} not yet billed
+                {notBillable.length > 0 && (
+                  <span className="block text-[#92400e]">
+                    {fmtCurrency(notBillableCost)} of work is not billable and is not in this
+                  </span>
+                )}
+              </>}
               help={<>Work logged on this job that no invoice covers yet, at charge rates.
-                <TipCalc>Every labour and material line not named on an invoice and not inside
-                a period an invoice claims. The table below lists them.</TipCalc></>} />
+                <TipCalc>Every chargeable labour and material line not named on an invoice and
+                not inside a period an invoice claims. Work marked <b>Not billable</b> — making
+                good a defect, say — is left out: it cost you, so it is in the cost and in the
+                margin, but nobody is ever going to pay it.</TipCalc></>} />
             {b.overBilledIncGST > 0 && (
               <Figure label="Over-billed" value={fmtCurrency(b.overBilledIncGST)} tone={BAD} />
             )}
@@ -350,7 +368,9 @@ export default function JobDashboard() {
                 {shown.map(l => {
                   const cost = lineCost(l, jobLabour, jobMaterials)
                   return (
-                    <tr key={`${l.kind}-${l.id}`} className={`border-b border-black/[0.06] ${l.billed ? '' : 'bg-[#fcfcfa]'}`}>
+                    <tr key={`${l.kind}-${l.id}`}
+                      className={`border-b border-black/[0.06] ${
+                        l.notBillable ? 'bg-[#fffdf6]' : l.billed ? '' : 'bg-[#fcfcfa]'}`}>
                       <td className="px-2 py-1">
                         <span className={`inline-block px-1.5 py-0.5 rounded-full text-[9px] font-semibold ${
                           l.kind === 'labour' ? 'bg-[#dbeafe] text-[#1e40af]' : 'bg-[#f3e8ff] text-[#6b21a8]'}`}>
@@ -363,14 +383,19 @@ export default function JobDashboard() {
                         {cost != null ? fmtCurrency(cost) : '—'}
                       </td>
                       <td className="px-2 py-1 text-right tabular-nums font-medium" style={{ color: CHARGE }}>
-                        {fmtCurrency(l.amountExGST)}
+                        {l.notBillable ? <span className="text-[#666]">—</span> : fmtCurrency(l.amountExGST)}
                       </td>
                       <td className="px-2 py-1 whitespace-nowrap">
-                        {l.billed
-                          ? <span className="text-[10.5px] text-[#166534] flex items-center gap-1">
-                              <Check size={11} /> {l.billedOn ?? 'yes'}
+                        {l.notBillable
+                          ? <span className="text-[10.5px] text-[#92400e]"
+                              title="Logged against the job and costing you, but never invoiced">
+                              not billable
                             </span>
-                          : <span className="text-[10.5px] font-semibold text-[#92400e]">not yet</span>}
+                          : l.billed
+                            ? <span className="text-[10.5px] text-[#166534] flex items-center gap-1">
+                                <Check size={11} /> {l.billedOn ?? 'yes'}
+                              </span>
+                            : <span className="text-[10.5px] font-semibold text-[#92400e]">not yet</span>}
                       </td>
                     </tr>
                   )
@@ -397,7 +422,8 @@ export default function JobDashboard() {
         )}
         <div className="text-[10px] text-[#666] mt-2">
           <b style={{ color: COST }}>Cost</b> is what you paid for the work.{' '}
-          <b style={{ color: CHARGE }}>Charge</b> is what the client is billed for it.
+          <b style={{ color: CHARGE }}>Charge</b> is what the client is billed for it, and is
+          blank on work marked not billable.
           {b.basis === 'fixed' && <> On a fixed-price job the charge column is what those hours
             would be worth billed out — the client pays the agreed price regardless.</>}
         </div>
