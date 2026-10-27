@@ -16,6 +16,7 @@ import {
   fmtCurrency, fmtDate, nextJobId, genId,
   deriveScheduledDates, crewLabel, today,
 } from '@/lib/utils'
+import { jobValue } from '@/lib/jobBilling'
 import { Plus, Loader2, Trash2, Edit2, Users, Clock } from 'lucide-react'
 import { invalidateTable } from '@/lib/queryKeys'
 import { EXPOSURE_OPTIONS, EXPOSURE_LABELS, deriveExposure, normalise } from '@/lib/exposure'
@@ -372,12 +373,17 @@ function CostTrackerTab({ job, jobId, substrates, onSubstrates, quotedOnly }: {
 
   const quotedLabour   = job.est_labour_ex ?? 0
   const quotedMaterials = job.est_materials_ex ?? 0
-  const agreedValue    = job.agreed_ex_gst ?? job.quote_ex_gst ?? 0
 
   const actualLabour   = labourEntries.reduce((s, e) => s + (e.cost ?? (e.hours ?? 0) * (e.rate ?? 0)), 0)
   const actualMaterials = materialEntries.reduce((s, m) => s + (m.cost_ex_gst ?? 0), 0)
   const approvedVarValue = variations.reduce((s, v) => s + (v.amount_ex_gst ?? 0), 0)
-  const totalRevenue   = agreedValue + approvedVarValue
+  // What the job is worth on its own basis, so this tab agrees with the job
+  // page and the Costs page. On an hourly job the agreed price is zero and
+  // judging it against that reported the whole cost as a loss.
+  const value = jobValue({
+    job, labour: labourEntries, materials: materialEntries, variations,
+  })
+  const totalRevenue   = value.revenueExGST
 
   const actualTotal    = actualLabour + actualMaterials
   const quotedTotal    = quotedLabour + quotedMaterials

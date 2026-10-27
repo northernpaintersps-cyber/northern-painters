@@ -17,7 +17,7 @@
 
 import {
   jobGstRate, isCashJob, invIncGST, invExGST, calcOwed,
-  labBillable, isBillableLabour,
+  labBillable, labCost, isBillableLabour,
   matCost, isBillableMaterial,
   parseMilestones, type Milestone,
 } from './utils'
@@ -92,6 +92,129 @@ export function billingBasis(job: Row | undefined): BillingBasis {
   return terms.includes('hourly') || terms.includes('estimate') ? 'actuals' : 'fixed'
 }
 
+/**
+ * What a job is worth, which depends on how it is being billed.
+ *
+ * A fixed-price job is worth the agreed sum however many hours it takes. An
+ * hourly or estimate job has no agreed sum — it is worth the work logged
+ * against it, at charge rates. Judging the second kind against
+ * `agreed_ex_gst`, which is zero or a rough guess, reported a margin of
+ * nothing or of minus everything it had cost.
+ *
+ * Approved add-ons count on either basis. Pending ones do not: nobody has
+ * agreed to pay for them yet.
+ */
+export function jobValue(input: {
+  job: Row
+  labour?: Row[]
+  materials?: Row[]
+  variations?: Row[]
+  markupPct?: number
+}): {
+  basis: BillingBasis
+  /** What the job is worth, ex GST. */
+  revenueExGST: number
+  /** What to call it on screen, since it means two different things. */
+  label: string
+  contractExGST: number
+  labourBillableExGST: number
+  materialsBillableExGST: number
+  materialsMarkupExGST: number
+  variationsExGST: number
+} {
+  const { job } = input
+  const markupPct = input.markupPct ?? 0
+  const basis = billingBasis(job)
+
+  const variationsExGST = (input.variations ?? [])
+    .filter(v => v.var_status === 'Approved')
+    .reduce((s, v) => s + (v.amount_ex_gst || 0), 0)
+
+  let contractExGST = 0
+  let labourBillableExGST = 0
+  let materialsBillableExGST = 0
+  let materialsMarkupExGST = 0
+
+  if (basis === 'fixed') {
+    contractExGST = job?.agreed_ex_gst || job?.quote_ex_gst || 0
+  } else {
+    labourBillableExGST = (input.labour ?? [])
+      .filter(isBillableLabour)
+      .reduce((s, l) => s + labBillable(l), 0)
+    const matCostExGST = (input.materials ?? [])
+      .filter(isBillableMaterial)
+      .reduce((s, m) => s + matCost(m), 0)
+    materialsMarkupExGST = matCostExGST * (markupPct / 100)
+    materialsBillableExGST = matCostExGST + materialsMarkupExGST
+  }
+
+  return {
+    basis,
+    revenueExGST: basis === 'fixed'
+      ? contractExGST + variationsExGST
+      : labourBillableExGST + materialsBillableExGST + variationsExGST,
+    label: basis === 'fixed' ? 'Agreed price' : 'Billable to date',
+    contractExGST, labourBillableExGST, materialsBillableExGST,
+    materialsMarkupExGST, variationsExGST,
+  }
+}
+
+/**
+ * A job's profit, for the pages that list many of them.
+ *
+ * Revenue is what the job is worth on its own basis; cost is what the work
+ * has actually taken out. The two cover the same period — logged work is in
+ * both, invoiced or not — which is what makes the margin mean something
+ * mid-job. Money invoiced and money received are separate questions and are
+ * not this.
+ *
+ * `margin` is null rather than 0 when there is nothing to measure against,
+ * so "no figures yet" and "made nothing" stay different on screen.
+ */
+export function jobProfit(input: {
+  job: Row
+  labour?: Row[]
+  materials?: Row[]
+  variations?: Row[]
+  markupPct?: number
+}): {
+  basis: BillingBasis
+  label: string
+  revenueExGST: number
+  labourCostExGST: number
+  materialCostExGST: number
+  costExGST: number
+  grossProfit: number
+  margin: number | null
+} {
+  const value = jobValue(input)
+  const labourCostExGST = (input.labour ?? []).reduce((s, l) => s + labCost(l), 0)
+  const materialCostExGST = (input.materials ?? []).reduce((s, m) => s + matCost(m), 0)
+  const costExGST = labourCostExGST + materialCostExGST
+  return {
+    basis: value.basis,
+    label: value.label,
+    revenueExGST: value.revenueExGST,
+    labourCostExGST, materialCostExGST, costExGST,
+    grossProfit: value.revenueExGST - costExGST,
+    margin: value.revenueExGST > 0
+      ? ((value.revenueExGST - costExGST) / value.revenueExGST) * 100
+      : null,
+  }
+}
+
+/** Rows grouped by job, so a list page filters its tables once and not per job. */
+export function byJob<T extends Row>(rows: T[]): Map<string, T[]> {
+  const out = new Map<string, T[]>()
+  for (const r of rows) {
+    const id = String(r?.job_id ?? '')
+    if (!id) continue
+    const list = out.get(id)
+    if (list) list.push(r); else out.set(id, [r])
+  }
+  return out
+}
+
 export function computeJobBilling(input: {
   job: Row
   invoices: Row[]
@@ -110,35 +233,13 @@ export function computeJobBilling(input: {
   const materials = (input.materials ?? []).filter(m => m.job_id === jobId)
   const variations = (input.variations ?? []).filter(v => v.job_id === jobId)
 
-  const basis = billingBasis(job)
-
-  // Approved variations are extra agreed work on either basis — on an hourly
-  // job the hours land in labour, but a fixed-price variation is its own sum.
-  const variationsExGST = variations
-    .filter(v => v.var_status === 'Approved')
-    .reduce((s, v) => s + (v.amount_ex_gst || 0), 0)
-
-  let contractExGST = 0
-  let labourBillableExGST = 0
-  let materialsBillableExGST = 0
-  let materialsMarkupExGST = 0
-
-  if (basis === 'fixed') {
-    contractExGST = job?.agreed_ex_gst || job?.quote_ex_gst || 0
-  } else {
-    labourBillableExGST = labour
-      .filter(isBillableLabour)
-      .reduce((s, l) => s + labBillable(l), 0)
-    const matCostExGST = materials
-      .filter(isBillableMaterial)
-      .reduce((s, m) => s + matCost(m), 0)
-    materialsMarkupExGST = matCostExGST * (markupPct / 100)
-    materialsBillableExGST = matCostExGST + materialsMarkupExGST
-  }
-
-  const billableToDateExGST = basis === 'fixed'
-    ? contractExGST + variationsExGST
-    : labourBillableExGST + materialsBillableExGST + variationsExGST
+  // What the job is worth, on its own basis. Approved variations are extra
+  // agreed work either way — on an hourly job the hours land in labour, but
+  // a fixed-price variation is its own sum.
+  const {
+    basis, contractExGST, labourBillableExGST, materialsBillableExGST,
+    materialsMarkupExGST, variationsExGST, revenueExGST: billableToDateExGST,
+  } = jobValue({ job, labour, materials, variations, markupPct })
   // A cash job is not invoiced, so no GST is added on top of what was agreed.
   const gstRate = jobGstRate(job)
   const billableToDateIncGST = Math.round(billableToDateExGST * (1 + gstRate) * 100) / 100

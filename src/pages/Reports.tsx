@@ -2,7 +2,9 @@ import { useState, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { supabase, selectAll } from '@/lib/supabase'
 import { useAuth } from '@/lib/auth'
-import { fmtCurrency, fmtDate, inYear, grossMargin } from '@/lib/utils'
+import { fmtCurrency, fmtDate, inYear } from '@/lib/utils'
+import { jobProfit, byJob } from '@/lib/jobBilling'
+import { useBusinessSettings } from '@/pages/SettingsPage'
 import { fyLabel, fyOptions, currentFY, inFY } from '@/lib/fy'
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -21,6 +23,7 @@ function useAll() {
   const materials = useQuery<any[]>({ queryKey: ['rep_mat', uid],       enabled: !!uid, queryFn: async () => { const { data } = await selectAll('np_materials', uid!); return data ?? [] } })
   const expenses  = useQuery<any[]>({ queryKey: ['rep_exp', uid],       enabled: !!uid, queryFn: async () => { const { data } = await selectAll('np_expenses', uid!); return data ?? [] } })
   const enquiries = useQuery<any[]>({ queryKey: ['rep_enq', uid],       enabled: !!uid, queryFn: async () => { const { data } = await selectAll('np_enquiries', uid!); return data ?? [] } })
+  const variations = useQuery<any[]>({ queryKey: ['rep_var', uid],     enabled: !!uid, queryFn: async () => { const { data } = await selectAll('np_variations', uid!); return data ?? [] } })
   const assignments = useQuery<any[]>({ queryKey: ['rep_asg', uid],     enabled: !!uid, queryFn: async () => { const { data } = await selectAll('np_assignments', uid!); return data ?? [] } })
   const adsSpend  = useQuery<any[]>({ queryKey: ['rep_ads', uid],       enabled: !!uid, queryFn: async () => { const { data } = await selectAll('np_ads_spend', uid!); return data ?? [] } })
 
@@ -30,6 +33,7 @@ function useAll() {
     loading,
     jobs:        jobs.data ?? [],
     invoices:    invoices.data ?? [],
+    variations:  variations.data ?? [],
     labour:      labour.data ?? [],
     materials:   materials.data ?? [],
     expenses:    expenses.data ?? [],
@@ -109,7 +113,12 @@ function downloadCSV(content: string, filename: string) {
 }
 
 export default function Reports() {
-  const { loading, jobs, invoices, labour, materials, expenses, enquiries, adsSpend } = useAll()
+  const { loading, jobs, invoices, labour, materials, variations, expenses, enquiries, adsSpend } = useAll()
+  const { data: biz } = useBusinessSettings()
+  const markupPct = Number(biz?.default_markup_pct) || 0
+  const labourBy = useMemo(() => byJob(labour), [labour])
+  const matBy = useMemo(() => byJob(materials), [materials])
+  const varBy = useMemo(() => byJob(variations), [variations])
 
   // Australian financial years, 1 July to 30 June — the same periods the Tax
   // page and the Dashboard report on, so a figure here matches one there.
@@ -180,14 +189,26 @@ export default function Reports() {
 
   // ── Margin per job (top 10) ───────────────────────────────────
   const jobMarginData = useMemo(() => {
+    // No agreed_ex_gst filter: that is what kept every hourly job off this
+    // chart, since an hourly job has no agreed price. A job is in it if it is
+    // worth something on its own basis.
     return jobs
-      .filter(j => (j.agreed_ex_gst ?? 0) > 0 && inYear(j.sched_start, selYear))
+      .filter(j => inYear(j.sched_start, selYear))
       .map(j => {
-        const labCost = labour.filter(l => l.job_id === j.id).reduce((s, l) => s + (l.cost ?? (l.hours ?? 0) * (l.rate ?? 0)), 0)
-        const matCost = materials.filter(m => m.job_id === j.id).reduce((s, m) => s + (m.cost_ex_gst ?? 0), 0)
-        const margin  = grossMargin(j.agreed_ex_gst ?? 0, labCost, matCost)
-        return { name: `${j.id}`, client: j.client || '', revenue: j.agreed_ex_gst ?? 0, margin: parseFloat(margin.toFixed(1)) }
+        const money = jobProfit({
+          job: j,
+          labour: labourBy.get(String(j.id)) ?? [],
+          materials: matBy.get(String(j.id)) ?? [],
+          variations: varBy.get(String(j.id)) ?? [],
+          markupPct,
+        })
+        return {
+          name: `${j.id}`, client: j.client || '',
+          revenue: money.revenueExGST,
+          margin: parseFloat((money.margin ?? 0).toFixed(1)),
+        }
       })
+      .filter(r => r.revenue > 0)
       .sort((a, b) => b.revenue - a.revenue)
       .slice(0, 10)
   }, [jobs, labour, materials, selYear])

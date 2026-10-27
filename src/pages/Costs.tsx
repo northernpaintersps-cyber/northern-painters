@@ -9,6 +9,7 @@ import { invalidateTable } from '../lib/queryKeys'
 import { SyncedInput } from '@/components/ui/SyncedInput'
 import InfoTip, { TipCalc } from '@/components/InfoTip'
 import { jobHours, hoursSummary, hoursColour, hoursLabel } from '@/lib/hours'
+import { jobProfit, byJob } from '@/lib/jobBilling'
 
 const JS_OPTS = ['Not Started','Scheduled','In Progress','Hourly Rate Accepted','Finished','Closed']
 const QS_OPTS = ['Info Collected','Site Visit','Quote Created','Sent','Negotiating','Accepted','Booked','Not Accepted','Lost']
@@ -96,12 +97,34 @@ export default function Costs() {
     enabled: !!user,
   })
   const rate0 = settings?.rates?.standard ?? 65
+  const markupPct = Number(settings?.default_markup_pct) || 0
+  const { data: variations = [] } = useTable('np_variations')
 
   const [q, setQ] = useState('')
   const [jobStatus, setJobStatus] = useState('')
   const [quoteStatus, setQuoteStatus] = useState('')
   const [showHours, setShowHours] = useState(true)
   const anyFilter = !!(q || jobStatus || quoteStatus)
+
+  // Grouped once rather than filtered per job, which is what these pages did.
+  const labourBy = useMemo(() => byJob(labour), [labour])
+  const matBy = useMemo(() => byJob(materials), [materials])
+  const varBy = useMemo(() => byJob(variations), [variations])
+
+  /**
+   * What a job is worth and what it has made.
+   *
+   * A fixed job is worth its agreed price. An hourly one is worth the work
+   * logged at charge rates — judging it against `agreed_ex_gst`, which is
+   * zero on those jobs, reported minus the whole cost as the profit.
+   */
+  const profitOf = (job: any) => jobProfit({
+    job,
+    labour: labourBy.get(String(job.id)) ?? [],
+    materials: matBy.get(String(job.id)) ?? [],
+    variations: varBy.get(String(job.id)) ?? [],
+    markupPct,
+  })
 
   const labourOf = (id: string) => labour.filter(l => l.job_id === id)
   const matOf = (id: string) => materials.filter(m => m.job_id === id)
@@ -124,7 +147,7 @@ export default function Costs() {
   }, [jobs, labour, materials, q, jobStatus, quoteStatus])
 
   // Totals
-  const totAgreed = costJobs.reduce((s, j) => s + (j.agreed_ex_gst || 0), 0)
+  const totAgreed = costJobs.reduce((s, j) => s + profitOf(j).revenueExGST, 0)
   const totLabSpent = costJobs.reduce((s, j) => s + labSpentOf(j.id), 0)
   const totMatSpent = costJobs.reduce((s, j) => s + matSpentOf(j.id), 0)
   const totSpent = totLabSpent + totMatSpent
@@ -146,7 +169,14 @@ export default function Costs() {
       {/* KPI metrics */}
       <div className="grid gap-2.5 mb-3.5" style={{ gridTemplateColumns: 'repeat(auto-fit,minmax(140px,1fr))' }}>
         {[
-          { l: 'Total agreed', v: fmtCurrency(totAgreed), c: '#16a34a' },
+          {
+            l: 'Total job value', v: fmtCurrency(totAgreed), c: '#16a34a',
+            help: <>What these jobs are worth, each on its own basis: a fixed job its agreed
+              price, an hourly one the work logged against it at charge rates.
+              <TipCalc>An hourly job has no agreed price, so measuring it against one reported
+              its whole cost as a loss. Approved add-ons count on either basis; pending ones
+              do not, since nobody has agreed to pay for them yet.</TipCalc></>,
+          },
           { l: 'Labour spent', v: fmtCurrency(totLabSpent) },
           { l: 'Materials spent', v: fmtCurrency(totMatSpent) },
           { l: 'Total spent', v: fmtCurrency(totSpent), c: spentRatio > 0.9 ? '#dc2626' : spentRatio > 0.7 ? '#d97706' : undefined },
@@ -158,7 +188,14 @@ export default function Costs() {
               <TipCalc>Each job&rsquo;s labour estimate divided by its quoted rate, less the hours
               logged against it. Jobs with no labour estimate are not in it.</TipCalc></>,
           },
-          { l: 'Est. gross profit', v: fmtCurrency(totGP), c: totGP >= 0 ? '#16a34a' : '#dc2626' },
+          {
+            l: 'Est. gross profit', v: fmtCurrency(totGP), c: totGP >= 0 ? '#16a34a' : '#dc2626',
+            help: <>Job value less what the work has cost — labour at its cost rate, plus
+              materials.
+              <TipCalc>Both sides cover the same period: work logged and not yet invoiced is
+              in the value and in the cost. On a fixed job still running this flatters, because
+              the price is settled and the costs are not all in.</TipCalc></>,
+          },
         ].map(m => (
           <div key={m.l} className="bg-[#f5f4f0] rounded-lg px-4 py-3.5">
             <div className="text-[11px] text-[#666] mb-1 flex items-center gap-1">
@@ -292,14 +329,16 @@ export default function Costs() {
         const labSpent = labSpentOf(j.id)
         const matSpent = matSpentOf(j.id)
         const hrsLogged = hrsOf(j.id)
-        const agreed = j.agreed_ex_gst || 0
+        // What this job is worth on its own basis, not its agreed price.
+        const money = profitOf(j)
+        const agreed = money.revenueExGST
         const labBudget = j.est_labour_ex || 0
         const matBudget = j.est_materials_ex || 0
         const hasBreakdown = labBudget > 0 || matBudget > 0
         const costBudget = labBudget + matBudget
         const totalSpent = labSpent + matSpent
-        const estGP = agreed - totalSpent
-        const estMg = agreed > 0 ? (estGP / agreed) * 100 : null
+        const estGP = money.grossProfit
+        const estMg = money.margin
         const jh = jobHours(j, labour, rate0)
         const hrsBudgeted = jh.budgeted
         const hrsRemaining = jh.remaining
@@ -339,7 +378,12 @@ export default function Costs() {
                 </div>
               </div>
               <div className="flex flex-col items-end gap-0.5 shrink-0">
-                <div className="text-[10px] font-bold text-[#666] uppercase tracking-wide">Agreed ex GST</div>
+                <div className="text-[10px] font-bold text-[#666] uppercase tracking-wide"
+                  title={money.basis === 'fixed'
+                    ? 'The agreed price. A fixed job is worth this however many hours it takes.'
+                    : 'Billable to date: the work logged on this job at charge rates. An hourly job has no agreed price.'}>
+                  {money.label} ex GST
+                </div>
                 <div className="text-xl font-extrabold text-[#1a1a18] tabular-nums">{fmtCurrency(agreed)}</div>
                 <button onClick={() => nav('/jobs')}
                   className="flex items-center gap-1 text-[10px] px-2 py-0.5 mt-0.5 bg-white border border-black/20 rounded-md hover:bg-[#f5f4f0]">

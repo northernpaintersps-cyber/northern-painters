@@ -8,6 +8,7 @@ import { fmtCurrency, calcOwed, invStatus, normaliseDate, genId, crewLabel } fro
 import InfoTip, { TipCalc } from '@/components/InfoTip'
 import { fyLabel, fyRange, currentFY, currentQuarter, quarterRange, quarterLabel } from '@/lib/fy'
 import { dueTotals } from '@/lib/scheduled'
+import { jobProfit, byJob } from '@/lib/jobBilling'
 import {
   AlertCircle, UserPlus, Clock, Users, ExternalLink, Plus, Banknote,
   CalendarDays, BarChart3, CheckSquare, CalendarPlus,
@@ -161,6 +162,12 @@ export default function Dashboard() {
   // and on a cash job the pay schedule is the only record there is — that
   // money appears in no invoice, so `owed` above cannot see a dollar of it.
   const due = useMemo(() => dueTotals(schedules, jobs, todayStr, invoices), [schedules, jobs, todayStr, invoices])
+
+  // Grouped once for the job cards further down, rather than filtering the
+  // whole table per card.
+  const labourBy = useMemo(() => byJob(labour), [labour])
+  const matBy = useMemo(() => byJob(materials), [materials])
+  const varBy = useMemo(() => byJob(variations), [variations])
 
   // The Australian financial year and its BAS quarters — the same periods the
   // Tax page reports on, so a figure here and a figure there agree.
@@ -566,14 +573,24 @@ export default function Dashboard() {
               const labSpent = labour.filter(l => l.job_id === j.id).reduce((a, l) => a + (l.cost || (l.hours || 0) * (l.rate || 0)), 0)
               const matSpent = materials.filter(m => m.job_id === j.id).reduce((a, m) => a + (m.cost_ex_gst || 0), 0)
               const hrsLogged = labour.filter(l => l.job_id === j.id).reduce((a, l) => a + (l.hours || 0), 0)
-              const agreed = j.agreed_ex_gst || 0
+              // What the job is worth on its own basis. An hourly job has no
+              // agreed price, and measuring it against one showed its whole
+              // cost as a loss on every card.
+              const money = jobProfit({
+                job: j,
+                labour: labourBy.get(String(j.id)) ?? [],
+                materials: matBy.get(String(j.id)) ?? [],
+                variations: varBy.get(String(j.id)) ?? [],
+                markupPct: Number(settings?.default_markup_pct) || 0,
+              })
+              const agreed = money.revenueExGST
               const labBudget = j.est_labour_ex || 0
               const matBudget = j.est_materials_ex || 0
               const hasBd = labBudget > 0 || matBudget > 0
               const costBudget = hasBd ? labBudget + matBudget : agreed
               const totalSpent = labSpent + matSpent
-              const estGP = agreed - totalSpent
-              const estMg = agreed > 0 ? (estGP / agreed) * 100 : null
+              const estGP = money.grossProfit
+              const estMg = money.margin
               const hrsBudgeted = labBudget > 0 ? labBudget / rate : null
               const hrsRem = hrsBudgeted !== null ? hrsBudgeted - hrsLogged : null
               const labPct = labBudget > 0 ? labSpent / labBudget : agreed > 0 ? labSpent / agreed : null

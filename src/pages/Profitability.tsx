@@ -4,6 +4,8 @@ import { useQuery } from '@tanstack/react-query'
 import { supabase, selectAll } from '@/lib/supabase'
 import { useAuth } from '@/lib/auth'
 import { fmtCurrency, invExGST } from '@/lib/utils'
+import { jobProfit, byJob } from '@/lib/jobBilling'
+import { useBusinessSettings } from '@/pages/SettingsPage'
 import { Loader2, X } from 'lucide-react'
 
 const JS_OPTS = ['Not Started','Scheduled','In Progress','Hourly Rate Accepted','Finished','Closed']
@@ -32,6 +34,13 @@ export default function Profitability() {
   const { data: labour = [] } = useTable('np_labour')
   const { data: materials = [] } = useTable('np_materials')
   const { data: variations = [] } = useTable('np_variations')
+  const { data: biz } = useBusinessSettings()
+  const markupPct = Number(biz?.default_markup_pct) || 0
+
+  // Grouped once, rather than filtering every table for every job.
+  const labourBy = useMemo(() => byJob(labour), [labour])
+  const matBy = useMemo(() => byJob(materials), [materials])
+  const varBy = useMemo(() => byJob(variations), [variations])
 
   const [q, setQ] = useState('')
   const [jobStatus, setJobStatus] = useState('')
@@ -54,15 +63,29 @@ export default function Profitability() {
       // invExGST falls back to deriving from total_inc_gst — summing agreed_ex_gst
       // alone counted imported invoices that never had it set as zero revenue.
       const invoicedExGST = invoices.filter(i => i.job_id === j.id).reduce((s, i) => s + invExGST(i), 0)
-      const totalRevenue = (invoicedExGST || agreed) + vars
-      const labourCost = labour.filter(l => l.job_id === j.id).reduce((s, l) => s + (l.cost || (l.hours || 0) * (l.rate || 0)), 0)
-      const matCost = materials.filter(m => m.job_id === j.id).reduce((s, m) => s + (m.cost_ex_gst || 0), 0)
-      const totalCost = labourCost + matCost
-      const grossProfit = totalRevenue - totalCost
-      const margin = totalRevenue > 0 ? (grossProfit / totalRevenue) * 100 : null
+      // What the job is worth on its own basis — the agreed price on a fixed
+      // job, the logged work at charge rates on an hourly one. Invoiced is
+      // kept as its own column: it answers what has been billed, which is a
+      // different question from what the job has made, and using it as the
+      // revenue made margin read low until an invoice went out and jump when
+      // it did.
+      const money = jobProfit({
+        job: j,
+        labour: labourBy.get(String(j.id)) ?? [],
+        materials: matBy.get(String(j.id)) ?? [],
+        variations: varBy.get(String(j.id)) ?? [],
+        markupPct,
+      })
+      const totalRevenue = money.revenueExGST
+      const labourCost = money.labourCostExGST
+      const matCost = money.materialCostExGST
+      const totalCost = money.costExGST
+      const grossProfit = money.grossProfit
+      const margin = money.margin
       const estLab = j.est_labour_ex || 0
       const estMat = j.est_materials_ex || 0
-      return { j, quoted, agreed, vars, totalRevenue, labourCost, matCost, totalCost, grossProfit, margin, estLab, estMat }
+      return { j, quoted, agreed, vars, invoicedExGST, basis: money.basis, label: money.label,
+               totalRevenue, labourCost, matCost, totalCost, grossProfit, margin, estLab, estMat }
     }).filter(r => r.agreed > 0 || r.labourCost > 0 || r.matCost > 0)
 
     if (sortBy === 'revenue') mapped.sort((a, b) => b.totalRevenue - a.totalRevenue)
