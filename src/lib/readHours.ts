@@ -39,6 +39,9 @@ export interface ReadContext {
   todayStr: string
   /** Hours already logged, for "the job he has been on all week". */
   labour?: Row[]
+  /** What a day means in hours, from Settings. "2 days" is not a number of
+   *  hours until somebody says how long a day is. */
+  hoursPerDay?: number
 }
 
 export interface DraftEntry extends LabourRequest {
@@ -75,7 +78,31 @@ const norm = (s: unknown) => String(s ?? '').trim().toLowerCase()
 
 // ── Dates ────────────────────────────────────────────────────
 
-const WEEKDAYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday']
+/**
+ * Weekday names, in the languages these messages actually arrive in.
+ *
+ * A painting crew is not all English-speaking, and a message that says
+ * "lunes 8 horas" is a timesheet as much as "Monday 8h" is. Each row is the
+ * names for that day, Sunday first, longest-form first so a prefix match
+ * cannot shadow a longer name.
+ */
+const WEEKDAYS: string[][] = [
+  ['sunday', 'domingo', 'dom'],
+  ['monday', 'lunes', 'segunda', 'lun'],
+  ['tuesday', 'martes', 'terca', 'terça', 'mar'],
+  ['wednesday', 'wednes', 'miercoles', 'miércoles', 'quarta', 'mie', 'mié'],
+  ['thursday', 'thurs', 'jueves', 'quinta', 'jue'],
+  ['friday', 'viernes', 'sexta', 'vie'],
+  ['saturday', 'sabado', 'sábado', 'sab', 'sáb'],
+]
+
+/** Today and yesterday, in the same languages. */
+const TODAY_WORDS = ['today', 'hoy', 'hoje']
+const YESTERDAY_WORDS = ['yesterday', 'ayer', 'ontem']
+
+/** "week of 20/10", "w/c 20/10", "semana del 20/10" — anchors the weekdays
+ *  under it to that week rather than to the most recent one. */
+const WEEK_ANCHOR = /^(?:week\s*(?:of|beginning|starting|commencing)?|w\/c|wc|semana\s*(?:del|de)?)\s*:?\s*(.+)$/i
 
 /** Days back from `todayStr` as a local date string. Never through UTC. */
 function daysBefore(todayStr: string, back: number): string {
@@ -96,14 +123,38 @@ const weekdayOf = (iso: string): number => {
  * `23/10` with no year means this year, unless that would be in the future —
  * a message in January about `28/12` is about last month, not next December.
  */
-export function parseDate(text: string, todayStr: string): string | null {
+/** The day of the week a name refers to, or -1. */
+export function weekdayIndex(text: string): number {
+  const t = norm(text).replace(/[.,:]+$/, '')
+  if (!t) return -1
+  return WEEKDAYS.findIndex(names => names.some(n => n === t || (t.length >= 3 && n.startsWith(t))))
+}
+
+/**
+ * A date as a painter writes it.
+ *
+ * `weekOf` is a date inside a week named earlier in the message, so a
+ * weekday under "week of 20/10" lands in that week instead of the most
+ * recent one — which is how a message written up on Sunday about last week
+ * used to file every day seven days late.
+ */
+export function parseDate(text: string, todayStr: string, weekOf?: string): string | null {
   const t = norm(text).replace(/[.,]$/, '')
   if (!t) return null
-  if (t === 'today') return todayStr
-  if (t === 'yesterday') return daysBefore(todayStr, 1)
+  if (TODAY_WORDS.includes(t)) return todayStr
+  if (YESTERDAY_WORDS.includes(t)) return daysBefore(todayStr, 1)
 
-  const wd = WEEKDAYS.findIndex(d => d === t || d.slice(0, 3) === t)
+  const wd = weekdayIndex(t)
   if (wd >= 0) {
+    if (weekOf) {
+      // That day within the anchored week, counting the anchor's own week as
+      // Monday to Sunday.
+      const anchorDow = weekdayOf(weekOf)
+      const mondayBack = (anchorDow + 6) % 7
+      const monday = daysBefore(weekOf, mondayBack)
+      const offset = (wd + 6) % 7          // Monday is 0
+      return daysBefore(monday, -offset)
+    }
     // The most recent one, today included.
     const back = (weekdayOf(todayStr) - wd + 7) % 7
     return daysBefore(todayStr, back)
@@ -146,9 +197,21 @@ function asTime(text: string): string | null {
  * A bare number is only hours when it cannot be a span, which is why the
  * span is tried first.
  */
-export function parseHours(text: string): number | null {
+export function parseHours(text: string, hoursPerDay = 8): number | null {
   const t = norm(text).replace(/\s+/g, '')
   if (!t) return null
+
+  const hpd = Number(hoursPerDay) > 0 ? Number(hoursPerDay) : 8
+
+  // Days, because that is how the work is actually described: "2 days",
+  // "1d", "medio dia". A day is only a number of hours once Settings says
+  // how long one is.
+  if (/^(half|medio|media)(day|dia|día|jornada)?$/.test(t)) return r2(hpd / 2)
+  const days = /^(\d{1,2}(?:[.,]\d{1,2})?)(d|day|days|dia|dias|día|días|jornada|jornadas)$/.exec(t)
+  if (days) {
+    const v = Number(days[1].replace(',', '.'))
+    return Number.isFinite(v) && v > 0 && v <= 7 ? r2(v * hpd) : null
+  }
 
   // A span, with the break anywhere after it: 7:30-16:00 -30min
   const span = /^(\d{1,2}(?::\d{2})?)(?:am|pm)?(?:-|to|–)(\d{1,2}(?::\d{2})?)(?:am|pm)?(?:-?(\d{1,3})(?:min|m|mins)?)?$/.exec(t)
@@ -165,8 +228,8 @@ export function parseHours(text: string): number | null {
   const hm = /^(\d{1,2})h(\d{1,2})m?(?:in)?$/.exec(t)
   if (hm) return r2(Number(hm[1]) + Number(hm[2]) / 60)
 
-  // 8, 8h, 7.5, 7.5hrs
-  const plain = /^(\d{1,2}(?:[.,]\d{1,2})?)\s*(?:h|hr|hrs|hour|hours)?$/.exec(t)
+  // 8, 8h, 7.5, 7.5hrs, 8 horas
+  const plain = /^(\d{1,2}(?:[.,]\d{1,2})?)\s*(?:h|hs|hr|hrs|hour|hours|hora|horas)?$/.exec(t)
   if (plain) {
     const v = Number(plain[1].replace(',', '.'))
     return Number.isFinite(v) && v > 0 && v <= 24 ? r2(v) : null
@@ -174,8 +237,7 @@ export function parseHours(text: string): number | null {
   return null
 }
 
-/** Does this fragment look like hours at all? Used to split a multi-job line. */
-const looksLikeHours = (t: string) => parseHours(t) !== null
+
 
 // ── Jobs ─────────────────────────────────────────────────────
 
@@ -413,17 +475,29 @@ const isNoise = (line: string) =>
 export function parseHoursMessage(text: string, ctx: ReadContext): ReadResult {
   const entries: DraftEntry[] = []
   const unparsed: string[] = []
+  const hpd = Number(ctx.hoursPerDay) > 0 ? Number(ctx.hoursPerDay) : 8
   let worker = ''
   let workerMatched = false
   let lastDate = ''
+  // Set by a "week of 20/10" line, so the weekdays under it land in that
+  // week. Without it, a message written up on Sunday about last week filed
+  // every day of it seven days late.
+  let weekOf = ''
 
   for (const raw of String(text ?? '').split(/\r?\n/)) {
     const line = raw.trim()
     if (isNoise(line)) continue
 
+    // A week heading, in any of the forms people write it.
+    const anchor = WEEK_ANCHOR.exec(line)
+    if (anchor) {
+      const d = parseDate(anchor[1].trim(), ctx.todayStr)
+      if (d) { weekOf = d; lastDate = ''; continue }
+    }
+
     const w = words(line)
-    const hasHours = w.some(f => parseHours(f) !== null)
-    const hasDate = w.some(f => parseDate(f, ctx.todayStr) !== null)
+    const hasHours = w.some(f => parseHours(f, hpd) !== null)
+    const hasDate = w.some(f => parseDate(f, ctx.todayStr, weekOf) !== null)
 
     // No hours and no date on a short line: it names who the rest is about.
     if (!hasHours && !hasDate && w.length <= 3) {
@@ -431,7 +505,7 @@ export function parseHoursMessage(text: string, ctx: ReadContext): ReadResult {
       if (m.name) { worker = m.name; workerMatched = m.matched; continue }
     }
 
-    const got = readEntryLine(line, { worker, workerMatched, lastDate }, ctx)
+    const got = readEntryLine(line, { worker, workerMatched, lastDate, weekOf }, ctx)
     if (!got.length) { unparsed.push(line); continue }
     entries.push(...got.map(e => settleJob(e, ctx)))
     lastDate = got[got.length - 1].date ?? lastDate
@@ -448,11 +522,11 @@ export function parseHoursMessage(text: string, ctx: ReadContext): ReadResult {
  * parseHours already reads whole.
  */
 const BREAK = /^-\s*(\d{1,3})\s*(?:min|mins|m)?$/
-function mergeBreaks(w: string[]): string[] {
+function mergeBreaks(w: string[], hoursPerDay = 8): string[] {
   const out: string[] = []
   for (const token of w) {
     const prev = out[out.length - 1]
-    if (BREAK.test(token) && prev && parseHours(prev) !== null) {
+    if (BREAK.test(token) && prev && parseHours(prev, hoursPerDay) !== null) {
       out[out.length - 1] = prev + token.replace(/\s+/g, '')
       continue
     }
@@ -486,17 +560,18 @@ function pickJob(w: string[], jobs: Row[]): { match: JobMatch; note: string } {
  */
 function readEntryLine(
   line: string,
-  state: { worker: string; workerMatched: boolean; lastDate: string },
+  state: { worker: string; workerMatched: boolean; lastDate: string; weekOf?: string },
   ctx: ReadContext,
 ): DraftEntry[] {
-  const all = mergeBreaks(words(line))
+  const hpd = Number(ctx.hoursPerDay) > 0 ? Number(ctx.hoursPerDay) : 8
+  const all = mergeBreaks(words(line), hpd)
   if (!all.length) return []
 
   // The date, wherever it sits, read once for the whole line.
   let date = ''
   const rest: string[] = []
   for (const f of all) {
-    const d = !date ? parseDate(f, ctx.todayStr) : null
+    const d = !date ? parseDate(f, ctx.todayStr, state.weekOf) : null
     if (d) { date = d; continue }
     rest.push(f)
   }
@@ -506,7 +581,7 @@ function readEntryLine(
   const out: DraftEntry[] = []
   let bucket: string[] = []
   for (const f of rest) {
-    const h = parseHours(f)
+    const h = parseHours(f, hpd)
     if (h === null) { bucket.push(f); continue }
 
     // A worker named on the line itself wins over the heading above it.
@@ -602,8 +677,9 @@ export function findDuplicateEntry(entry: DraftEntry, labour: Row[]): Row | null
 /** The format, as it is shown in the modal and sent to the crew. */
 export const FORMAT_HINT = [
   'Francisco',
-  '23/10  NP-0083  8h  second coat',
-  '23/10  Kipling St  4h',
-  '24/10  Esmonde St  6.5h  prep',
-  '25/10  NP-0083  7:30-16:00 -30min',
+  'week of 19/10',
+  'Monday  NP-0083  8h  second coat',
+  'Tuesday  NP-0083  1 day',
+  'Wednesday  Kipling St  half day',
+  '22/10  NP-0083  7:30-16:00 -30min',
 ].join('\n')

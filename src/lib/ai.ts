@@ -1703,7 +1703,39 @@ THE REST
   other clue means the most recent one, not next week's.
 - If you cannot tell how many hours, do not invent a number — quote the text in unreadable.
 - Never add an entry the message does not support, and never repeat a line listed under
-  ALREADY READ. A missing entry is noticed; a wrong one is paid.`
+  ALREADY READ. A missing entry is noticed; a wrong one is paid.
+
+LANGUAGE
+Messages come in English, Spanish or Portuguese, and often in a mix. "lunes 8 horas",
+"medio día", "ayer", "ontem", "2 dias" all mean what they say. Answer with the crew names
+and job ids as the lists spell them, whatever language the message is in.
+
+DAYS AND HALF DAYS
+A day means the hours in HOURS PER DAY below, not eight unless that is what it says.
+"2 days" is two of those. "Half a day", "medio día" is half of one. A span of times is
+the hours between, less any break.
+
+WORKED EXAMPLES
+
+  Message: "Francisco — week of 20/10. Mon and Tues on Esmonde, 8h each. Weds half day
+            there then went to Kipling for the afternoon."
+  Entries: Francisco Rojas, 2026-10-20, NP-0083, 8
+           Francisco Rojas, 2026-10-21, NP-0083, 8
+           Francisco Rojas, 2026-10-22, NP-0083, 4
+           Francisco Rojas, 2026-10-22, NP-0091, 4
+  Note how the week heading fixes which Monday, how "there" carries the job forward, and
+  how one day split across two jobs becomes two entries.
+
+  Message: "jueves y viernes 8 horas cada uno en el trabajo de Byron, mas 2 horas sabado"
+  Entries: three entries, Thursday and Friday at 8 and Saturday at 2, all on the Byron job.
+
+  Message: "all good mate, see you Monday"
+  Entries: none. There are no hours in it. Do not invent a day.
+
+  Message: "Jake did the laundry ceiling Tuesday, took him about a day and a half"
+  Entries: Jake Miller, that Tuesday, 12 hours if a day is 8 — and job_said "the laundry
+           ceiling" with no id, because a room is not one of the jobs on the list unless
+           the list says so.`
 
 export interface AIHoursEntry {
   worker: string
@@ -1752,6 +1784,8 @@ export async function readHoursMessage(
     crew: string[]
     jobs: AIHoursJob[]
     todayStr: string
+    /** What a day means in hours, so "2 days" is not guessed at. */
+    hoursPerDay?: number
     /** Lines the format parser already turned into entries, so the AI has the
      *  whole message for context without reading any line twice. */
     alreadyRead?: string[]
@@ -1765,6 +1799,7 @@ export async function readHoursMessage(
 
   const user = [
     `Today is ${ctx.todayStr}, a ${new Date(ctx.todayStr + 'T00:00:00').toLocaleDateString('en-AU', { weekday: 'long' })}.`,
+    `HOURS PER DAY: ${Number(ctx.hoursPerDay) > 0 ? ctx.hoursPerDay : 8}`,
     '',
     `CREW\n${ctx.crew.join('\n') || '(none recorded)'}`,
     '',
@@ -1780,19 +1815,35 @@ export async function readHoursMessage(
     'Use the log_hours tool.',
   ].join('\n')
 
-  const raw = await callClaude(
+  const ask = (extra?: string) => callClaude(
     apiKey,
-    [{ role: 'user', content: user }],
+    [{ role: 'user', content: extra ? `${user}\n\n${extra}` : user }],
     HOURS_SYSTEM,
     // Sonnet, not Haiku: this is matching a scribbled reference against a list
     // of a hundred jobs, which is judgement rather than extraction, and the
     // cost of getting it wrong is hours on the wrong client's invoice.
-    { model: 'claude-sonnet-5', maxTokens: 2000, tool: HOURS_TOOL },
+    { model: 'claude-sonnet-5', maxTokens: 4000, tool: HOURS_TOOL },
   )
 
-  let parsed: any
-  try { parsed = JSON.parse(raw) } catch {
-    throw new Error('AI returned unexpected format while reading the message.')
+  const read = (raw: string) => {
+    try { return JSON.parse(raw) } catch {
+      throw new Error('AI returned unexpected format while reading the message.')
+    }
+  }
+
+  let parsed: any = read(await ask())
+
+  // Nothing at all, from a message that plainly mentions hours, is usually
+  // the model being cautious rather than the message being empty. Asked once
+  // more, with the gap named, it generally reads it.
+  const nothing = !Array.isArray(parsed.entries) || parsed.entries.length === 0
+  if (nothing && /\d/.test(text)) {
+    parsed = read(await ask(
+      'You returned no entries. The message contains numbers, so read it again and '
+      + 'return every entry you CAN place, however few. Leave out only the fields you '
+      + 'genuinely cannot tell — a worker with hours and no job is still an entry worth '
+      + 'having, and so is one whose date you had to work out.',
+    ))
   }
 
   const entries: AIHoursEntry[] = (Array.isArray(parsed.entries) ? parsed.entries : [])

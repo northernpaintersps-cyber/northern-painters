@@ -53,9 +53,10 @@ export default function ReadHoursModal({
   const [copied, setCopied] = useState(false)
 
   const todayStr = today()
+  const hoursPerDay = Number(biz?.rates?.hpd) > 0 ? Number(biz?.rates?.hpd) : 8
   const ctx = useMemo(
-    () => ({ jobs, crew, todayStr, labour }),
-    [jobs, crew, todayStr, labour])
+    () => ({ jobs, crew, todayStr, labour, hoursPerDay }),
+    [jobs, crew, todayStr, labour, hoursPerDay])
 
   function reset() {
     setText(''); setDrafts([]); setDropped(new Set()); setUnparsed([])
@@ -93,6 +94,7 @@ export default function ReadHoursModal({
           id: String(j.id), client: j.client, address: j.address, status: j.status,
         })),
         todayStr,
+        hoursPerDay,
         alreadyRead: all ? [] : drafts.filter(d => d.via === 'format').map(d => d.source),
       })
       const more = draftsFromAI(got.entries, ctx)
@@ -140,7 +142,11 @@ export default function ReadHoursModal({
     const fallback = defaultsFor(d)
     const change = buildLabour(writeCtx as any, {
       worker: d.worker, hours: d.hours, date: d.date, job_id: d.job_id,
-      description: d.description, phase: phase?.name,
+      description: d.description,
+      rate: d.rate,
+      // A phase typed on the row wins; otherwise the note is tried against
+      // the job's quoted phases and only used when it names one.
+      phase: d.phase || phase?.name,
       charge_rate: d.charge_rate ?? (fallback.charge_rate || undefined),
       billing_type: d.billing_type ?? fallback.billing_type,
       worker_payment_type: d.worker_payment_type ?? fallback.worker_payment_type,
@@ -197,8 +203,10 @@ export default function ReadHoursModal({
             </div>
             <pre className="text-[11px] leading-[1.5] text-[#444] whitespace-pre-wrap font-mono">{FORMAT_HINT}</pre>
             <div className="text-[10px] text-[#666] mt-1.5">
-              A name on its own line covers every line under it. Dates can be 23/10, today, yesterday or
-              Monday. Hours can be 8, 7.5, 7h30 or a span. Anything else, the AI can have a go.
+              A name on its own line covers every line under it, and a week heading fixes which
+              Monday. Dates can be 23/10, today, yesterday or a weekday. Hours can be 8, 7.5,
+              7h30, 1 day, half a day, or a span less a break. English, Spanish or Portuguese.
+              Anything else, the AI can have a go.
             </div>
           </div>
 
@@ -223,7 +231,7 @@ export default function ReadHoursModal({
                 <table className="w-full border-collapse text-[12px]">
                   <thead>
                     <tr>
-                      {['', 'Date', 'Worker', 'Job', 'Hrs', 'Cost/hr', 'Charge/hr', 'Billing', 'Paid', 'Cost', 'Note', 'Read from'].map((h, i) => (
+                      {['', 'Date', 'Worker', 'Job', 'Hrs', 'Cost/hr', 'Charge/hr', 'Billing', 'Paid', 'Cost', 'Phase', 'Note', 'Read from'].map((h, i) => (
                         <th key={h} className={`px-2 py-1.5 bg-[#f5f4f0] border-b border-black/[0.12] text-[11px] text-[#666] font-medium whitespace-nowrap sticky top-0 ${[4, 5, 6, 9].includes(i) ? 'text-right' : 'text-left'}`}>{h}</th>
                       ))}
                     </tr>
@@ -271,8 +279,15 @@ export default function ReadHoursModal({
                             <input type="number" step="0.25" value={d.hours} className={`${INL} text-right tabular-nums`}
                               onChange={e => patch(d.key, { hours: parseFloat(e.target.value) || 0 })} />
                           </td>
-                          <td className="px-2 py-1 w-[70px] text-right tabular-nums text-[#666]">
-                            {Number(change.row.rate) ? fmtCurrency(Number(change.row.rate)) : '—'}
+                          <td className="px-1.5 py-1 w-[78px]">
+                            {/* The cost rate decides what the job is charged
+                                against, so it has to be correctable here and
+                                not only afterwards on the Labour page. */}
+                            <input type="number" step="0.01" placeholder={String(Number(change.row.rate) || '')}
+                              value={d.rate ?? ''} className={`${INL} text-right tabular-nums`}
+                              onChange={e => patch(d.key, {
+                                rate: e.target.value === '' ? undefined : parseFloat(e.target.value) || 0,
+                              })} />
                           </td>
                           <td className="px-1.5 py-1 w-[78px]">
                             <input type="number" step="0.01" placeholder={String(Number(change.row.charge_rate) || '')}
@@ -302,7 +317,21 @@ export default function ReadHoursModal({
                           <td className="px-2 py-1 w-[86px] text-right tabular-nums text-[#666]">
                             {fmtCurrency(Number(change.row.cost) || 0)}
                           </td>
-                          <td className="px-1.5 py-1 min-w-[160px]">
+                          <td className="px-1.5 py-1 w-[150px]">
+                            {/* The job's own quoted phases, which is what makes
+                                per-task rates possible later. Free text is
+                                allowed: a phase nobody quoted is better
+                                recorded than dropped. */}
+                            <input value={d.phase ?? ''} className={INL} placeholder="—"
+                              list={`rh-phases-${d.key}`}
+                              onChange={e => patch(d.key, { phase: e.target.value })} />
+                            <datalist id={`rh-phases-${d.key}`}>
+                              {jobPhases(jobs.find(j => j.id === d.job_id)).map(ph => (
+                                <option key={ph.id} value={ph.name} />
+                              ))}
+                            </datalist>
+                          </td>
+                          <td className="px-1.5 py-1 min-w-[150px]">
                             <input value={d.description ?? ''} className={INL} placeholder="—"
                               onChange={e => patch(d.key, { description: e.target.value })} />
                             {bad && <div className="text-[9px] text-[#c0392b] px-1.5">{change.errors[0]}</div>}

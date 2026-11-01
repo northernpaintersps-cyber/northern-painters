@@ -7,7 +7,7 @@
 
 import {
   parseDate, parseHours, matchJob, matchWorker, parseHoursMessage,
-  findDuplicateEntry, draftsFromAI, inferJob, FORMAT_HINT,
+  findDuplicateEntry, draftsFromAI, inferJob, weekdayIndex, FORMAT_HINT,
 } from '@/lib/readHours'
 import { buildLabour, emptyContext } from '@/lib/writes'
 
@@ -378,6 +378,73 @@ const junkBilling = buildLabour(ctxF as any, {
 })
 ok(junkBilling.row.billing_type === 'Fixed Quote',
   'a billing type that is not one of the three falls back to the job rather than being stored')
+
+// -- Days, half days, and a day that is not eight hours ---------
+// "2 days 2 painters" is how the work is described. It is not a number of
+// hours until Settings says how long a day is.
+ok(parseHours('1d') === 8, 'a day is eight hours by default')
+ok(parseHours('2 days') === 16, 'and two days is sixteen')
+ok(parseHours('1.5d') === 12, 'a day and a half')
+ok(parseHours('half day') === 4, 'half a day')
+ok(parseHours('1d', 10) === 10, 'on a ten-hour day, a day is ten hours')
+ok(parseHours('half day', 10) === 5, 'and half of it is five')
+ok(parseHours('2.5 days', 7.6) === 19, 'whatever the day length is')
+ok(parseHours('9 days') === null, 'nine days in one entry is a typo, not a day count')
+
+// -- The languages these messages actually arrive in ------------
+ok(parseHours('8 horas') === 8, '8 horas is eight hours')
+ok(parseHours('8hs') === 8, 'and so is 8hs')
+ok(parseHours('medio dia') === 4, 'medio dia is half a day')
+ok(parseHours('2 dias') === 16, 'and 2 dias is two of them')
+
+ok(parseDate('lunes', TODAY) === '2026-10-19', 'lunes is the most recent Monday')
+ok(parseDate('martes', TODAY) === '2026-10-20', 'martes Tuesday')
+ok(parseDate('miercoles', TODAY) === '2026-10-21', 'miercoles Wednesday, accents or not')
+ok(parseDate('mi\u00e9rcoles', TODAY) === '2026-10-21', 'and with them')
+ok(parseDate('jueves', TODAY) === '2026-10-22', 'jueves Thursday')
+ok(parseDate('viernes', TODAY) === '2026-10-23', 'viernes Friday, which is today')
+ok(parseDate('sabado', TODAY) === '2026-10-17', 'sabado the Saturday just gone')
+ok(parseDate('ayer', TODAY) === '2026-10-22', 'ayer is yesterday')
+ok(parseDate('hoy', TODAY) === TODAY, 'hoy is today')
+ok(parseDate('segunda', TODAY) === '2026-10-19', 'and the Portuguese forms work too')
+ok(weekdayIndex('lun') === 1 && weekdayIndex('Mon') === 1, 'short forms in either language')
+ok(weekdayIndex('nonsense') === -1, 'and a word that is no day is no day')
+
+// -- A week named at the top of the message ---------------------
+// Written up on the Sunday about the week before, every weekday used to
+// file seven days late.
+const WEEK = `Francisco
+week of 19/10
+Monday  NP-0083  8h
+Tuesday  NP-0083  8h
+Friday  NP-0091  4h`
+const week = parseHoursMessage(WEEK, CTX)
+ok(week.entries.length === 3, 'three days read')
+ok(week.entries[0].date === '2026-10-19', 'Monday of the week named, not the most recent one')
+ok(week.entries[1].date === '2026-10-20', 'Tuesday after it')
+ok(week.entries[2].date === '2026-10-23', 'and Friday of that same week')
+ok(week.unparsed.length === 0, 'the week heading is not reported as unread')
+
+const SPANISH_WEEK = `Francisco
+semana del 12/10
+lunes  NP-0083  8 horas
+martes  NP-0083  medio dia`
+const sw = parseHoursMessage(SPANISH_WEEK, CTX)
+ok(sw.entries.length === 2, 'the same in Spanish')
+ok(sw.entries[0].date === '2026-10-12' && sw.entries[0].hours === 8, 'lunes of that week, 8 hours')
+ok(sw.entries[1].date === '2026-10-13' && sw.entries[1].hours === 4, 'martes, half a day')
+
+ok(parseHoursMessage('Francisco\nw/c 19/10\nMonday NP-0083 1d', CTX).entries[0].date === '2026-10-19',
+  'w/c works as a week heading, and a day as hours')
+
+// A week heading with a date that is not one is not a heading.
+const notAWeek = parseHoursMessage('Francisco\nweek was long\n23/10 NP-0083 8h', CTX)
+ok(notAWeek.entries.length === 1 && notAWeek.entries[0].date === '2026-10-23',
+  'a line that only looks like a week heading does not become one')
+
+// -- A day length from settings reaches the message reader ------
+const tenHourDay = parseHoursMessage('Francisco\n23/10 NP-0083 1d', { ...CTX, hoursPerDay: 10 })
+ok(tenHourDay.entries[0].hours === 10, 'a day in a message is as long as Settings says it is')
 
 console.log(fail ? `\n${fail} FAILED` : '\nall passed')
 process.exit(fail ? 1 : 0)
