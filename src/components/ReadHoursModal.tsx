@@ -203,10 +203,12 @@ export default function ReadHoursModal({
             </div>
             <pre className="text-[11px] leading-[1.5] text-[#444] whitespace-pre-wrap font-mono">{FORMAT_HINT}</pre>
             <div className="text-[10px] text-[#666] mt-1.5">
-              A name on its own line covers every line under it, and a week heading fixes which
-              Monday. Dates can be 23/10, today, yesterday or a weekday. Hours can be 8, 7.5,
-              7h30, 1 day, half a day, or a span less a break. English, Spanish or Portuguese.
-              Anything else, the AI can have a go.
+              <b>date &mdash; where &mdash; how long &mdash; what</b>, one line a day, with the
+              name on its own line above it. Dashes, commas, tabs or a double space all separate
+              the fields. The job can be its address, the client or its number. The date can be
+              23/10, today, yesterday or a weekday, and a &ldquo;week of 19/10&rdquo; line fixes
+              which one. How long can be 8, 7.5, 7h30, 1 day, half a day, or a span less a break.
+              English, Spanish or Portuguese. Anything else, the AI can have a go.
             </div>
           </div>
 

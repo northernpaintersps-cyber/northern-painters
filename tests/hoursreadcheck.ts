@@ -446,5 +446,79 @@ ok(notAWeek.entries.length === 1 && notAWeek.entries[0].date === '2026-10-23',
 const tenHourDay = parseHoursMessage('Francisco\n23/10 NP-0083 1d', { ...CTX, hoursPerDay: 10 })
 ok(tenHourDay.entries[0].hours === 10, 'a day in a message is as long as Settings says it is')
 
+// -- The shape the crew actually sends -------------------------
+//
+//     Name
+//     date - address - hours - task
+//
+// Two things made this unreadable before. A spaced dash was not a
+// separator, so the address came through as "- 81 Esmonde St -" and the
+// task as "- masking". Worse, a street NUMBER parsed as hours: "15 Kipling
+// St - 6" produced a phantom fifteen-hour entry on whichever job happened
+// to be in progress, PLUS the real six-hour one.
+
+const SENT = `Francisco
+
+23/10 - 81 Esmonde St - 8 - masking and first coat
+24/10 - 15 Kipling St - 6 - sanding and prep
+25/10 - 81 Esmonde St - 4 - second coat`
+
+const sent = parseHoursMessage(SENT, CTX)
+ok(sent.entries.length === 3, `three lines, three entries (${sent.entries.length})`)
+ok(sent.unparsed.length === 0, 'nothing left unread')
+
+ok(sent.entries[0].job_id === 'NP-0083', 'the address is matched whole, to the right job')
+ok(sent.entries[0].hours === 8, 'the hours field is the hours')
+ok(sent.entries[0].date === '2026-10-23', 'and the date is the date')
+ok(sent.entries[0].description === 'masking and first coat',
+  'the task comes through clean, with no stray dash')
+ok(sent.entries[0].saidJob === '81 Esmonde St', 'and what it was asked for is recorded as written')
+
+const kipling = sent.entries[1]
+ok(kipling.job_id === 'NP-0091', 'the second address finds the second job')
+ok(kipling.hours === 6, 'SIX hours, not fifteen — the street number is not the hours')
+ok(!sent.entries.some(e => e.hours === 15), 'and no phantom entry from that number at all')
+ok(kipling.description === 'sanding and prep', 'with its own task')
+
+ok(sent.entries[2].job_id === 'NP-0083' && sent.entries[2].hours === 4,
+  'the third line goes back to the first job')
+ok(sent.entries.every(e => e.worker === 'Francisco Rojas'),
+  'and the name at the top covers all three')
+
+// A worker named on the line itself, in the same shape.
+const namedInField = parseHoursMessage('23/10 - Jake - 81 Esmonde St - 8 - cutting in', CTX)
+ok(namedInField.entries.length === 1 && namedInField.entries[0].worker === 'Jake Miller',
+  'a name among the fields is read as the worker')
+ok(namedInField.entries[0].job_id === 'NP-0083' && namedInField.entries[0].description === 'cutting in',
+  'and the job and task still land')
+
+// Hours written any of the ways, in the field shape.
+for (const [written, expected] of [['8', 8], ['8h', 8], ['1 day', 8], ['half day', 4], ['7:30-16:00 -30min', 8]] as const) {
+  const r = parseHoursMessage(`Francisco\n23/10 - 81 Esmonde St - ${written} - prep`, CTX)
+  ok(r.entries.length === 1 && r.entries[0].hours === expected,
+    `"${written}" in the hours field reads as ${expected}`)
+}
+
+// An en dash, which is what a phone autocorrects a hyphen into.
+const endash = parseHoursMessage('Francisco\n23/10 \u2013 81 Esmonde St \u2013 8 \u2013 prep', CTX)
+ok(endash.entries.length === 1 && endash.entries[0].hours === 8 && endash.entries[0].job_id === 'NP-0083',
+  'an en dash separates fields as well as a hyphen does')
+
+// A tight dash is not a separator: it is part of a figure or a date.
+const tight = parseHoursMessage('Francisco\n23-10-2026 - 81 Esmonde St - 7:30-16:00 - prep', CTX)
+ok(tight.entries.length === 1, 'a full date with dashes in it is one field')
+ok(tight.entries[0].date === '2026-10-23', 'read as the date')
+ok(tight.entries[0].hours === 8.5, 'and the span as the hours')
+
+// No job named: still an entry, waiting for one.
+const noWhere = parseHoursMessage('Francisco\n23/10 - 8 - touch ups', CTX)
+ok(noWhere.entries.length === 1 && noWhere.entries[0].hours === 8,
+  'a line with no address is still read')
+ok(noWhere.entries[0].description === 'touch ups', 'and keeps its task')
+
+// Two jobs on one line still go to the word-wise reader.
+const two = parseHoursMessage('Francisco\n23/10  NP-0083 4h, NP-0091 4h', CTX)
+ok(two.entries.length === 2, 'a line with two hours figures is read word-wise, as before')
+
 console.log(fail ? `\n${fail} FAILED` : '\nall passed')
 process.exit(fail ? 1 : 0)

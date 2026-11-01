@@ -551,6 +551,106 @@ function pickJob(w: string[], jobs: Row[]): { match: JobMatch; note: string } {
 }
 
 /**
+ * The fields of a line, where the writer has separated them.
+ *
+ *     23/10 - 81 Esmonde St - 8 - masking and first coat
+ *
+ * A spaced dash, a tab, two or more spaces, a pipe or a semicolon all mean
+ * "next field". A TIGHT dash does not: 7:30-16:00 is one figure and 23-10-26
+ * is one date, which is why the spaces are part of the pattern.
+ */
+const FIELD_SEP = /\s+[-\u2013\u2014]\s+|\t+|\s{2,}|\s*[|;]\s*|\s*,\s*/
+
+const fields = (line: string): string[] =>
+  line.split(FIELD_SEP)
+    // A trailing or leading dash survives when a field is empty between two
+    // separators, and it is not part of anybody's address.
+    .map(f => f.replace(/^[-\u2013\u2014\s]+|[-\u2013\u2014\s]+$/g, '').trim())
+    .filter(Boolean)
+
+/**
+ * A line whose writer separated its fields for us.
+ *
+ * This is the shape a crew actually sends — date, where, how long, what —
+ * and reading it field-wise rather than word-wise fixes two things that
+ * guessing could not. The address is matched whole, so "81 Esmonde St" hits
+ * the street exactly; and a street NUMBER can no longer be read as the
+ * hours, which turned "15 Kipling St - 6" into fifteen hours on whichever
+ * job was in progress plus a second entry of six.
+ *
+ * Returns null when the line is not in that shape, and the word-wise reader
+ * takes it instead. The test is one field that is nothing but hours: two of
+ * them means two jobs on the line, which words handle better.
+ */
+function readFieldLine(
+  line: string,
+  state: { worker: string; workerMatched: boolean; lastDate: string; weekOf?: string },
+  ctx: ReadContext,
+): DraftEntry[] | null {
+  const hpd = Number(ctx.hoursPerDay) > 0 ? Number(ctx.hoursPerDay) : 8
+  const fs = fields(line)
+  if (fs.length < 2) return null
+
+  const hourAt = fs.map((f, i) => (parseHours(f, hpd) !== null ? i : -1)).filter(i => i >= 0)
+  if (hourAt.length !== 1) return null
+  const hi = hourAt[0]
+  const hours = parseHours(fs[hi], hpd)!
+
+  // The date, from wherever it sits before the hours.
+  let date = ''
+  const before: string[] = []
+  for (let i = 0; i < hi; i++) {
+    const d = !date ? parseDate(fs[i], ctx.todayStr, state.weekOf) : null
+    if (d) { date = d; continue }
+    before.push(fs[i])
+  }
+  if (!date) date = state.lastDate
+  if (!date) return null
+
+  // A worker named on the line itself beats the heading above it.
+  let lineWorker: { name: string; matched: boolean } | null = null
+  const forJob: string[] = []
+  for (const f of before) {
+    const m = matchWorker(f, ctx.crew)
+    if (!lineWorker && m.matched) { lineWorker = m; continue }
+    forJob.push(f)
+  }
+
+  // Each remaining field tried whole, longest first — an address is one
+  // field and matching it entire is the point of reading this way.
+  let match: JobMatch = { job: null, candidates: [] }
+  let used = -1
+  for (let i = 0; i < forJob.length; i++) {
+    const m = matchJob(forJob[i], ctx.jobs)
+    if (m.job || m.candidates.length) { match = m; used = i; break }
+  }
+
+  const said = forJob.join(' ')
+  const task = [
+    ...forJob.filter((_f, i) => i !== used && used >= 0),
+    ...fs.slice(hi + 1),
+  ].join(' ').trim()
+
+  const entry: DraftEntry = {
+    key: key(),
+    source: line,
+    via: 'format',
+    worker: lineWorker?.name || state.worker,
+    workerMatched: lineWorker ? lineWorker.matched : state.workerMatched,
+    hours,
+    date,
+    job_id: match.job?.id ?? null,
+    jobCandidates: match.candidates.length ? match.candidates : undefined,
+    saidJob: said || undefined,
+    description: task || undefined,
+  }
+  // Hours with nobody and nothing to put them against is not an entry.
+  return entry.hours > 0 && (entry.worker || entry.job_id || entry.jobCandidates?.length)
+    ? [entry]
+    : []
+}
+
+/**
  * One line, which may hold more than one job.
  *
  * The line is cut at each hours figure: the words before one name the job
@@ -563,6 +663,10 @@ function readEntryLine(
   state: { worker: string; workerMatched: boolean; lastDate: string; weekOf?: string },
   ctx: ReadContext,
 ): DraftEntry[] {
+  // The writer's own fields where there are any; words where there are not.
+  const byField = readFieldLine(line, state, ctx)
+  if (byField && byField.length) return byField
+
   const hpd = Number(ctx.hoursPerDay) > 0 ? Number(ctx.hoursPerDay) : 8
   const all = mergeBreaks(words(line), hpd)
   if (!all.length) return []
@@ -677,9 +781,8 @@ export function findDuplicateEntry(entry: DraftEntry, labour: Row[]): Row | null
 /** The format, as it is shown in the modal and sent to the crew. */
 export const FORMAT_HINT = [
   'Francisco',
-  'week of 19/10',
-  'Monday  NP-0083  8h  second coat',
-  'Tuesday  NP-0083  1 day',
-  'Wednesday  Kipling St  half day',
-  '22/10  NP-0083  7:30-16:00 -30min',
+  '',
+  '23/10 - 81 Esmonde St - 8 - masking and first coat',
+  '24/10 - 15 Kipling St - 6 - sanding and prep',
+  '25/10 - 81 Esmonde St - 1 day - second coat',
 ].join('\n')
