@@ -385,7 +385,7 @@ export default function Costs() {
                   {money.label} ex GST
                 </div>
                 <div className="text-xl font-extrabold text-[#1a1a18] tabular-nums">{fmtCurrency(agreed)}</div>
-                <button onClick={() => nav('/jobs')}
+                <button onClick={() => nav(`/jobs/${encodeURIComponent(j.id)}`)}
                   className="flex items-center gap-1 text-[10px] px-2 py-0.5 mt-0.5 bg-white border border-black/20 rounded-md hover:bg-[#f5f4f0]">
                   <Edit2 size={10} /> Edit
                 </button>
@@ -397,7 +397,7 @@ export default function Costs() {
               {!hasBreakdown && (
                 <div className="inline-flex items-center gap-1.5 text-[11px] text-[#666] bg-[#fafaf8] border border-dashed border-black/[0.12] rounded-md px-2.5 py-1 w-fit">
                   <Info size={12} /> No labour/materials cost breakdown set — showing agreed total vs spent.
-                  <button onClick={() => nav('/jobs')} className="ml-1 px-2 py-0.5 text-[10px] bg-white border border-black/20 rounded hover:bg-[#f5f4f0]">Edit job</button>
+                  <button onClick={() => nav(`/jobs/${encodeURIComponent(j.id)}`)} className="ml-1 px-2 py-0.5 text-[10px] bg-white border border-black/20 rounded hover:bg-[#f5f4f0]">Edit job</button>
                 </div>
               )}
 
