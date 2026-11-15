@@ -1,3 +1,4 @@
+import JobLink from '@/components/JobLink'
 import { useState, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
@@ -286,7 +287,7 @@ create policy "Users own their quotes" on np_quotes for all using (auth.uid() = 
                         </select>
                       )}
                     </td>
-                    <td className="px-2.5 py-[7px] text-[#2563eb] font-medium text-xs">{x.job_id || '—'}</td>
+                    <td className="px-2.5 py-[7px] text-[#2563eb] font-medium text-xs"><JobLink id={x.job_id} /></td>
                     <td className="px-2.5 py-[7px] whitespace-nowrap">
                       <button onClick={() => setViewing(x)} title="Review"
                         className="ml-1 px-1.5 py-1 rounded-md bg-blue-600 text-white hover:bg-blue-700 align-middle"><Eye size={12} /></button>

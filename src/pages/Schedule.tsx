@@ -1,3 +1,4 @@
+import JobLink from '@/components/JobLink'
 import { useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
@@ -91,7 +92,7 @@ export default function Schedule() {
                 const crewNames = crewFor(j.id)
                 return (
                   <tr key={j.id} className="border-b border-black/[0.06] hover:bg-[#fafaf8]">
-                    <td className="px-2.5 py-[7px] text-[#2563eb] font-medium">{j.id}</td>
+                    <td className="px-2.5 py-[7px] text-[#2563eb] font-medium"><JobLink id={j.id} /></td>
                     <td className="px-2.5 py-[7px]">
                       <SyncedInput value={j.client ?? ''} className={II}
                         onBlur={e => { if (e.target.value !== (j.client ?? '')) quickEdit.mutate({ job: j, field: 'client', value: e.target.value }) }} />

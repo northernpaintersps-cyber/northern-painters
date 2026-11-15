@@ -1,3 +1,4 @@
+import { jobPath } from '@/components/JobLink'
 import { useState, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
@@ -251,7 +252,7 @@ export default function Enquiries() {
                     </td>
                     <td className="px-2.5 py-[7px]">
                       {e.converted_to_job ? (
-                        <button onClick={() => nav('/jobs')} title="Go to job"
+                        <button onClick={() => nav(e.job_id ? jobPath(e.job_id) : '/jobs')} title="Go to job"
                           className={`${BADGE} bg-[#dcfce7] text-[#166534]`}>{e.job_id || 'Yes'}</button>
                       ) : '—'}
                     </td>

@@ -1,3 +1,4 @@
+import { jobPath } from '@/components/JobLink'
 import { useState, useMemo, useRef, useEffect } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
@@ -1194,7 +1195,7 @@ export default function QuotingTool() {
           .eq('id', quoteId)
         qc.invalidateQueries({ queryKey: ['np_quotes'] })
       }
-      if (confirm(`Saved as job ${id}. Open the Jobs page?`)) nav('/jobs')
+      if (confirm(`Saved as job ${id}. Open the job?`)) nav(jobPath(id))
     },
     onError: (e: any) => alert('Save failed: ' + e.message),
   })

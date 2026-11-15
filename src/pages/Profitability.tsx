@@ -1,3 +1,4 @@
+import { jobPath } from '@/components/JobLink'
 import { useState, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
@@ -172,7 +173,7 @@ export default function Profitability() {
                 const labWarn = r.estLab > 0 && r.labourCost / r.estLab >= 0.9 && !labOver
                 const matWarn = r.estMat > 0 && r.matCost / r.estMat >= 0.9 && !matOver
                 return (
-                  <tr key={r.j.id} className="border-b border-black/[0.06] hover:bg-[#fafaf8] cursor-pointer" onClick={() => nav('/jobs')}>
+                  <tr key={r.j.id} className="border-b border-black/[0.06] hover:bg-[#fafaf8] cursor-pointer" onClick={() => nav(jobPath(r.j.id))}>
                     <td className="px-2.5 py-[7px] text-[#2563eb] font-medium">{r.j.id}</td>
                     <td className="px-2.5 py-[7px]">{r.j.client}</td>
                     <td className="px-2.5 py-[7px] text-[11px] text-[#666]">{r.j.type || ''}</td>

@@ -1,3 +1,4 @@
+import JobLink from '@/components/JobLink'
 import { useState, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
@@ -339,7 +340,7 @@ export default function Crew() {
                   <td className="px-2.5 py-1.5 border border-black/[0.12] bg-white sticky left-0 z-[2] align-top" style={{ minWidth: 130 }}>
                     <div className="flex items-center gap-1">
                       <ExposureIcon job={j} size={11} />
-                      <span className="text-[11px] font-bold text-[#2563eb]">{j.id}</span>
+                      <JobLink id={j.id} className="text-[11px] font-bold text-[#2563eb]" />
                     </div>
                     <div className="text-[11px] font-medium">{j.client}</div>
                     {j.address && <div className="text-[10px] text-[#666] truncate" style={{ maxWidth: 120 }}>{j.address.split(',')[0]}</div>}
@@ -442,7 +443,7 @@ export default function Crew() {
                         style={{ background: s.bg, color: s.fg }}>{s.label}</span>
                     </td>
                     <td className="px-2.5 py-[7px] text-[#2563eb] font-semibold text-xs">
-                      {a.job_id}{conflict && <span className="text-[10px] text-[#dc2626] ml-1">⚠</span>}
+                      <JobLink id={a.job_id} />{conflict && <span className="text-[10px] text-[#dc2626] ml-1">⚠</span>}
                     </td>
                     <td className="px-2.5 py-[7px] text-xs">{j?.client || '—'}</td>
                     <td className="px-2.5 py-[7px] text-xs text-[#666]">{a.notes || ''}</td>

@@ -1,3 +1,4 @@
+import JobLink from '@/components/JobLink'
 import { useState, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase, selectAll } from '@/lib/supabase'
@@ -269,7 +270,7 @@ export default function Payments() {
             <div className="flex justify-between items-start mb-2.5 flex-wrap gap-2">
               <div>
                 <div className="text-[15px] font-semibold flex items-center gap-2 flex-wrap">
-                  {s.id} — {s.worker}
+                  <JobLink id={s.id} /> — {s.worker}
                   <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-semibold ${
                     isFixed ? 'bg-[#e0f2fe] text-[#0369a1]' : 'bg-[#fef3c7] text-[#92400e]'}`}>
                     {isFixed ? 'Fixed price' : 'Estimate / hourly'}

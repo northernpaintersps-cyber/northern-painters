@@ -1,3 +1,4 @@
+import JobLink from '@/components/JobLink'
 import { useState, useMemo, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
@@ -333,6 +334,17 @@ export default function Invoices() {
       return n
     })
   }
+
+  // A new invoice opened with lines already ticked ("Bill the rest" on a job's
+  // page) has no amount until something re-totals it, and the lines may still
+  // be loading when it opens. Keep the amount equal to the ticked lines.
+  useEffect(() => {
+    if (!modalOpen || selectedId || invMode !== 'lines') return
+    const ex = selectedTotal(lines, picked)
+    if (Math.abs(ex - (Number(form.agreed_ex_gst) || 0)) < 0.005) return
+    setForm(f => ({ ...f, ...amountFields(ex, f.job_id) }))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [modalOpen, selectedId, invMode, lines, picked])
 
   // Milestones of the job this invoice is linked to, for the milestone select
   const formMilestones = useMemo(
@@ -722,7 +734,7 @@ export default function Invoices() {
                       return (
                         <tr key={inv.id} className="border-b border-black/[0.06] hover:bg-[#fafaf8]">
                           <td className="px-2.5 py-[7px] text-[#2563eb] font-medium whitespace-nowrap">
-                            <button onClick={() => setView('byjob')} className="hover:underline">{inv.job_id || '—'}</button>
+                            <JobLink id={inv.job_id} />
                           </td>
                           <td className="px-2.5 py-[7px] text-xs">{inv.client}</td>
                           <td className="px-2.5 py-[7px] text-[11px]">{inv.id || '—'}</td>
@@ -1323,7 +1335,7 @@ function JobFinancialSummary({
             <div className="flex justify-between items-start flex-wrap gap-2 mb-3">
               <div>
                 <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-[13px] font-bold text-[#2563eb]">{j.id}</span>
+                  <JobLink id={j.id} className="text-[13px] font-bold text-[#2563eb]" />
                   <span className="text-sm font-bold">{j.client}</span>
                   {j.address && (
                     <span className="text-[11px] text-[#666] inline-flex items-center gap-0.5">

@@ -3,6 +3,7 @@
 // Replaces a table of ten hardcoded dollar ranges that had no quantity under
 // them and so could not be quoted from.
 
+import JobLink, { jobPath } from '@/components/JobLink'
 import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { selectAll } from '@/lib/supabase'
@@ -139,14 +140,14 @@ export default function Rates() {
               <tbody>
                 {missing.map(r => (
                   <tr key={r.jobId} className="border-b border-black/[0.06]">
-                    <td className="px-2.5 py-[7px] font-mono text-[#2563eb]">{r.jobId}</td>
+                    <td className="px-2.5 py-[7px] font-mono text-[#2563eb]"><JobLink id={r.jobId} /></td>
                     <td className="px-2.5 py-[7px]">{r.client}</td>
                     <td className="px-2.5 py-[7px] text-[#666]">{r.type}</td>
                     <td className="px-2.5 py-[7px] whitespace-nowrap">{fmtDate(r.date)}</td>
                     <td className="px-2.5 py-[7px] font-mono">{fmtCurrency(r.revenueExGST)}</td>
                     <td className="px-2.5 py-[7px] font-mono">{fmtCurrency(r.totalCost)}</td>
                     <td className="px-2.5 py-[7px]">
-                      <Link to="/jobs" className="text-[11px] text-[#2563eb] hover:underline">Open</Link>
+                      <Link to={jobPath(r.jobId)} className="text-[11px] text-[#2563eb] hover:underline">Open</Link>
                     </td>
                   </tr>
                 ))}
@@ -175,7 +176,7 @@ export default function Rates() {
               {(showAll ? rates : usable).map(r => (
                 <tr key={r.jobId} className="border-b border-black/[0.06]"
                   style={r.excluded ? { opacity: 0.5 } : undefined}>
-                  <td className="px-2.5 py-[7px] font-mono text-[#2563eb]">{r.jobId}</td>
+                  <td className="px-2.5 py-[7px] font-mono text-[#2563eb]"><JobLink id={r.jobId} /></td>
                   <td className="px-2.5 py-[7px] text-[#666] truncate max-w-[140px]">{r.type}</td>
                   <td className="px-2.5 py-[7px] font-mono">{r.sqm || '—'}</td>
                   <td className="px-2.5 py-[7px] font-mono">{r.hours || '—'}</td>
