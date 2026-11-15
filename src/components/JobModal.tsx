@@ -13,10 +13,11 @@ import SubstratePicker from '@/components/SubstratePicker'
 import { normaliseSubstrates, substrateTotals, emptySubstrates, SUB_BY_KEY, unitLabel,
   type SubEntry } from '@/lib/substrates'
 import {
-  fmtCurrency, fmtDate, nextJobId, genId,
+  fmtCurrency, fmtDate, nextJobId, genId, jobGstRate,
   deriveScheduledDates, crewLabel, today,
 } from '@/lib/utils'
 import { jobValue } from '@/lib/jobBilling'
+import MoneyInput from '@/components/ui/MoneyInput'
 import { Plus, Loader2, Trash2, Edit2, Users, Clock } from 'lucide-react'
 import { invalidateTable } from '@/lib/queryKeys'
 import { EXPOSURE_OPTIONS, EXPOSURE_LABELS, deriveExposure, normalise } from '@/lib/exposure'
@@ -74,7 +75,7 @@ function useDeleteVariation() {
   })
 }
 
-function VariationsTab({ jobId }: { jobId: string | null }) {
+function VariationsTab({ jobId, job }: { jobId: string | null; job?: any }) {
   const { data: vars = [], isLoading } = useVariations(jobId)
   const upsert = useUpsertVariation()
   const del = useDeleteVariation()
@@ -129,9 +130,14 @@ function VariationsTab({ jobId }: { jobId: string | null }) {
                   <p className="text-sm font-semibold text-gray-900">{fmtCurrency(v.amount_ex_gst)}</p>
                   <p className="text-xs text-gray-500">ex GST</p>
                 </div>
-                <div className="flex flex-col gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                  <button onClick={() => setVarForm({ ...v })} className="text-gray-500 hover:text-blue-600"><Edit2 size={12} /></button>
-                  <button onClick={() => { if (confirm('Delete this add-on?')) del.mutate(v.id) }} className="text-gray-500 hover:text-red-400"><Trash2 size={12} /></button>
+                {/* Always visible. Behind group-hover these were invisible
+                    and unreachable on the phone this list is read on, which
+                    is why a saved add-on looked unchangeable. */}
+                <div className="flex flex-col gap-1 shrink-0">
+                  <button onClick={() => setVarForm({ ...v })} title="Edit this add-on"
+                    className="p-1 rounded text-gray-500 hover:text-blue-600 hover:bg-gray-200"><Edit2 size={13} /></button>
+                  <button onClick={() => { if (confirm('Delete this add-on?')) del.mutate(v.id) }} title="Delete this add-on"
+                    className="p-1 rounded text-gray-500 hover:text-red-500 hover:bg-gray-200"><Trash2 size={13} /></button>
                 </div>
               </div>
             ))}
@@ -156,7 +162,12 @@ function VariationsTab({ jobId }: { jobId: string | null }) {
           </div>
           <Input label="Description" value={varForm.var_desc || ''} onChange={ef('var_desc')}
             placeholder="Extra coat to the hallway" />
-          <Input label="Amount ex GST ($)" type="number" value={varForm.amount_ex_gst ?? ''} onChange={ef('amount_ex_gst')} />
+          {/* Typed either way round: a client agrees "$550 all up", and
+              dividing by 1.1 in your head is a place to fumble a number.
+              What is stored is still the ex-GST figure. */}
+          <MoneyInput label="Amount" valueExGST={varForm.amount_ex_gst ?? null}
+            gstRate={jobGstRate(job)}
+            onChange={v => setVarForm((p: any) => ({ ...p, amount_ex_gst: v ?? '' }))} />
           <TextArea label="Notes" value={varForm.notes || ''} onChange={ef('notes')} />
           <div className="flex justify-end gap-2 pt-1">
             <button onClick={() => setVarForm(null)} className="text-xs px-3 py-1.5 rounded-lg bg-gray-200 text-gray-500 hover:text-gray-900">Cancel</button>
@@ -655,12 +666,14 @@ function ActivityTab({ job, jobId }: { job: any; jobId: string | null }) {
 
 
 // ── The modal ────────────────────────────────────────────────
-export default function JobModal({ open, jobId, initial, onClose }: {
+export default function JobModal({ open, jobId, initial, tab: initialTab, onClose }: {
   open: boolean
   /** null opens a blank New Job form. */
   jobId: string | null
   /** Prefill for a new job, or an override for an existing one. */
   initial?: Job
+  /** Which tab to open on. The job page sends you straight to Add-ons. */
+  tab?: Tab
   onClose: () => void
 }) {
   const { data: jobs = [] } = useJobsList()
@@ -668,7 +681,13 @@ export default function JobModal({ open, jobId, initial, onClose }: {
   const del = useDeleteJob()
 
   const [form, setForm] = useState<Job>(emptyForm())
-  const [tab, setTab] = useState<Tab>('details')
+  const [tab, setTab] = useState<Tab>(initialTab ?? 'details')
+
+  // Opened again from somewhere that names a tab — the job page's add-on
+  // pencil — lands on it rather than on wherever it was left.
+  useEffect(() => {
+    if (open && initialTab) setTab(initialTab)
+  }, [open, initialTab])
   const [saving, setSaving] = useState(false)
   const selectedId = jobId
 
@@ -832,7 +851,7 @@ export default function JobModal({ open, jobId, initial, onClose }: {
             }))} />
         )}
         {tab === 'billing' && <JobBillingTab job={form} jobId={selectedId} />}
-        {tab === 'variations' && <VariationsTab jobId={selectedId} />}
+        {tab === 'variations' && <VariationsTab jobId={selectedId} job={form} />}
         {tab === 'crew' && <CrewTab job={form} jobId={selectedId} />}
         {tab === 'activity' && <ActivityTab job={form} jobId={selectedId} />}
 

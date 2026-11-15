@@ -122,7 +122,9 @@ export default function JobDashboard() {
   const { data: receipts = [] } = useTable('np_receipts')
   const { data: visits = [] } = useTable('np_site_visits')
 
-  const [editing, setEditing] = useState(false)
+  // Which tab the edit modal opens on: the pencil beside an add-on goes
+  // straight to Add-ons rather than leaving you to find the tab.
+  const [editing, setEditing] = useState<null | 'details' | 'variations'>(null)
   const [onlyUnbilled, setOnlyUnbilled] = useState(false)
 
   const job = jobs.find(j => String(j.id) === id)
@@ -210,7 +212,8 @@ export default function JobDashboard() {
 
   return (
     <div className="p-5">
-      <JobModal open={editing} onClose={() => setEditing(false)} jobId={String(job.id)} />
+      <JobModal open={!!editing} tab={editing ?? 'details'}
+        onClose={() => setEditing(null)} jobId={String(job.id)} />
 
       {/* ── Who and where ───────────────────────────────── */}
       <div className="flex items-start gap-3 flex-wrap mb-3.5">
@@ -238,7 +241,7 @@ export default function JobDashboard() {
           </div>
         </div>
         <div className="flex gap-2 flex-wrap">
-          <button onClick={() => setEditing(true)}
+          <button onClick={() => setEditing('details')}
             className="flex items-center gap-1.5 text-[13px] px-3 py-1.5 rounded-lg bg-white border border-black/20 hover:bg-[#f5f4f0]">
             <Edit2 size={13} /> Edit
           </button>
@@ -478,18 +481,41 @@ export default function JobDashboard() {
             <div className="pt-2 border-t border-black/[0.06] flex flex-col gap-1">
               {addOns.map(a => (
                 <div key={a.id} className="flex items-center gap-2 text-[12px]">
-                  <span className="flex-1 truncate">{a.description}</span>
+                  <span className="flex-1 truncate" title={a.description}>{a.description}</span>
                   <span className="tabular-nums">{fmtCurrency(a.amountExGST)}</span>
                   <span className={`text-[10px] px-1.5 py-0.5 rounded-full whitespace-nowrap ${
                     !a.approved ? 'bg-[#fffbeb] text-[#92400e]'
                       : a.billed ? 'bg-[#dcfce7] text-[#166534]' : 'bg-[#f3e8ff] text-[#6b21a8]'}`}>
                     {!a.approved ? 'pending' : a.billed ? 'billed' : 'approved'}
                   </span>
+                  {/* Straight to the Add-ons tab. An add-on already billed can
+                      still be changed, but the invoice that went out will not
+                      change with it — which is why the badge is right there. */}
+                  <button onClick={() => setEditing('variations')}
+                    title={a.billed
+                      ? 'Edit — note this one is already on an invoice, which will not change'
+                      : 'Edit this add-on'}
+                    className="p-0.5 rounded text-[#999] hover:text-gray-900 hover:bg-[#f5f4f0] shrink-0">
+                    <Edit2 size={11} />
+                  </button>
                 </div>
               ))}
             </div>
           )}
-          {!milestones.length && !addOns.length && <Empty>Nothing scheduled and no add-ons.</Empty>}
+          {!milestones.length && !addOns.length && (
+            <Empty>
+              Nothing scheduled and no add-ons.{' '}
+              <button onClick={() => setEditing('variations')} className="text-[#2563eb] hover:underline">
+                Add work agreed after the quote
+              </button>
+            </Empty>
+          )}
+          {addOns.length > 0 && (
+            <button onClick={() => setEditing('variations')}
+              className="mt-1.5 flex items-center gap-1 text-[11px] text-[#2563eb] hover:underline">
+              <Plus size={11} /> Add or change an add-on
+            </button>
+          )}
         </Card>
 
         <Card title={<><CalendarDays size={13} /> Schedule and crew</>}>

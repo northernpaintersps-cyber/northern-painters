@@ -26,6 +26,7 @@ Each one exists because something specific went wrong, or was about to:
 | `cashcheck` | Cash is not deductible and cash income is off the books |
 | `duecheck` | Scheduled payments pending and overdue, cash jobs included |
 | `fycheck` | The Australian financial year, and BAS quarters inside it |
+| `gstentrycheck` | A price typed ex or inc GST, stored once, with no drift |
 | `helpcheck` | Every Dashboard KPI explains itself |
 | `hourscheck` | The labour hours budget, and what is left of it |
 | `hoursreadcheck` | Reading a message into logged hours |
