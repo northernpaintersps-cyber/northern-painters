@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { supabase, selectAll } from '@/lib/supabase'
 import { useAuth } from '@/lib/auth'
 import { fmtCurrency, invStatus, isCashJob, today } from '@/lib/utils'
-import { splitBooks, isCashPaid } from '@/lib/cashBooks'
+import { splitBooks, isCashPaid, offBooksInvoice } from '@/lib/cashBooks'
 import { registerTotals } from '@/lib/assets'
 import {
   fyLabel, fyRange, fyOptions, currentFY, currentQuarter,
@@ -124,6 +124,14 @@ export default function Tax() {
     () => new Set(jobs.filter(isCashJob).map(j => j.id)),
     [jobs])
   const onBooks = (r: any) => !r.job_id || !cashJobIds.has(r.job_id)
+  /**
+   * An invoice reaches the BAS unless it is off the books — because its job
+   * is a cash job, or because the invoice itself was declared cash.
+   *
+   * Materials and expenses keep using onBooks: an invoice is the only row
+   * that can be declared cash on its own.
+   */
+  const invOnBooks = (i: any) => !offBooksInvoice(i, cashJobIds)
   const { data: biz } = useBusinessSettings()
 
   const curFY = currentFY()
@@ -165,7 +173,7 @@ export default function Tax() {
 
   // V16 aggBAS()
   const bas = useMemo(() => {
-    const invs = invoices.filter(i => onBooks(i) && (basis === 'cash'
+    const invs = invoices.filter(i => invOnBooks(i) && (basis === 'cash'
       ? (i.date_paid && inQuarter(i.date_paid, year, quarter)) || (invStatus(i) === 'Paid' && !i.date_paid && inQuarter(i.date, year, quarter))
       : inQuarter(i.date, year, quarter)))
     // A cash purchase claims no GST credit, so it is not on the BAS at all.
@@ -193,6 +201,14 @@ export default function Tax() {
       matsIncGST: materials.filter(m => onBooks(m) && !isCashPaid(m) && inQuarter(m.date, year, quarter)).reduce((s, m) => s + (m.total_inc_gst || 0), 0),
       expsIncGST: expenses.filter(e => onBooks(e) && !isCashPaid(e) && inQuarter(e.date, year, quarter)).reduce((s, e) => s + expIncGST(e), 0),
       cashPurchases: [...materials, ...expenses].filter(r => isCashPaid(r) && inQuarter(r.date, year, quarter)).length,
+      // Declared cash, so out of every figure above. Named rather than
+      // silently missing: a BAS that is quietly smaller is worse than one
+      // that says what it left out.
+      offBooksSales: invoices
+        .filter(i => !invOnBooks(i) && inQuarter(i.date_paid || i.date, year, quarter))
+        .reduce((s2, i) => s2 + (i.agreed_ex_gst || 0), 0),
+      offBooksCount: invoices
+        .filter(i => !invOnBooks(i) && inQuarter(i.date_paid || i.date, year, quarter)).length,
     }
   }, [invoices, materials, expenses, assets, basis, year, quarter])
 
@@ -309,9 +325,9 @@ h1{font-size:18px;margin-bottom:4px}h2{font-size:14px;margin:16px 0 8px;border-b
   function exportXeroSales() {
     const headers = ['*ContactName','EmailAddress','*InvoiceNumber','Reference','*InvoiceDate','*DueDate','*Description','*Quantity','*UnitAmount','*AccountCode','*TaxType','Currency']
     const rows = [csvRow(headers)]
-    // A Cash job was never declared, so it is not exported either.
-    const undeclared = invoices.filter(i => (i.agreed_ex_gst || 0) > 0 && !onBooks(i)).length
-    invoices.filter(i => (i.agreed_ex_gst || 0) > 0 && onBooks(i)).forEach(inv => {
+    // Off the books was never declared, so it is not exported either.
+    const undeclared = invoices.filter(i => (i.agreed_ex_gst || 0) > 0 && !invOnBooks(i)).length
+    invoices.filter(i => (i.agreed_ex_gst || 0) > 0 && invOnBooks(i)).forEach(inv => {
       const date = inv.date || today()
       rows.push(csvRow([
         inv.client || '', inv.email || '', inv.id || '', inv.job_id || '',
@@ -321,7 +337,7 @@ h1{font-size:18px;margin-bottom:4px}h2{font-size:14px;margin:16px 0 8px;border-b
     })
     downloadCSV(`NP_Xero_Sales_${today()}.csv`, rows)
     alert(`Sales CSV exported — ${rows.length - 1} invoice${rows.length - 1 !== 1 ? 's' : ''}.`
-      + (undeclared ? ` ${undeclared} cash job${undeclared !== 1 ? 's' : ''} left out — off the books.` : '')
+      + (undeclared ? ` ${undeclared} left out — off the books.` : '')
       + ' Import via Xero → Accounting → Import.')
   }
 
@@ -437,6 +453,9 @@ h1{font-size:18px;margin-bottom:4px}h2{font-size:14px;margin:16px 0 8px;border-b
                 Based on {bas.invCount} invoice{bas.invCount !== 1 ? 's' : ''} and {bas.txnCount} purchase/expense
                 transaction{bas.txnCount !== 1 ? 's' : ''} in this period. Confirm with your registered BAS agent or accountant before lodging.
                 {bas.cashPurchases > 0 && <> {bas.cashPurchases} cash purchase{bas.cashPurchases !== 1 ? 's are' : ' is'} excluded — cash claims no GST credit.</>}
+                {bas.offBooksCount > 0 && <> {bas.offBooksCount} invoice{bas.offBooksCount !== 1 ? 's' : ''} worth
+                {' '}{fmtCurrency(bas.offBooksSales)} {bas.offBooksCount !== 1 ? 'are' : 'is'} declared cash and
+                {' '}excluded entirely — no sale, no GST.</>}
               </div>
             </div>
           </div>

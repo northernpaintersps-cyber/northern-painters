@@ -3,7 +3,10 @@
 // The two rules in one partition. What is asserted here is the thing that
 // matters: that cash never moves the tax, and always moves what is left.
 
-import { splitBooks, isCashPaid, labourCost, PAID_BY } from '@/lib/cashBooks'
+import {
+  splitBooks, isCashPaid, labourCost, PAID_BY,
+  isOffBooksInvoice, offBooksInvoice,
+} from '@/lib/cashBooks'
 
 let fail = 0
 const ok = (c: boolean, m: string) => { if (!c) { fail++; console.log('FAIL', m) } else console.log('ok  ', m) }
@@ -156,6 +159,64 @@ ok(near(labourCost({ cost: 500, hours: 10, rate: 65 }), 500), 'a stored cost win
 ok(near(labourCost({ hours: 10, rate: 65 }), 650), 'otherwise hours × rate')
 ok(labourCost({}) === 0, 'and an empty row costs nothing')
 ok(labourCost({ cost: 'x', hours: '4', rate: '50' } as any) === 200, 'strings coerce, junk does not become NaN')
+
+// -- An invoice declared cash ----------------------------------
+//
+// A cash JOB was always off the books. An invoice on an ordinary job can now
+// be declared cash too, by hand, with a tick. That is the one thing that
+// takes it out: a cash PAYMENT does not, because somebody paying $500 cash
+// towards a $5,000 invoice must not quietly take $5,000 out of the BAS.
+
+const DECLARED = {
+  id: 'INV-9', agreed_ex_gst: 4000, gst: 0, total_inc_gst: 4000,
+  received: 4000, extra: { off_books: true },
+}
+
+ok(isOffBooksInvoice(DECLARED), 'a ticked invoice is off the books')
+ok(!isOffBooksInvoice({ extra: {} }), 'an ordinary one is not')
+ok(!isOffBooksInvoice({ extra: { cash_received: 500 } }),
+  'and a cash PAYMENT does not declare the sale away — that is the dangerous reading')
+ok(!isOffBooksInvoice({}) && !isOffBooksInvoice(null), 'nothing odd counts as declared')
+ok(!isOffBooksInvoice({ extra: { off_books: 'yes' } }),
+  'only a real true counts, so a stray string cannot take a sale off the books')
+
+ok(offBooksInvoice(DECLARED, new Set()), 'the shared test sees the tick')
+ok(offBooksInvoice({ job_id: 'J1' }, new Set(['J1'])), 'and it sees a cash job')
+ok(!offBooksInvoice({ job_id: 'J2' }, new Set(['J1'])), 'an ordinary job on an ordinary invoice is on the books')
+ok(!offBooksInvoice({ job_id: 'J1' }, null), 'with no cash jobs given, only the tick decides')
+
+const declared = run({
+  invoices: [
+    { agreed_ex_gst: 10000, gst: 1000 },
+    DECLARED,
+  ],
+  materials: [{ cost_ex_gst: 2000, gst: 200 }],
+})
+ok(near(declared.books.income, 10000), 'the declared-cash invoice is not taxable income')
+ok(near(declared.offBooks.income, 4000), 'it is off-books income instead')
+ok(near(declared.gstCollected, 1000), 'and collects no GST')
+ok(near(declared.taxableProfit, 8000) && near(declared.tax, 2000),
+  'so it changes neither the taxable profit nor the tax')
+ok(near(declared.afterTax, 6000 + 4000),
+  'but it is on the total after tax in full, because the money arrived')
+ok(declared.counts.cashIncomeRows === 1, 'and it is counted as a cash income row')
+
+// A cash job and a declared invoice reach the same place by different routes.
+const viaJob = run({
+  invoices: [{ agreed_ex_gst: 10000, gst: 1000 }, { job_id: 'J1', agreed_ex_gst: 4000 }],
+  materials: [{ cost_ex_gst: 2000, gst: 200 }],
+  cashJobIds: ['J1'],
+})
+ok(near(viaJob.afterTax, declared.afterTax),
+  'a cash job and a declared-cash invoice come to the same after-tax figure')
+ok(near(viaJob.taxableProfit, declared.taxableProfit), 'and the same taxable profit')
+
+// Both at once, on one invoice, must not count twice.
+const both = run({
+  invoices: [{ job_id: 'J1', agreed_ex_gst: 4000, extra: { off_books: true } }],
+  cashJobIds: ['J1'],
+})
+ok(near(both.offBooks.income, 4000), 'an invoice that is off the books twice over counts once')
 
 console.log(fail ? `\n${fail} FAILED` : '\nall passed')
 process.exit(fail ? 1 : 0)

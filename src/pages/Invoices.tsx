@@ -29,6 +29,7 @@ import {
 import { invalidateTable } from '../lib/queryKeys'
 import { takeHandoff } from '@/lib/handoff'
 import { depositPct } from '@/lib/deposit'
+import { isOffBooksInvoice } from '@/lib/cashBooks'
 import { STRUCTURES, buildMS, scheduleRowFor, hasSchedule } from '@/lib/paySchedule'
 import { SyncedInput } from '@/components/ui/SyncedInput'
 
@@ -581,9 +582,28 @@ export default function Invoices() {
     const received = Math.min(inv.total_inc_gst || 0, (inv.received || 0) + v)
     const patch = paidPatch(inv, received)
     if (!patch) return
+
+    // Paying in cash and declaring the sale are different things, so this
+    // asks rather than deciding. Only worth asking when the cash covers the
+    // whole invoice: a part payment in cash is still a declared sale.
+    let offBooks = isOffBooksInvoice(inv)
+    if (!offBooks && received >= (inv.total_inc_gst || 0) && (inv.total_inc_gst || 0) > 0) {
+      offBooks = confirm(
+        'Take this invoice off the books as well?\n\n'
+        + 'OK — not declared: out of the BAS and out of taxable income, and no GST on it. '
+        + 'It still counts on the total after tax.\n\n'
+        + 'Cancel — a declared sale that happened to be paid in cash. Nothing changes but '
+        + 'the record of how the money arrived.',
+      )
+    }
+
     await upsert.mutateAsync({
       ...inv, ...patch,
-      extra: { ...(inv.extra ?? {}), cash_received: cashOf(inv) + v },
+      extra: {
+        ...(inv.extra ?? {}),
+        cash_received: cashOf(inv) + v,
+        ...(offBooks ? { off_books: true } : {}),
+      },
     })
   }
 
@@ -731,6 +751,7 @@ export default function Invoices() {
                   <tbody>
                     {filtered.map(inv => {
                       const owed = calcOwed(inv), ist = invStatus(inv), cash = cashOf(inv)
+                      const offBooks = isOffBooksInvoice(inv)
                       return (
                         <tr key={inv.id} className="border-b border-black/[0.06] hover:bg-[#fafaf8]">
                           <td className="px-2.5 py-[7px] text-[#2563eb] font-medium whitespace-nowrap">
@@ -752,7 +773,15 @@ export default function Invoices() {
                           <td className="px-2.5 py-[7px] font-medium" style={{ color: owed > 0 ? '#c0392b' : '#0a7c4e' }}>
                             {owed > 0 ? fmtCurrency(owed) : 'Paid'}
                           </td>
-                          <td className="px-2.5 py-[7px]"><IBadge s={ist} /></td>
+                          <td className="px-2.5 py-[7px]">
+                            <IBadge s={ist} />
+                            {offBooks && (
+                              <div className="text-[9px] font-semibold text-[#166534] mt-0.5"
+                                title="Declared cash: out of the BAS and out of taxable income, and still on the total after tax">
+                                off the books
+                              </div>
+                            )}
+                          </td>
                           <td className="px-2.5 py-[7px] whitespace-nowrap">
                             {ist !== 'Paid' && (
                               <button onClick={() => markInvPaid(inv)} title="Mark as fully paid"
@@ -1195,6 +1224,40 @@ export default function Invoices() {
             <input type="checkbox" id="manual-paid" checked={!!form.manual_paid} onChange={e => set('manual_paid', e.target.checked)}
               className="w-4 h-4 accent-blue-600" />
             <label htmlFor="manual-paid" className="text-[13px] text-gray-600">Mark as paid (override)</label>
+          </div>
+
+          {/* Declared cash: out of the BAS, out of taxable income, and still
+              on the after-tax total, because the money arrived. Ticked by
+              hand and never inferred from a payment — somebody paying $500
+              cash towards a $5,000 invoice must not take the whole $5,000
+              out of the BAS. */}
+          <div className="col-span-2 rounded-lg border px-3 py-2"
+            style={form.extra?.off_books
+              ? { borderColor: '#86efac', background: '#f0fdf4' }
+              : { borderColor: 'rgba(0,0,0,.12)' }}>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" checked={!!form.extra?.off_books}
+                onChange={e => setExtra('off_books', e.target.checked ? true : '')}
+                className="w-4 h-4 accent-green-600" />
+              <span className="text-[13px] font-medium text-gray-900">Cash — off the books</span>
+            </label>
+            {form.extra?.off_books ? (
+              <div className="text-[11px] text-[#166534] mt-1">
+                Not on the BAS, not in taxable income, and no GST collected on it. It still counts
+                on the Tax page&rsquo;s total after tax, because the money arrived.
+                {(form.gst || 0) > 0 && (
+                  <div className="text-[#92400e] mt-1">
+                    This invoice records {fmtCurrency(form.gst)} of GST. An off-the-books sale should
+                    carry none — clear the GST, or untick this if you did give the client a tax invoice.
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="text-[11px] text-[#666] mt-1">
+                Leave this alone for an ordinary invoice. A cash PAYMENT on a declared invoice does
+                not make the sale disappear; this is for work that was never declared at all.
+              </div>
+            )}
           </div>
           <TextArea label="Description / notes" value={form.notes || ''} onChange={fld('notes')} wrapperClassName="col-span-2" />
         </div>

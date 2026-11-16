@@ -39,6 +39,32 @@ const n = (v: unknown) => { const x = Number(v); return Number.isFinite(x) ? x :
 export const isCashPaid = (row: { paid_by?: string | null } | null | undefined) =>
   String(row?.paid_by ?? '').trim().toLowerCase() === 'cash'
 
+/**
+ * An invoice declared cash, and so off the books.
+ *
+ * Set by hand, per invoice, and never inferred from a payment: somebody
+ * paying $500 cash towards a $5,000 invoice must not quietly take the whole
+ * $5,000 out of the BAS. Declaring it is a decision, so it is a tick.
+ *
+ * A cash JOB's invoices are off the books too — see offBooksInvoice, which
+ * is the test every figure should use.
+ */
+export const isOffBooksInvoice = (inv: { extra?: any } | null | undefined): boolean =>
+  inv?.extra?.off_books === true
+
+/**
+ * Off the books: either the invoice says so, or its job does.
+ *
+ * One test, because an invoice that is off the books for one figure and on
+ * them for another is how the BAS and the P&L come to disagree.
+ */
+export const offBooksInvoice = (
+  inv: { job_id?: string | null; extra?: any } | null | undefined,
+  cashJobIds?: Set<string> | null,
+): boolean =>
+  isOffBooksInvoice(inv) ||
+  (!!inv?.job_id && !!cashJobIds && cashJobIds.has(inv.job_id))
+
 /** What a labour row cost, however it is recorded. */
 export const labourCost = (l: Row) => n(l.cost) || n(l.hours) * n(l.rate)
 
@@ -127,10 +153,11 @@ export function splitBooks(input: PLInput): PLResult {
   let gstCredits = 0
 
   for (const i of invoices) {
-    // An invoice is income whatever it was paid with; only a cash JOB is off
-    // the books, and those are not really invoices so much as records of work.
+    // Off the books because the invoice says so, or because its job does.
+    // Either way it is not declared income and collects no GST — but the
+    // money arrived, so it lands on the after-tax line.
     const amount = n(i.agreed_ex_gst)
-    if (offJob(i)) { offBooks.income += amount; cashIncomeRows++ }
+    if (offBooksInvoice(i, cashJobIds)) { offBooks.income += amount; cashIncomeRows++ }
     else { books.income += amount; gstCollected += n(i.gst) }
   }
 
