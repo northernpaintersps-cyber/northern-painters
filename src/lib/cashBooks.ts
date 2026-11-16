@@ -40,6 +40,27 @@ export const isCashPaid = (row: { paid_by?: string | null } | null | undefined) 
   String(row?.paid_by ?? '').trim().toLowerCase() === 'cash'
 
 /**
+ * The business share of a cost, 0–1.
+ *
+ * A ute, a phone and a trailer are all bought once and used for both work and
+ * life, and only the work share is deductible. The full amount is what was
+ * paid and what the bank statement says, so that is what gets stored; this is
+ * the fraction of it the return may claim.
+ *
+ * Absent means wholly business, which is the norm and which leaves every row
+ * recorded before this column existed exactly where it was.
+ *
+ * Lives here rather than with the asset register because it is a rule about
+ * what is deductible, the same kind of rule as `isCashPaid`, and it applies to
+ * expenses and assets alike.
+ */
+export const businessShare = (row: { business_use_pct?: number | string | null } | null | undefined): number => {
+  const raw = row?.business_use_pct
+  if (raw === null || raw === undefined || raw === '') return 1
+  return Math.min(1, Math.max(0, n(raw) / 100))
+}
+
+/**
  * An invoice declared cash, and so off the books.
  *
  * Set by hand, per invoice, and never inferred from a payment: somebody
@@ -181,10 +202,15 @@ export function splitBooks(input: PLInput): PLResult {
     place(l, labourCost(l), 'labour')
   }
   for (const e of expenses) {
-    const amount = n(e.amount_ex_gst)
+    // Only the business share is deductible, and only that share of the GST
+    // may be claimed back. The stored figure stays the whole amount paid, so
+    // it still ties to the bank statement; the share is applied here, where
+    // the tax question is being answered.
+    const share = businessShare(e)
+    const amount = n(e.amount_ex_gst) * share
     const cat = e.category || 'Other'
     if (place(e, amount, 'expenses')) {
-      gstCredits += n(e.gst)
+      gstCredits += n(e.gst) * share
       byCat[cat] = (byCat[cat] || 0) + amount
     }
   }

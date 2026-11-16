@@ -6,17 +6,20 @@ import { Modal } from '@/components/ui/Modal'
 import JobPicker from '@/components/JobPicker'
 import { Input, Select } from '@/components/ui/Field'
 import { fmtCurrency, genId, today } from '@/lib/utils'
-import { PAID_BY } from '@/lib/cashBooks'
+import { PAID_BY, businessShare } from '@/lib/cashBooks'
 import { Plus, Loader2, Trash2, Edit2 } from 'lucide-react'
 import { invalidateTable } from '../lib/queryKeys'
 
 type Row = Record<string, any>
 
-// V16 EXP_CATS
+// V16 EXP_CATS, plus Materials — paint and consumables bought without being
+// costed to a job had nowhere to go but 'Other', which buried the largest
+// spend in the business under the vaguest label.
 const EXP_CATS = [
-  'Advertising & Marketing', 'Bank Charges & Fees', 'Insurance', 'Motor Vehicle & Fuel',
-  'Phone & Internet', 'Subcontractor Labour', 'Tools & Equipment', 'Office & Stationery',
-  'Professional Fees', 'Rent & Utilities', 'Software & Subscriptions', 'Other',
+  'Materials', 'Advertising & Marketing', 'Bank Charges & Fees', 'Insurance',
+  'Motor Vehicle & Fuel', 'Phone & Internet', 'Subcontractor Labour',
+  'Tools & Equipment', 'Office & Stationery', 'Professional Fees',
+  'Rent & Utilities', 'Software & Subscriptions', 'Other',
 ]
 
 const incGST = (e: Row) => (e.amount_ex_gst || 0) + (e.gst || 0)
@@ -119,11 +122,19 @@ export default function Expenses() {
     const ex = parseFloat(form.amount_ex_gst) || 0
     const gst = form.gst_applies ? (parseFloat(form.gst) || parseFloat((ex * 0.1).toFixed(2))) : 0
     const { gst_applies, ...rest } = form
+    // The input hands back a string. Blank stays null, which reads as wholly
+    // business, and anything outside 0–100 is refused rather than stored —
+    // a 500% share would silently inflate every deduction.
+    const pctRaw = String(form.business_use_pct ?? '').trim()
+    const pctNum = pctRaw === '' ? null : Number(pctRaw)
+    const business_use_pct =
+      pctNum === null || !Number.isFinite(pctNum) || pctNum < 0 || pctNum > 100 ? null : pctNum
     await upsert.mutateAsync({
       ...rest,
       id: form.id || genId('exp'),
       amount_ex_gst: ex,
       gst,
+      business_use_pct,
       created_at: form.created_at || new Date().toISOString(),
     })
     setModal(false)
@@ -242,6 +253,21 @@ export default function Expenses() {
           <Input label="Amount ex GST ($)" type="number" step="0.01" value={form.amount_ex_gst ?? ''} onChange={ef('amount_ex_gst')} />
           <Input label="GST ($)" type="number" step="0.01" value={form.gst ?? ''} onChange={ef('gst')}
             className={form.gst_applies ? '' : 'opacity-60'} readOnly={!form.gst_applies} />
+          {/* Enter the whole amount paid above, so it still matches the bank
+              statement, and put the work share here. Only that share is
+              deducted and only that share of the GST is claimed — the split
+              happens in src/lib/cashBooks.ts, not in what is stored. */}
+          <Input label="Business use (%)" type="number" step="1" min="0" max="100"
+            value={form.business_use_pct ?? ''} onChange={ef('business_use_pct')}
+            placeholder="100" />
+          <p className="col-span-2 -mt-1 text-[11px] text-gray-500">
+            Leave blank for wholly business. A ute or phone also used privately goes in
+            at the full amount with its work share here — {fmtCurrency(
+              ((Number(form.amount_ex_gst) || 0) + (Number(form.gst) || 0))
+              * businessShare({ business_use_pct: form.business_use_pct }))} of{' '}
+            {fmtCurrency((Number(form.amount_ex_gst) || 0) + (Number(form.gst) || 0))} is
+            claimable.
+          </p>
           <div className="col-span-2 flex items-center gap-2">
             <input type="checkbox" id="gst-applies" checked={!!form.gst_applies}
               onChange={e => ef('gst_applies')({ target: { value: e.target.checked } } as any)}
