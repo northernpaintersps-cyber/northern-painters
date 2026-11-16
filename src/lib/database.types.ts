@@ -262,6 +262,12 @@ export interface Database {
            *  Cash is not deductible and claims no GST credit. Null reads as
            *  on the books. */
           paid_by: string | null
+          /** The work share of a cost also used privately, 0–100. The whole
+           *  amount paid is stored in amount_ex_gst so the row still ties to
+           *  the bank statement; only this share is deducted and only this
+           *  share of the GST is claimed. Null reads as wholly business.
+           *  See supabase/np-expense-business-use.sql. */
+          business_use_pct: number | null
           notes: string | null
           updated_at: string | null
           created_at: string | null

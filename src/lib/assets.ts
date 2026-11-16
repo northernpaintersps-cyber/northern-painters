@@ -28,7 +28,7 @@
 //
 // Pure — no hooks, no Supabase.
 
-import { isCashPaid } from './cashBooks'
+import { businessShare, isCashPaid } from './cashBooks'
 import { fyOf, fyRange } from './fy'
 
 export const ASSET_CATEGORIES = [
@@ -61,12 +61,14 @@ export const assetMethod = (a: Asset): DepMethod => {
   return (DEP_METHODS as readonly string[]).includes(m) ? m : 'prime_cost'
 }
 
-/** The business share, 0–1. Absent means wholly business, which is the norm. */
-export const businessShare = (a: Asset): number => {
-  const raw = a?.business_use_pct
-  if (raw === null || raw === undefined || raw === '') return 1
-  return Math.min(1, Math.max(0, n(raw) / 100))
-}
+/**
+ * The business share, 0–1. Absent means wholly business, which is the norm.
+ *
+ * Re-exported from cashBooks, where it now lives alongside `isCashPaid`: the
+ * same rule governs an expense's private-use share and an asset's, so there is
+ * one copy of it rather than two that can drift apart.
+ */
+export { businessShare }
 
 /**
  * What the asset is being written down from.
