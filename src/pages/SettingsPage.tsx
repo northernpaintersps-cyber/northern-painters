@@ -3,13 +3,15 @@ import { DEPOSIT_PCT } from '@/lib/deposit'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import InstallCard from '@/components/InstallCard'
 import { useAuth } from '@/lib/auth'
-import { supabase } from '@/lib/supabase'
+import { supabase, selectAll } from '@/lib/supabase'
 import { importBackup } from '@/lib/importData'
 import type { ImportResult } from '@/lib/importData'
 import { geocode } from '@/lib/weather'
+import { BACKUP_TABLES, backupFile } from '@/lib/bankRecon'
+import { today } from '@/lib/utils'
 import CustomSubstrates from '@/components/CustomSubstrates'
 import { registerCustomSubstrates, cleanCustoms, type CustomSubstrate } from '@/lib/customSubstrates'
-import { Upload, CheckCircle, AlertCircle, Loader2, ChevronDown, ChevronRight, Save, Plus, Trash2, Key, MapPin } from 'lucide-react'
+import { Upload, Download, CheckCircle, AlertCircle, Loader2, ChevronDown, ChevronRight, Save, Plus, Trash2, Key, MapPin } from 'lucide-react'
 
 // ── Business settings hook ────────────────────────────────────
 export interface LabourRates {
@@ -294,6 +296,46 @@ export default function SettingsPage() {
 
   // ── Import state ──────────────────────────────────────────────
   const fileRef = useRef<HTMLInputElement>(null)
+  const [backingUp, setBackingUp] = useState(false)
+  const [backupNote, setBackupNote] = useState('')
+
+  /**
+   * Every table into one file.
+   *
+   * Read one table at a time rather than all at once: on a phone on a site
+   * connection, sixteen parallel full-table reads is how this fails, and a
+   * backup that half-finished would be worse than none.
+   */
+  async function downloadBackup() {
+    if (!user) return
+    setBackingUp(true); setBackupNote('')
+    try {
+      const data: Record<string, any[]> = {}
+      let rows = 0
+      for (const [table, key] of BACKUP_TABLES) {
+        const { data: got, error } = await selectAll(table, user.id)
+        // A table this database does not have yet is empty, not a failure.
+        if (error && !/does not exist|schema cache/i.test(error.message ?? '')) throw error
+        data[key] = got ?? []
+        rows += data[key].length
+        setBackupNote(`${rows} records so far…`)
+      }
+
+      const file = backupFile(data)
+      const blob = new Blob([JSON.stringify(file, null, 2)], { type: 'application/json' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `northern-painters-backup-${today()}.json`
+      document.body.appendChild(a); a.click()
+      setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url) }, 500)
+      setBackupNote(`${rows} records saved.`)
+    } catch (e: any) {
+      setBackupNote(`Backup failed: ${e?.message ?? 'unknown error'}`)
+    } finally {
+      setBackingUp(false)
+    }
+  }
   const [importing, setImporting] = useState(false)
   const [progress, setProgress] = useState<string[]>([])
   const [result, setResult] = useState<ImportResult | null>(null)
@@ -529,6 +571,31 @@ export default function SettingsPage() {
               ))}
             </tbody>
           </table>
+        </div>
+      </section>
+
+      {/* ── Backup ───────────────────────────────────────────── */}
+      <section className="bg-white rounded-xl border border-gray-200 p-6 space-y-4">
+        <div>
+          <h2 className="text-base font-semibold text-gray-900">Back up everything</h2>
+          <p className="text-sm text-gray-500 mt-1">
+            One JSON file with every record in the app — jobs, invoices, labour, materials,
+            receipts, expenses, crew, quotes, assets and the rest. It is the same shape the
+            importer below reads, so a backup taken here can be put back.
+          </p>
+          <p className="text-xs text-gray-500 mt-1">
+            Your settings are <b>not</b> in it, on purpose: they hold your AI API key, and a
+            backup is a file that ends up emailed to an accountant.
+          </p>
+        </div>
+
+        <div className="flex items-center gap-3 flex-wrap">
+          <button onClick={downloadBackup} disabled={backingUp}
+            className="flex items-center gap-2 px-4 py-2 text-sm font-semibold rounded-lg bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-60">
+            {backingUp ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
+            {backingUp ? 'Gathering…' : 'Download a backup'}
+          </button>
+          {backupNote && <span className="text-xs text-gray-500">{backupNote}</span>}
         </div>
       </section>
 

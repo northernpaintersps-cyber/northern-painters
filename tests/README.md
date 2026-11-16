@@ -38,6 +38,7 @@ Each one exists because something specific went wrong, or was about to:
 | `linecheck` | Invoice lines, and add-ons becoming lines without being billed twice |
 | `partlabourcheck` | Pinning a process step's labour to a part of a split quote |
 | `payschedcheck` | Building a payment schedule, and its milestones |
+| `reconcheck` | Every money movement, inc GST, cash marked; and the backup's shape |
 | `depositcheck` | The booking deposit percentage, and what it comes to |
 | `suggestcheck` | What the invoice modal offers, and the deposit counted once |
 

@@ -4,6 +4,7 @@ import { supabase, selectAll } from '@/lib/supabase'
 import { useAuth } from '@/lib/auth'
 import { fmtCurrency, invStatus, isCashJob, today } from '@/lib/utils'
 import { splitBooks, isCashPaid, offBooksInvoice } from '@/lib/cashBooks'
+import { moneyMoves, reconTotals, reconRows } from '@/lib/bankRecon'
 import { registerTotals } from '@/lib/assets'
 import {
   fyLabel, fyRange, fyOptions, currentFY, currentQuarter,
@@ -341,6 +342,53 @@ h1{font-size:18px;margin-bottom:4px}h2{font-size:14px;margin:16px 0 8px;border-b
       + ' Import via Xero → Accounting → Import.')
   }
 
+  /**
+   * Every movement of money over a period, to tick off against a statement.
+   *
+   * A statement has one column of dates and one of amounts, and each amount
+   * is what actually moved — inc GST, on the day it moved. So this is one
+   * list, money in and money out together, oldest first, rather than the
+   * Xero exports' two files of ex-GST claims.
+   *
+   * Cash rows are included and marked, because the first question when a
+   * figure does not match is whether it was the cash job, and a row that
+   * says "not on the statement" answers it better than a row that is absent.
+   */
+  function exportReconciliation(scope: 'quarter' | 'year') {
+    const [from, to] = scope === 'quarter' ? quarterRange(year, quarter) : fyRange(year)
+    const moves = moneyMoves({
+      invoices, materials, expenses, labour, assets, jobs, from, to,
+    })
+    const t = reconTotals(moves)
+    const label = scope === 'quarter' ? quarterLabel(year, quarter) : `FY ${fyLabel(year)}`
+
+    const rows = [
+      csvRow([`Bank reconciliation — ${label}`]),
+      csvRow([`${from} to ${to}`]),
+      csvRow([]),
+      ...reconRows(moves).map(csvRow),
+      csvRow([]),
+      csvRow(['On the statement — money in', t.inOnStatement]),
+      csvRow(['On the statement — money out', t.outOnStatement]),
+      csvRow(['Net movement the statement should show', t.netOnStatement]),
+      csvRow(['Cash in (not on the statement)', t.inCash]),
+      csvRow(['Cash out (not on the statement)', t.outCash]),
+      ...(t.undatedCount
+        ? [csvRow([`${t.undatedCount} row(s) carry no date and cannot be matched`])]
+        : []),
+    ]
+    downloadCSV(`NP_Bank_Reconciliation_${scope === 'quarter' ? `Q${quarter}_` : ''}${fyLabel(year).replace('\u2013', '-')}.csv`, rows)
+    alert(
+      `${moves.length} movement${moves.length !== 1 ? 's' : ''} exported for ${label}.\n\n`
+      + `The statement should show ${fmtCurrency(t.inOnStatement)} in and `
+      + `${fmtCurrency(t.outOnStatement)} out, a net ${fmtCurrency(t.netOnStatement)}.`
+      + (t.inCash + t.outCash > 0
+        ? `\n\n${fmtCurrency(t.inCash + t.outCash)} of cash is in the file but will NOT be on the `
+          + 'statement — those rows are marked.'
+        : ''),
+    )
+  }
+
   // V16 exportXeroBills()
   function exportXeroBills() {
     const headers = ['*ContactName','*InvoiceNumber','Reference','*InvoiceDate','*DueDate','*Description','*Quantity','*UnitAmount','*AccountCode','*TaxType','Currency']
@@ -507,6 +555,30 @@ h1{font-size:18px;margin-bottom:4px}h2{font-size:14px;margin:16px 0 8px;border-b
           </div>
         </>
       )}
+
+      {/* Bank reconciliation */}
+      <div className="bg-white border border-black/[0.12] rounded-xl p-4 mb-3.5">
+        <div className="flex justify-between items-center mb-2 flex-wrap gap-2">
+          <div className="text-[13px] font-bold flex items-center gap-1.5">
+            <Landmark size={14} /> Bank reconciliation
+          </div>
+          <span className="text-[11px] text-[#666]">One list of what moved, to tick off</span>
+        </div>
+        <div className="text-xs text-[#666] mb-2.5">
+          Money in and money out together, oldest first, each at what actually hit the account —
+          inc GST, on the day it moved. Cash is in the file and marked <b>not on the statement</b>,
+          because when a figure does not match that is the first thing to rule out.
+        </div>
+        <div className="flex gap-2 flex-wrap">
+          <button onClick={() => exportReconciliation('quarter')}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-[13px] bg-blue-600 hover:bg-blue-700 text-white rounded-lg">
+            <Download size={14} /> {quarterLabel(year, quarter)}
+          </button>
+          <button onClick={() => exportReconciliation('year')} className={`${BTN} flex items-center gap-1.5`}>
+            <Download size={14} /> All of FY {fyLabel(year)}
+          </button>
+        </div>
+      </div>
 
       {/* Xero export */}
       <div className="bg-white border border-black/[0.12] rounded-xl p-4">
