@@ -11,7 +11,8 @@
 //      and gets a different rate to the one printed will ring back about it.
 
 import {
-  clientLines, selected, breakdownTotals, groupLabourByPhase, ratePerHour,
+  clientLines, selected, breakdownTotals, groupLabourByPhase, groupUnchargedByPhase,
+  ratePerHour,
   labourDescription, materialDescription, buildBreakdownText, buildBreakdownHTML,
 } from '@/lib/clientBreakdown'
 import { invoiceableLines } from '@/lib/jobBilling'
@@ -205,6 +206,98 @@ const override = invoiceableLines({ job, invoices: [], labour, materials, rateOv
 const oRows = clientLines({ lines: override, labour, materials, kind: 'labour' })
 ok(ratePerHour(oRows[0].chargeExGST, oRows[0].hours) === 80,
   'billed at an agreed rate, the breakdown shows that rate, not what was logged')
+
+// ── Work that carries no charge, when you want it shown ─────
+const withFree = clientLines({ lines, labour, materials, includeUncharged: true })
+ok(withFree.length === 6, 'all six entries appear once uncharged work is included')
+const free = withFree.find(r => r.id === 'L4')!
+ok(!!free, 'the defect made good is one of them')
+ok(free.basis === 'no-charge', 'and is marked as carrying no charge')
+ok(free.chargeExGST === 0, 'with nothing charged for it')
+ok(withFree.filter(r => r.basis === 'charged').length === 5, 'the other five are charged')
+ok(rows.every(r => r.basis === 'charged'), 'while the default list is charged work only')
+
+// The money must not move, and nor must the rate.
+const tf = breakdownTotals(withFree, 0.1)
+ok(near(tf.exGST, 2160), 'including free work changes no figure')
+ok(near(tf.labourHours, 24), 'the chargeable hours are still 24, not 28')
+ok(near(tf.unchargedHours, 4), 'the 4 unpaid hours are counted separately')
+ok(tf.uncharged === 1 && !tf.allUncharged, 'one entry carries no charge, and not all of them')
+// This is the whole reason the hours are kept apart: 2177.50/33.5 would read
+// as $65, but 910/18 would read as $50.55 — a rate you do not charge.
+const gf = groupLabourByPhase(withFree)
+ok(gf.length === 2, 'the unpaid phase does not become a phase group of its own')
+ok(near(gf[0].hours, 14) && ratePerHour(gf[0].chargeExGST, gf[0].hours) === 65,
+  'and preparation still works out at $65/hr, not a diluted rate')
+
+const freeText = buildBreakdownText(withFree, { gstRate: 0.1, labourDetail: 'entries' })
+ok(freeText.includes('make good'), 'the free work is listed')
+ok(/make good.*no charge/.test(freeText), 'and reads "no charge"')
+ok(!/make good.*\$0\.00/.test(freeText),
+  'never $0.00 — that says the work was worthless, not that it was free')
+ok(/Total ex GST: \$2,160\.00/.test(freeText), 'and the total is unchanged')
+ok(/carries no charge/.test(freeText), 'with a line saying an entry carried no charge')
+
+const freeHtml = buildBreakdownHTML(withFree, { gstRate: 0.1, labourDetail: 'entries' })
+ok(/No charge/.test(freeHtml), 'the page says No charge')
+ok(/no cost to you/.test(freeHtml), 'and explains what that means')
+ok(!/\bcost\b/i.test(freeHtml.replace(/no cost to you/g, '')),
+  'and still prints no cost of yours anywhere else')
+
+// ── A fixed-quote job ───────────────────────────────────────
+// Every line is covered by the agreed price, so every line is 'included'.
+const fixedJob = { id: 'NP-0101', client: 'Private', terms: 'Fixed Quote', on_books: 'Yes' }
+const fixedLabour = labour.slice(0, 3).map(l => ({ ...l, job_id: 'NP-0101', billing_type: 'Fixed Quote' }))
+const fixedMats = materials.map(m => ({ ...m, job_id: 'NP-0101', billing_type: 'Fixed Quote' }))
+const fixedLines = invoiceableLines({
+  job: fixedJob, invoices: [], labour: fixedLabour, materials: fixedMats,
+  markupPct: 20, includeUnbillable: true,
+})
+const fx = clientLines({
+  lines: fixedLines, labour: fixedLabour, materials: fixedMats, includeUncharged: true,
+})
+ok(fx.length === 5, 'the fixed job still lists all its work')
+ok(fx.every(r => r.basis === 'included'), 'and every line is covered by the price')
+const tx = breakdownTotals(fx, 0.1)
+ok(tx.allUncharged, 'nothing is charged line by line')
+ok(near(tx.exGST, 0) && near(tx.labourHours, 0), 'so there is no line-by-line money')
+ok(near(tx.unchargedHours, 24), 'though the hours are all still there to show')
+
+// Uncharged work groups by phase too, or a fixed job reads "Preparation"
+// once per day logged instead of once per phase.
+const fg = groupUnchargedByPhase(fx)
+ok(fg.length === 2, 'the fixed job groups its three labour days into two phases')
+ok(fg[0].name === 'Preparation' && near(fg[0].hours, 14), 'preparation gathers both its days')
+ok(fg.every(g => g.basis === 'included'), 'and every group is labelled as included')
+
+const fxText = buildBreakdownText(fx, { gstRate: 0.1, agreedExGST: 20000 })
+ok((fxText.match(/Preparation/g) ?? []).length === 1,
+  'so Preparation appears once, not once per day')
+
+// A phase that is part charged and part not must not become one mislabelled
+// row — it splits, so each half carries a label that is true of it.
+const mixed = clientLines({ lines, labour, materials, includeUncharged: true })
+const mg = [...groupLabourByPhase(mixed), ...groupUnchargedByPhase(mixed)]
+ok(mg.every(g => mixed.filter(r => (r.phase || r.description) === g.name && r.basis === g.basis)
+  .length > 0), 'every group matches rows that really do share its basis')
+ok(groupUnchargedByPhase(mixed).every(g => g.chargeExGST === 0),
+  'and an uncharged group carries no money')
+ok(fxText.includes('Agreed price ex GST: $20,000.00'), 'the document prints the agreed price')
+ok(fxText.includes('Agreed price inc GST: $22,000.00'), 'and what that is with GST')
+ok(!/Total ex GST/.test(fxText),
+  'and never a total of nil — adding nothing to nothing is not the answer')
+ok(fxText.includes('included'), 'each line reads as included in the price')
+ok(!fxText.includes('$0.00'), 'and no line is priced at nothing')
+ok(buildBreakdownText(fx, {}).includes('covered by the agreed price'),
+  'with no price to hand, it says so in words rather than printing nil')
+
+const fxHtml = buildBreakdownHTML(fx, { gstRate: 0.1, agreedExGST: 20000 })
+ok(/Agreed price inc GST/.test(fxHtml), 'the page prints the agreed price too')
+ok(!/Total inc GST/.test(fxHtml), 'and not a total of nil')
+ok(/Included/.test(fxHtml), 'with each line marked Included')
+ok(/33\.5|24 hours/.test(fxHtml), 'and the hours still reported')
+ok(!/\$400\.00/.test(fxHtml) && !/\bcost\b/i.test(fxHtml),
+  'and no cost of yours on a fixed job either')
 
 // ── The subtotal row has to span the table it sits in ───────
 // A colspan that disagrees with the header count puts the subtotal figure

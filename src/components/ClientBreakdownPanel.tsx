@@ -12,7 +12,7 @@ import { useMemo, useState } from 'react'
 import { ClipboardCheck, Copy, Printer, Users } from 'lucide-react'
 import {
   clientLines, selected, breakdownTotals, buildBreakdownText, buildBreakdownHTML,
-  ratePerHour, BREAKDOWN_KINDS, LABOUR_DETAIL,
+  ratePerHour, isCharged, BREAKDOWN_KINDS, LABOUR_DETAIL, BASIS_LABEL,
   type BreakdownKind, type LabourDetail, type ClientLine,
 } from '@/lib/clientBreakdown'
 import type { InvoiceableLine } from '@/lib/jobBilling'
@@ -21,9 +21,9 @@ import { fmtCurrency, fmtDate } from '@/lib/utils'
 type Row = Record<string, any>
 
 export default function ClientBreakdownPanel({
-  lines, labour, materials, job, gstRate, biz,
+  lines, labour, materials, job, gstRate, biz, agreedExGST, fixedPrice,
 }: {
-  /** From invoiceableLines — the charge figures, as the invoice uses them. */
+  /** From invoiceableLines with includeUnbillable — charged and not. */
   lines: InvoiceableLine[]
   labour: Row[]
   materials: Row[]
@@ -31,6 +31,10 @@ export default function ClientBreakdownPanel({
   /** 0 on a cash job, and then no GST is printed. */
   gstRate: number
   biz?: Row | null
+  /** The agreed price, printed when nothing is charged line by line. */
+  agreedExGST?: number
+  /** A fixed-quote job, where every line is covered by the price. */
+  fixedPrice?: boolean
 }) {
   const [kind, setKind] = useState<BreakdownKind>('all')
   const [picked, setPicked] = useState<Set<string>>(new Set())
@@ -38,11 +42,16 @@ export default function ClientBreakdownPanel({
   const [labourDetail, setLabourDetail] = useState<LabourDetail>('phase')
   const [showDates, setShowDates] = useState(true)
   const [showSupplier, setShowSupplier] = useState(false)
+  // On a fixed-quote job every line is covered by the price, so leaving these
+  // out would leave nothing to show at all.
+  const [includeUncharged, setIncludeUncharged] = useState(!!fixedPrice)
   const [copied, setCopied] = useState(false)
 
   const rows = useMemo(
-    () => clientLines({ lines, labour, materials, kind, showSupplier, labourDetail }),
-    [lines, labour, materials, kind, showSupplier, labourDetail])
+    () => clientLines({
+      lines, labour, materials, kind, showSupplier, labourDetail, includeUncharged,
+    }),
+    [lines, labour, materials, kind, showSupplier, labourDetail, includeUncharged])
 
   // No ticks means the whole list, which is what "all" on the filter already
   // says. Ticking one narrows it; unticking them all widens it back.
@@ -53,7 +62,7 @@ export default function ClientBreakdownPanel({
     jobTitle: String(job?.job_desc || job?.type || job?.id || ''),
     client: String(job?.client || ''),
     site: String(job?.address || ''),
-    gstRate, showRate, labourDetail, showDates,
+    gstRate, showRate, labourDetail, showDates, agreedExGST,
   }
 
   const toggle = (id: string) => setPicked(p => {
@@ -108,9 +117,13 @@ export default function ClientBreakdownPanel({
 
       {rows.length === 0 ? (
         <div className="text-[11.5px] text-[#666] bg-[#f5f4f0] rounded-lg px-3 py-2.5">
-          Nothing chargeable logged for this. Work marked <b>Not billable</b> is left out on
-          purpose — nobody is charged for it, so it does not belong in a breakdown the client
-          reads.
+          {includeUncharged
+            ? <>Nothing logged against this job yet.</>
+            : <>Nothing <i>chargeable</i> logged for this. Work covered by a fixed quote, and work
+               marked <b>Not billable</b>, are left out until you tick{' '}
+               <b>Include work at no charge</b> below.{' '}
+               <button type="button" className="text-[#2563eb] font-semibold underline"
+                 onClick={() => setIncludeUncharged(true)}>Show it</button></>}
         </div>
       ) : (
         <>
@@ -160,8 +173,9 @@ export default function ClientBreakdownPanel({
                             {fmtCurrency(ratePerHour(r.chargeExGST, r.hours)!, 2)}/hr
                           </span>
                         )}
-                        <span className="tabular-nums whitespace-nowrap font-medium">
-                          {fmtCurrency(r.chargeExGST, 2)}
+                        <span className={`tabular-nums whitespace-nowrap ${
+                          isCharged(r) ? 'font-medium' : 'italic text-[#666]'}`}>
+                          {isCharged(r) ? fmtCurrency(r.chargeExGST, 2) : BASIS_LABEL[r.basis]}
                         </span>
                       </label>
                     ))}
@@ -188,6 +202,9 @@ export default function ClientBreakdownPanel({
           )}
 
           <div className="flex flex-wrap gap-x-4 gap-y-1.5 text-[11px] text-[#444]">
+            <Tick checked={includeUncharged} onChange={setIncludeUncharged}
+              label="Include work at no charge"
+              hint="Fixed-quote lines covered by the price, and work done for nothing" />
             <Tick checked={showDates} onChange={setShowDates} label="Show dates" />
             <Tick checked={showSupplier} onChange={setShowSupplier}
               label="Name the suppliers" hint="Shows where you buy" />
@@ -205,12 +222,22 @@ export default function ClientBreakdownPanel({
                    this document.</>
                 : <>Labour is described by its phase, not by who did it, and every figure is what
                    the client is charged — what the work cost you is not in this document.</>}
-              {t.labourHours > 0 && <> {t.labourHours} hrs</>}
-              {t.labourExGST > 0 && <> at {fmtCurrency(t.labourExGST, 2)}</>}
-              {t.materialsExGST > 0 && <>, materials {fmtCurrency(t.materialsExGST, 2)}</>}
-              {gstRate > 0
-                ? <>, <b>{fmtCurrency(t.incGST, 2)}</b> inc GST.</>
-                : <>, <b>{fmtCurrency(t.exGST, 2)}</b> total — cash job, no GST.</>}
+              {t.allUncharged
+                ? <> Every entry selected is covered by the agreed price, so the document
+                    shows the work and {agreedExGST != null
+                      ? <>the agreed price of <b>{fmtCurrency(agreedExGST, 2)}</b> ex GST</>
+                      : <>no line-by-line figures</>} rather than a column of nils.</>
+                : <>
+                    {t.labourHours > 0 && <> {t.labourHours} hrs</>}
+                    {t.labourExGST > 0 && <> at {fmtCurrency(t.labourExGST, 2)}</>}
+                    {t.materialsExGST > 0 && <>, materials {fmtCurrency(t.materialsExGST, 2)}</>}
+                    {gstRate > 0
+                      ? <>, <b>{fmtCurrency(t.incGST, 2)}</b> inc GST.</>
+                      : <>, <b>{fmtCurrency(t.exGST, 2)}</b> total — cash job, no GST.</>}
+                    {t.uncharged > 0 && <> {t.uncharged} further {t.uncharged === 1 ? 'entry' : 'entries'}
+                      {t.unchargedHours > 0 && <> ({t.unchargedHours} hrs)</>} shown at no charge,
+                      adding nothing to the total.</>}
+                  </>}
             </span>
           </div>
 
