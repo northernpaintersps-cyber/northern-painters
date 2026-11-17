@@ -12,8 +12,9 @@ import { useMemo, useState } from 'react'
 import { ClipboardCheck, Copy, Printer, Users } from 'lucide-react'
 import {
   clientLines, selected, breakdownTotals, buildBreakdownText, buildBreakdownHTML,
-  ratePerHour, isCharged, BREAKDOWN_KINDS, LABOUR_DETAIL, BASIS_LABEL,
-  type BreakdownKind, type LabourDetail, type ClientLine,
+  ratePerHour, isCharged, shortfallOf, showsCost,
+  BREAKDOWN_KINDS, LABOUR_DETAIL, BASIS_LABEL, MONEY_SHOWN,
+  type BreakdownKind, type LabourDetail, type ClientLine, type MoneyShown,
 } from '@/lib/clientBreakdown'
 import type { InvoiceableLine } from '@/lib/jobBilling'
 import { fmtCurrency, fmtDate } from '@/lib/utils'
@@ -45,13 +46,19 @@ export default function ClientBreakdownPanel({
   // On a fixed-quote job every line is covered by the price, so leaving these
   // out would leave nothing to show at all.
   const [includeUncharged, setIncludeUncharged] = useState(!!fixedPrice)
+  const [money, setMoney] = useState<MoneyShown>('charge')
+  const [showShortfall, setShowShortfall] = useState(false)
   const [copied, setCopied] = useState(false)
+
+  // Cost is only computed when it is going to be shown, so a document built
+  // in the default mode has no cost figure in it to leak.
+  const withCost = showsCost(money) || showShortfall
 
   const rows = useMemo(
     () => clientLines({
-      lines, labour, materials, kind, showSupplier, labourDetail, includeUncharged,
+      lines, labour, materials, kind, showSupplier, labourDetail, includeUncharged, withCost,
     }),
-    [lines, labour, materials, kind, showSupplier, labourDetail, includeUncharged])
+    [lines, labour, materials, kind, showSupplier, labourDetail, includeUncharged, withCost])
 
   // No ticks means the whole list, which is what "all" on the filter already
   // says. Ticking one narrows it; unticking them all widens it back.
@@ -62,8 +69,9 @@ export default function ClientBreakdownPanel({
     jobTitle: String(job?.job_desc || job?.type || job?.id || ''),
     client: String(job?.client || ''),
     site: String(job?.address || ''),
-    gstRate, showRate, labourDetail, showDates, agreedExGST,
+    gstRate, showRate, labourDetail, showDates, agreedExGST, money, showShortfall,
   }
+  const sf = withCost ? shortfallOf(chosen, agreedExGST ?? t.exGST) : null
 
   const toggle = (id: string) => setPicked(p => {
     const next = new Set(p)
@@ -173,10 +181,18 @@ export default function ClientBreakdownPanel({
                             {fmtCurrency(ratePerHour(r.chargeExGST, r.hours)!, 2)}/hr
                           </span>
                         )}
-                        <span className={`tabular-nums whitespace-nowrap ${
-                          isCharged(r) ? 'font-medium' : 'italic text-[#666]'}`}>
-                          {isCharged(r) ? fmtCurrency(r.chargeExGST, 2) : BASIS_LABEL[r.basis]}
-                        </span>
+                        {withCost && r.costExGST !== undefined && (
+                          <span className="tabular-nums whitespace-nowrap text-[#92400e]"
+                            title="What this cost you">
+                            {fmtCurrency(r.costExGST, 2)}
+                          </span>
+                        )}
+                        {money !== 'cost' && (
+                          <span className={`tabular-nums whitespace-nowrap ${
+                            isCharged(r) ? 'font-medium' : 'italic text-[#666]'}`}>
+                            {isCharged(r) ? fmtCurrency(r.chargeExGST, 2) : BASIS_LABEL[r.basis]}
+                          </span>
+                        )}
                       </label>
                     ))}
                   </div>
@@ -201,7 +217,26 @@ export default function ClientBreakdownPanel({
             </div>
           )}
 
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="text-[11px] text-[#666] mr-0.5">Money shown:</span>
+            {MONEY_SHOWN.map(m => (
+              <button key={m.id} type="button" title={m.hint}
+                onClick={() => setMoney(m.id)}
+                className={`text-[11px] px-2 py-0.5 rounded-md border ${
+                  money === m.id
+                    ? (m.id === 'charge'
+                        ? 'bg-[#eef2ff] text-[#1e40af] border-[#c7d2fe] font-semibold'
+                        : 'bg-[#fef3c7] text-[#92400e] border-[#fde68a] font-semibold')
+                    : 'bg-white text-[#444] border-black/15 hover:bg-[#f5f4f0]'}`}>
+                {m.label}
+              </button>
+            ))}
+          </div>
+
           <div className="flex flex-wrap gap-x-4 gap-y-1.5 text-[11px] text-[#444]">
+            <Tick checked={showShortfall} onChange={setShowShortfall}
+              label="Close with where the job ended up"
+              hint="What came in, what it cost, and the gap" />
             <Tick checked={includeUncharged} onChange={setIncludeUncharged}
               label="Include work at no charge"
               hint="Fixed-quote lines covered by the price, and work done for nothing" />
@@ -213,15 +248,28 @@ export default function ClientBreakdownPanel({
               hint="Puts your charge rate in writing in the client's hands" />
           </div>
 
-          <div className="flex items-start gap-1.5 text-[10.5px] text-[#666] bg-[#fafaf8] border border-black/[0.08] rounded-lg px-2.5 py-2">
+          <div className={`flex items-start gap-1.5 text-[10.5px] rounded-lg px-2.5 py-2 border ${
+            withCost
+              ? 'text-[#92400e] bg-[#fffbeb] border-[#fde68a]'
+              : 'text-[#666] bg-[#fafaf8] border-black/[0.08]'}`}>
             <Users size={12} className="shrink-0 mt-px" />
             <span>
-              {labourDetail === 'full'
-                ? <><b className="text-[#92400e]">The full log names your subcontractors.</b> Every
-                   figure is still what the client is charged — what the work cost you is never in
-                   this document.</>
-                : <>Labour is described by its phase, not by who did it, and every figure is what
-                   the client is charged — what the work cost you is not in this document.</>}
+              {withCost
+                ? <><b className="text-[#92400e]">This document shows what the job cost you</b>
+                   {labourDetail === 'full' && <>, and names your subcontractors</>}. Your rates and
+                   your suppliers go to the client.{sf && <> On the figures selected: {fmtCurrency(sf.revenueExGST, 2)} in
+                   against {fmtCurrency(sf.costExGST, 2)} of cost, a{' '}
+                   <b className={sf.marginExGST < 0 ? 'text-[#b91c1c]' : 'text-[#166534]'}>
+                     {sf.marginExGST < 0 ? 'shortfall' : 'margin'} of {fmtCurrency(Math.abs(sf.marginExGST), 2)}
+                   </b>
+                   {sf.earnedPerHour != null && <>, earning {fmtCurrency(sf.earnedPerHour, 2)} an hour
+                     against {sf.costPerHour != null ? fmtCurrency(sf.costPerHour, 2) : '—'} an hour paid out</>}.</>}</>
+                : labourDetail === 'full'
+                  ? <><b className="text-[#92400e]">The full log names your subcontractors.</b> Every
+                     figure is still what the client is charged — what the work cost you is never in
+                     this document.</>
+                  : <>Labour is described by its phase, not by who did it, and every figure is what
+                     the client is charged — what the work cost you is not in this document.</>}
               {t.allUncharged
                 ? <> Every entry selected is covered by the agreed price, so the document
                     shows the work and {agreedExGST != null
