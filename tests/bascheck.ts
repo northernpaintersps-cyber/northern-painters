@@ -14,7 +14,9 @@
 // purchases off the BAS, cash jobs' income named but not declared, the cash
 // versus accrual basis, and quarter boundaries on the Australian FY.
 
-import { basTotals, hasGST, expIncGST } from '@/lib/bas'
+import { basTotals, hasGST, expIncGST, recognisedDate } from '@/lib/bas'
+import { splitBooks } from '@/lib/cashBooks'
+import { inFY } from '@/lib/fy'
 
 let fail = 0
 const ok = (c: boolean, m: string) => { if (!c) { fail++; console.log('FAIL', m) } else console.log('ok  ', m) }
@@ -78,6 +80,45 @@ eq(expIncGST({ amount_ex_gst: 45, gst: 0 }), 45, 'expIncGST of a GST-free purcha
   const t = run({ invoices: [{ date: '2026-07-02', agreed_ex_gst: 43663, gst: 4366.30 }] })
   eq(t.salesIncGST, 48029.30, 'G1 of a taxable sale is ex + GST')
   eq(t.totalSales, 43663, 'and the ex-GST total is unchanged')
+}
+
+// ── recognisedDate: the whole of the difference between bases ──
+//
+// The BAS and the P&L both go through this, so a figure that moves on one
+// moves on the other. That is the fix: they used to disagree silently.
+{
+  const paidLater = { date: '2026-06-20', date_paid: '2026-07-31' }
+  const st = () => 'Paid'
+  ok(recognisedDate(paidLater, 'accrual', st) === '2026-06-20', 'accrual: the invoice date')
+  ok(recognisedDate(paidLater, 'cash', st) === '2026-07-31', 'cash: the date paid')
+
+  const noDatePaid = { date: '2026-07-10' }
+  ok(recognisedDate(noDatePaid, 'cash', st) === '2026-07-10',
+     'cash: a Paid invoice with no date_paid falls back to its own date')
+  ok(recognisedDate(noDatePaid, 'cash', () => 'Sent') === null,
+     'cash: an unpaid invoice is recognised in no period at all')
+  ok(recognisedDate(noDatePaid, 'accrual', () => 'Sent') === '2026-07-10',
+     'accrual: an unpaid invoice is still income of the period it was issued in')
+
+  ok(recognisedDate({}, 'accrual', st) === null, 'no date at all, accrual')
+  ok(recognisedDate({}, 'cash', st) === null, 'no date at all, cash')
+}
+
+// ── The same invoice, both reports, one basis ──────────────
+//
+// This is the case that produced the false reading: a quarter showing more
+// sales than the whole financial year it sits in. The two reports must now
+// place the invoice in the same period as each other.
+{
+  const inv = { date: '2026-06-20', date_paid: '2026-07-31', agreed_ex_gst: 20000, gst: 2000 }
+  // Cash: recognised 31 Jul 2026, so Q1 of FY2026-27 and that FY.
+  eq(run({ invoices: [inv], basis: 'cash' }).salesIncGST, 22000, 'cash: in Q1 FY2026-27')
+  eq(run({ invoices: [inv], basis: 'cash', year: 2026, quarter: 4 }).salesIncGST, 0,
+     'cash: and not in Q4 FY2025-26, where the invoice date sits')
+  // Accrual: recognised 20 Jun 2026, so Q4 of FY2025-26.
+  eq(run({ invoices: [inv], basis: 'accrual' }).salesIncGST, 0, 'accrual: not in Q1 FY2026-27')
+  eq(run({ invoices: [inv], basis: 'accrual', year: 2026, quarter: 4 }).salesIncGST, 22000,
+     'accrual: in Q4 FY2025-26')
 }
 
 // ── The quarter it lands in ─────────────────────────────────
@@ -171,6 +212,39 @@ eq(expIncGST({ amount_ex_gst: 45, gst: 0 }), 45, 'expIncGST of a GST-free purcha
   })
   eq(t.expsIncGST, 110.55, 'nulls and junk read as zero, numeric strings read as numbers')
   ok(!Number.isNaN(t.netGST), 'and no NaN reaches a lodged figure')
+}
+
+// ── The P&L recognises income on the same basis ────────────
+//
+// The Tax page filters the P&L's invoices with inFY(recognisedDate(...)),
+// mirrored here. Before the fix it filtered on i.date outright, so the P&L
+// sat permanently on an accrual footing while the BAS defaulted to cash, and
+// a quarter could show more sales than the whole year containing it.
+{
+  const inv = { date: '2026-06-20', date_paid: '2026-07-31', agreed_ex_gst: 20000, gst: 2000 }
+  const st = () => 'Paid'
+  const plIncome = (basis: 'cash' | 'accrual', year: number) => splitBooks({
+    invoices: [inv].filter(i => inFY(recognisedDate(i, basis, st), year)),
+    materials: [], labour: [], expenses: [],
+    cashJobIds: new Set<string>(), taxRate: 0.25,
+  }).books.income
+
+  eq(plIncome('cash', 2027), 20000, 'cash: the P&L puts it in the year it was paid')
+  eq(plIncome('cash', 2026), 0, 'cash: and not in the year it was invoiced')
+  eq(plIncome('accrual', 2026), 20000, 'accrual: the P&L puts it in the year it was invoiced')
+  eq(plIncome('accrual', 2027), 0, 'accrual: and not in the year it was paid')
+
+  // The point of the change: on one basis, both reports agree which period
+  // the invoice belongs to.
+  for (const basis of ['cash', 'accrual'] as const)
+    for (const year of [2026, 2027]) {
+      const onBAS = [1, 2, 3, 4].reduce((s2, quarter) => s2 + basTotals({
+        invoices: [inv], materials: [], expenses: [], assets: [],
+        basis, year, quarter, onBooks: () => true, invOnBooks: () => true, invStatus: st,
+      }).salesIncGST, 0)
+      eq(onBAS, plIncome(basis, year) * 1.1,
+         `${basis} FY${year - 1}: the BAS year and the P&L year agree`)
+    }
 }
 
 console.log(fail ? `\n${fail} FAILED` : '\nall passed')

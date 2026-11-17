@@ -44,6 +44,36 @@ export const expIncGST = (e: Row): number => n(e.amount_ex_gst) + n(e.gst)
 /** A purchase carries GST or it does not. Only the credit depends on it. */
 export const hasGST = (e: Row): boolean => n(e.gst) > 0
 
+/**
+ * The date an invoice is recognised on, which is the whole of the difference
+ * between the two bases.
+ *
+ * On an accrual basis income belongs to the period it was invoiced in. On a
+ * cash basis it belongs to the period the money landed, and an invoice marked
+ * Paid with no date recorded falls back to its own date — better than dropping
+ * money that was received out of the year altogether. An unpaid invoice is
+ * recognised nowhere on a cash basis, which is the point of the basis.
+ *
+ * This lives here, as one function, because the BAS and the P&L used to
+ * answer it differently: the BAS defaulted to cash while the P&L was wired to
+ * the invoice date with no choice offered. Reading them side by side implied
+ * something false — a quarter showed $104,602 of sales against $58,536 for
+ * the whole year, because 21 invoices issued in FY2025-26 were paid in July.
+ * Neither figure was wrong; they were answers to different questions, printed
+ * as though they were the same one.
+ *
+ * Costs need no equivalent. np_materials, np_expenses and np_labour record the
+ * date money moved — there is no invoice-then-pay gap stored for a cost — so
+ * they are already recognised when paid, under either basis.
+ */
+export const recognisedDate = (
+  i: Row, basis: 'cash' | 'accrual', invStatus: (i: Row) => string,
+): string | null => {
+  if (basis === 'accrual') return (i.date as string) ?? null
+  if (i.date_paid) return i.date_paid as string
+  return invStatus(i) === 'Paid' ? ((i.date as string) ?? null) : null
+}
+
 export interface BASInput {
   invoices: Row[]
   materials: Row[]
@@ -85,10 +115,8 @@ export function basTotals(input: BASInput): BASTotals {
   const { invoices, materials, expenses, assets, basis, year, quarter,
           onBooks, invOnBooks, invStatus } = input
 
-  const invs = invoices.filter(i => invOnBooks(i) && (basis === 'cash'
-    ? (i.date_paid && inQuarter(i.date_paid, year, quarter))
-      || (invStatus(i) === 'Paid' && !i.date_paid && inQuarter(i.date, year, quarter))
-    : inQuarter(i.date, year, quarter)))
+  const invs = invoices.filter(i =>
+    invOnBooks(i) && inQuarter(recognisedDate(i, basis, invStatus), year, quarter))
 
   const mats = materials.filter(m => onBooks(m) && !isCashPaid(m) && inQuarter(m.date, year, quarter))
 
