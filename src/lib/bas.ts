@@ -74,6 +74,33 @@ export const recognisedDate = (
   return invStatus(i) === 'Paid' ? ((i.date as string) ?? null) : null
 }
 
+/**
+ * Income that belongs to this period by invoice date but is recognised in no
+ * period at all on a cash basis — unpaid, or paid with no date recorded and
+ * never marked Paid.
+ *
+ * On an accrual basis there is no such thing, so this is zero. On a cash
+ * basis it is money that does not appear in any year, and it has to be named:
+ * 13 invoices worth $59,081.59 fell into it in FY2025-26 here, and a report
+ * that quietly loses that much income is worse than one that says what it
+ * left out. The same rule the off-books cash figures already follow.
+ *
+ * `inPeriod` is passed in so the caller decides the period — a quarter for
+ * the BAS, a financial year for the P&L.
+ */
+export function unrecognisedIncome(
+  invoices: Row[],
+  basis: 'cash' | 'accrual',
+  invStatus: (i: Row) => string,
+  inPeriod: (date: unknown) => boolean,
+  onBooks: (i: Row) => boolean = () => true,
+): { exGST: number; count: number } {
+  if (basis === 'accrual') return { exGST: 0, count: 0 }
+  const lost = invoices.filter(i =>
+    onBooks(i) && inPeriod(i.date) && recognisedDate(i, 'cash', invStatus) === null)
+  return { exGST: lost.reduce((s, i) => s + n(i.agreed_ex_gst), 0), count: lost.length }
+}
+
 export interface BASInput {
   invoices: Row[]
   materials: Row[]
@@ -109,6 +136,10 @@ export interface BASTotals {
   cashPurchases: number
   offBooksSales: number
   offBooksCount: number
+  /** Income this quarter by invoice date that a cash basis recognises
+   *  nowhere. Zero on an accrual basis. */
+  unrecognised: number
+  unrecognisedCount: number
 }
 
 export function basTotals(input: BASInput): BASTotals {
@@ -163,5 +194,10 @@ export function basTotals(input: BASInput): BASTotals {
       .reduce((s, i) => s + n(i.agreed_ex_gst), 0),
     offBooksCount: invoices
       .filter(i => !invOnBooks(i) && inQuarter(i.date_paid || i.date, year, quarter)).length,
+    ...(() => {
+      const u = unrecognisedIncome(
+        invoices, basis, invStatus, d => inQuarter(d, year, quarter), invOnBooks)
+      return { unrecognised: u.exGST, unrecognisedCount: u.count }
+    })(),
   }
 }
