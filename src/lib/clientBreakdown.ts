@@ -10,6 +10,21 @@
 // appear in this file, because one of them slipping into a client document is
 // not a bug you find later, it is a bug the client finds first.
 //
+// ── Showing the client what the job cost you ────────────────
+//
+// By default no cost figure is computed, let alone printed: `costExGST` is
+// simply absent from every row unless `withCost` is passed, so a document has
+// nothing to leak. That is the right default and it stays the default.
+//
+// But on a fixed-quote job that ran long you may want the opposite. The client
+// agreed a price, the job took half as long again, and the only way to show
+// that is to show the figures: what the hours cost, what the paint cost, and
+// the gap against the price. The owner asked for this deliberately, having
+// been told twice what it discloses. It is their business and their call.
+//
+// So cost is opt-in at two separate points — it has to be computed, and then
+// it has to be asked for — and the screen says plainly which mode is on.
+//
 // ── What is left out, and what is yours to decide ───────────
 //
 // Work nobody is charged for is always left out. A line marked Not billable —
@@ -24,7 +39,7 @@
 // perfectly reasonable thing to hand over — see LabourDetail below.
 
 import type { InvoiceableLine } from './jobBilling'
-import { isNotBillable } from './utils'
+import { isNotBillable, labCost } from './utils'
 
 type Row = Record<string, any>
 
@@ -96,7 +111,22 @@ export interface ClientLine {
   chargeExGST: number
   /** Nil on anything but 'charged'. See ChargeBasis. */
   basis: ChargeBasis
+  /**
+   * What the entry cost you, ex GST. Absent unless `withCost` was passed, so
+   * a document built without it has no cost to print even by accident.
+   */
+  costExGST?: number
 }
+
+/** Which side of the money a document shows. 'charge' discloses nothing. */
+export type MoneyShown = 'charge' | 'cost' | 'both'
+export const MONEY_SHOWN: { id: MoneyShown; label: string; hint: string }[] = [
+  { id: 'charge', label: 'What they pay', hint: 'What the client is charged. Discloses nothing.' },
+  { id: 'cost', label: 'What it cost me', hint: 'What the work cost you — your rates and your suppliers' },
+  { id: 'both', label: 'Both', hint: 'Side by side, with the gap between them' },
+]
+export const showsCost = (m: MoneyShown | undefined): boolean => m === 'cost' || m === 'both'
+export const showsCharge = (m: MoneyShown | undefined): boolean => (m ?? 'charge') !== 'cost'
 
 /**
  * Labour described for the client. The worker's name goes on the front only
@@ -148,6 +178,12 @@ export function clientLines(input: {
    * anything at all, since every line there is covered by the price.
    */
   includeUncharged?: boolean
+  /**
+   * Also work out what each entry cost you. Off by default, and when it is off
+   * the figure is not merely hidden — it is never computed, so no document can
+   * print it. See the note at the top of the file.
+   */
+  withCost?: boolean
 }): ClientLine[] {
   const kind = input.kind ?? 'all'
   const detail = input.labourDetail ?? 'phase'
@@ -179,6 +215,11 @@ export function clientLines(input: {
       basis: !l.notBillable ? 'charged'
         : isNotBillable(rowOf(l)) ? 'no-charge'
         : 'included',
+      ...(input.withCost
+        ? { costExGST: r2(l.kind === 'labour'
+            ? labCost(rowOf(l) ?? {})
+            : n(rowOf(l)?.cost_ex_gst)) }
+        : {}),
     }))
     .sort((a, b) => (a.date || '').localeCompare(b.date || '')
       || a.kind.localeCompare(b.kind)
@@ -203,6 +244,18 @@ export interface BreakdownTotals {
   uncharged: number
   /** True when nothing in the selection is charged — the fixed-quote case. */
   allUncharged: boolean
+  /**
+   * What the work cost you. Nil unless the rows were built `withCost`.
+   *
+   * Unlike the charge figures these count every line, charged or not: an hour
+   * you did not bill for still cost you, and leaving it out of the cost while
+   * counting it in the hours is how a job looks better than it was.
+   */
+  labourCostExGST: number
+  materialsCostExGST: number
+  costExGST: number
+  /** Whether any row actually carries a cost, so a document knows it can ask. */
+  hasCost: boolean
 }
 
 export const isCharged = (r: ClientLine): boolean => r.basis === 'charged'
@@ -225,6 +278,11 @@ export function breakdownTotals(rows: ClientLine[], gstRate = 0.1): BreakdownTot
   const materialsExGST = r2(mat.reduce((s, r) => s + r.chargeExGST, 0))
   const exGST = r2(labourExGST + materialsExGST)
   const gst = r2(exGST * gstRate)
+  // Cost counts every row, not just the charged ones — see the note above.
+  const labourCost = r2(rows.filter(r => r.kind === 'labour')
+    .reduce((s, r) => s + n(r.costExGST), 0))
+  const materialsCost = r2(rows.filter(r => r.kind === 'material')
+    .reduce((s, r) => s + n(r.costExGST), 0))
   return {
     labourHours: r2(lab.reduce((s, r) => s + n(r.hours), 0)),
     labourExGST,
@@ -232,6 +290,10 @@ export function breakdownTotals(rows: ClientLine[], gstRate = 0.1): BreakdownTot
     exGST,
     gst,
     incGST: r2(exGST + gst),
+    labourCostExGST: labourCost,
+    materialsCostExGST: materialsCost,
+    costExGST: r2(labourCost + materialsCost),
+    hasCost: rows.some(r => r.costExGST !== undefined),
     unchargedHours: r2(free.reduce((s, r) => s + n(r.hours), 0)),
     uncharged: free.length,
     allUncharged: rows.length > 0 && charged.length === 0,
@@ -301,10 +363,59 @@ export const ratePerHour = (chargeExGST: number, hours: number | undefined): num
   return h > 0 ? r2(n(chargeExGST) / h) : null
 }
 
+export interface Shortfall {
+  /** What the client agreed to pay, or what they were billed. */
+  revenueExGST: number
+  labourCostExGST: number
+  materialsCostExGST: number
+  costExGST: number
+  /** Revenue less cost. Negative is the loss. */
+  marginExGST: number
+  hours: number
+  /** What an hour of labour cost you. */
+  costPerHour: number | null
+  /**
+   * What an hour of labour actually earned, once the paint is paid for.
+   *
+   * Materials come out of the price first — they were bought, not earned — so
+   * this is (price − materials) ÷ hours. Dividing the whole price by the hours
+   * would count the paint as wages and flatter the figure, which is the
+   * opposite of the point when you are showing a job that lost money.
+   */
+  earnedPerHour: number | null
+}
+
+/**
+ * The job's position: what came in, what it cost, and the gap.
+ *
+ * `revenueExGST` is the agreed price on a fixed job, and the sum of the
+ * charged lines on an hourly one — which is why it is passed in rather than
+ * guessed at here.
+ */
+export function shortfallOf(rows: ClientLine[], revenueExGST: number): Shortfall {
+  const t = breakdownTotals(rows, 0)
+  const hours = r2(t.labourHours + t.unchargedHours)
+  const rev = r2(n(revenueExGST))
+  return {
+    revenueExGST: rev,
+    labourCostExGST: t.labourCostExGST,
+    materialsCostExGST: t.materialsCostExGST,
+    costExGST: t.costExGST,
+    marginExGST: r2(rev - t.costExGST),
+    hours,
+    costPerHour: ratePerHour(t.labourCostExGST, hours),
+    earnedPerHour: ratePerHour(r2(rev - t.materialsCostExGST), hours),
+  }
+}
+
 // ── The two things you can do with it ────────────────────────
 
-const money = (v: number) =>
-  '$' + n(v).toLocaleString('en-AU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+/** A loss reads -$1,000.00, not $-1,000.00. */
+const money = (v: number) => {
+  const x = n(v)
+  return (x < 0 ? '-$' : '$')
+    + Math.abs(x).toLocaleString('en-AU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+}
 
 const auDate = (d: string) => {
   if (!d) return ''
@@ -342,6 +453,16 @@ export interface BreakdownOptions {
    * to". It prints this instead, which is the figure that actually applies.
    */
   agreedExGST?: number
+  /**
+   * Which side of the money the lines show. 'charge' is the default and
+   * discloses nothing; the others need rows built `withCost`.
+   */
+  money?: MoneyShown
+  /**
+   * Close with what came in, what it cost and the gap. Needs `withCost` rows,
+   * and `agreedExGST` on a fixed job or there is no revenue to compare.
+   */
+  showShortfall?: boolean
 }
 
 /**
@@ -361,11 +482,25 @@ export function buildBreakdownText(rows: ClientLine[], o: BreakdownOptions = {})
   if (o.client) out.push(o.client)
   if (out.length) out.push('')
 
+  const wantCost = showsCost(o.money) && t.hasCost
+  const wantCharge = showsCharge(o.money)
+
   // An uncharged line reads as what it is rather than as $0.00, which would
   // say the work was worthless rather than that it was already paid for.
-  const amountOf = (r: ClientLine) =>
+  const chargeOf = (r: ClientLine) =>
     isCharged(r) ? money(r.chargeExGST) : BASIS_LABEL[r.basis].toLowerCase()
   const when = (r: ClientLine) => (showDates && r.date ? auDate(r.date) + '  ' : '')
+
+  /** The money at the end of a line: cost, charge, or "cost / charge". */
+  const tail = (cost: number, charge: string, hours?: number) => {
+    const bits: string[] = []
+    if (wantCost) {
+      const rate = o.showRate ? ratePerHour(cost, hours) : null
+      bits.push(`cost ${money(cost)}${rate != null ? ` (${money(rate)}/hr)` : ''}`)
+    }
+    if (wantCharge) bits.push(wantCost ? `charged ${charge}` : charge)
+    return bits.join(', ')
+  }
 
   const labour = rows.filter(r => r.kind === 'labour')
   const chargedLabour = labour.filter(isCharged)
@@ -374,50 +509,82 @@ export function buildBreakdownText(rows: ClientLine[], o: BreakdownOptions = {})
     out.push(`LABOUR${h ? ` — ${hrs(t.labourHours + t.unchargedHours)} hrs` : ''}`)
     const groups = (o.labourDetail ?? 'phase') === 'phase' ? groupLabourByPhase(rows) : null
     if (groups) {
-      for (const g of groups) {
-        const rate = o.showRate ? ratePerHour(g.chargeExGST, g.hours) : null
-        out.push(`  ${g.name}${g.hours ? ` — ${hrs(g.hours)} hrs` : ''}`
-          + `${rate != null ? ` @ ${money(rate)}/hr` : ''} — ${money(g.chargeExGST)}`)
+      const costOfPhase = (name: string, basis: ChargeBasis) => r2(labour
+        .filter(r => (r.phase || r.description) === name && r.basis === basis)
+        .reduce((s, r) => s + n(r.costExGST), 0))
+      const line = (g: PhaseGroup, charge: string) => {
+        const rate = wantCharge && o.showRate ? ratePerHour(g.chargeExGST, g.hours) : null
+        return `  ${g.name}${g.hours ? ` — ${hrs(g.hours)} hrs` : ''}`
+          + `${rate != null ? ` @ ${money(rate)}/hr` : ''}`
+          + ` — ${tail(costOfPhase(g.name, g.basis), charge, g.hours)}`
       }
+      for (const g of groups) out.push(line(g, money(g.chargeExGST)))
       // Grouping leaves the uncharged hours out, so they follow, grouped too.
       for (const g of groupUnchargedByPhase(rows)) {
-        out.push(`  ${g.name}${g.hours ? ` — ${hrs(g.hours)} hrs` : ''}`
-          + ` — ${BASIS_LABEL[g.basis].toLowerCase()}`)
+        out.push(line(g, BASIS_LABEL[g.basis].toLowerCase()))
       }
     } else {
       for (const r of labour) {
-        const rate = o.showRate && isCharged(r) ? ratePerHour(r.chargeExGST, r.hours) : null
+        const rate = wantCharge && o.showRate && isCharged(r)
+          ? ratePerHour(r.chargeExGST, r.hours) : null
         out.push(`  ${when(r)}${r.description}`
           + `${r.hours ? ` — ${hrs(r.hours)} hrs` : ''}`
-          + `${rate != null ? ` @ ${money(rate)}/hr` : ''} — ${amountOf(r)}`)
+          + `${rate != null ? ` @ ${money(rate)}/hr` : ''}`
+          + ` — ${tail(n(r.costExGST), chargeOf(r), r.hours)}`)
       }
     }
-    if (chargedLabour.length) out.push(`  Labour total: ${money(t.labourExGST)}`)
+    if (wantCost) out.push(`  Labour cost: ${money(t.labourCostExGST)}`)
+    if (wantCharge && chargedLabour.length) out.push(`  Labour total: ${money(t.labourExGST)}`)
     out.push('')
   }
 
   const mats = rows.filter(r => r.kind === 'material')
   if (mats.length) {
     out.push('MATERIALS')
-    for (const r of mats) out.push(`  ${when(r)}${r.description} — ${amountOf(r)}`)
-    if (mats.some(isCharged)) out.push(`  Materials total: ${money(t.materialsExGST)}`)
+    for (const r of mats) {
+      out.push(`  ${when(r)}${r.description} — ${tail(n(r.costExGST), chargeOf(r))}`)
+    }
+    if (wantCost) out.push(`  Materials cost: ${money(t.materialsCostExGST)}`)
+    if (wantCharge && mats.some(isCharged)) out.push(`  Materials total: ${money(t.materialsExGST)}`)
     out.push('')
   }
 
   if (!labour.length && !mats.length) return 'Nothing selected.'
 
+  // What came in, what it cost, and the gap. The revenue is the agreed price
+  // on a fixed job and the charged lines on an hourly one.
+  const revenue = o.agreedExGST ?? t.exGST
+  const addShortfall = () => {
+    if (!o.showShortfall || !t.hasCost) return
+    const s = shortfallOf(rows, revenue)
+    out.push('')
+    out.push('WHERE THE JOB ENDED UP')
+    out.push(`  ${o.agreedExGST != null ? 'Agreed price' : 'Charged'} ex GST: ${money(s.revenueExGST)}`)
+    out.push(`  Less materials: ${money(s.materialsCostExGST)}`)
+    out.push(`  Less labour (${hrs(s.hours)} hrs): ${money(s.labourCostExGST)}`)
+    out.push(`  ${s.marginExGST < 0 ? 'Shortfall' : 'Margin'}: ${money(s.marginExGST)}`)
+    if (s.earnedPerHour != null) {
+      out.push(`  Earned per hour of labour: ${money(s.earnedPerHour)}`)
+    }
+    if (s.costPerHour != null) out.push(`  Labour cost per hour: ${money(s.costPerHour)}`)
+  }
+
   // Nothing charged line by line means there is no sum to print. Adding nil
   // to nil is not the answer to "what did it come to" — the agreed price is.
   if (t.allUncharged) {
-    if (o.agreedExGST != null) {
+    // The shortfall block opens with the agreed price, so printing it here
+    // too would state the same figure twice, four lines apart.
+    const willRepeat = o.showShortfall && t.hasCost
+    if (o.agreedExGST != null && !willRepeat) {
       out.push(`Agreed price ex GST: ${money(o.agreedExGST)}`)
       if (gstRate > 0) {
         out.push(`GST: ${money(r2(o.agreedExGST * gstRate))}`)
         out.push(`Agreed price inc GST: ${money(r2(o.agreedExGST * (1 + gstRate)))}`)
       }
-    } else {
+    } else if (!o.showShortfall || !t.hasCost) {
       out.push('All of the above is covered by the agreed price for this job.')
     }
+    addShortfall()
     return out.join('\n')
   }
 
@@ -432,6 +599,7 @@ export function buildBreakdownText(rows: ClientLine[], o: BreakdownOptions = {})
       ? 'One entry above carries no charge.'
       : `${t.uncharged} entries above carry no charge.`)
   }
+  addShortfall()
   return out.join('\n')
 }
 
@@ -467,16 +635,37 @@ export function buildBreakdownHTML(
   const mats = rows.filter(r => r.kind === 'material')
   const groups = (o.labourDetail ?? 'phase') === 'phase' ? groupLabourByPhase(rows) : null
 
+  const wantCost = showsCost(o.money) && t.hasCost
+  const wantCharge = showsCharge(o.money)
+
   const cols = (kind: 'labour' | 'material') => {
     const c: string[] = []
     if (showDates && !(kind === 'labour' && groups)) c.push('<th style="width:88px">Date</th>')
     c.push('<th>Description</th>')
-    if (kind === 'labour') {
-      c.push('<th style="width:70px;text-align:right">Hours</th>')
-      if (o.showRate) c.push('<th style="width:90px;text-align:right">Rate</th>')
+    if (kind === 'labour') c.push('<th style="width:70px;text-align:right">Hours</th>')
+    if (wantCost) {
+      if (kind === 'labour' && o.showRate) c.push('<th style="width:90px;text-align:right">Cost/hr</th>')
+      c.push('<th style="width:110px;text-align:right">Cost</th>')
     }
-    c.push('<th style="width:110px;text-align:right">Amount</th>')
+    if (wantCharge) {
+      if (kind === 'labour' && o.showRate) c.push('<th style="width:90px;text-align:right">Rate</th>')
+      c.push(`<th style="width:110px;text-align:right">${wantCost ? 'Charged' : 'Amount'}</th>`)
+    }
     return c.join('')
+  }
+
+  /** The money cells at the end of a row, matching `cols` exactly. */
+  const moneyCells = (cost: number, chargeCell: string, hours?: number, rated = false) => {
+    let c = ''
+    if (wantCost) {
+      if (rated && o.showRate) {
+        const cr = ratePerHour(cost, hours)
+        c += `<td class="num">${cr != null ? money(cr) : '—'}</td>`
+      }
+      c += `<td class="num cost">${money(cost)}</td>`
+    }
+    if (wantCharge) c += chargeCell
+    return c
   }
 
   // The hours heading counts every hour on the page, charged or not — it is
@@ -488,33 +677,45 @@ export function buildBreakdownHTML(
     ? `<td class="num amt">${money(r.chargeExGST)}</td>`
     : `<td class="num free">${esc(BASIS_LABEL[r.basis])}</td>`
 
+  const costOfPhase = (name: string, basis: ChargeBasis) => r2(labour
+    .filter(r => (r.phase || r.description) === name && r.basis === basis)
+    .reduce((s, r) => s + n(r.costExGST), 0))
+
+  const phaseRow = (g: PhaseGroup, chargeCell: string) => {
+    const rate = wantCharge && o.showRate ? ratePerHour(g.chargeExGST, g.hours) : null
+    return `<tr><td>${esc(g.name)}</td>`
+      + `<td class="num">${g.hours ? hrs(g.hours) : '—'}</td>`
+      + moneyCells(costOfPhase(g.name, g.basis),
+          (o.showRate ? `<td class="num">${rate != null ? money(rate) : '—'}</td>` : '') + chargeCell,
+          g.hours, true)
+      + '</tr>'
+  }
+
   const labourBody = groups
-    ? groups.map(g => {
-        const rate = o.showRate ? ratePerHour(g.chargeExGST, g.hours) : null
-        return `<tr><td>${esc(g.name)}</td>`
-          + `<td class="num">${g.hours ? hrs(g.hours) : '—'}</td>`
-          + (o.showRate ? `<td class="num">${rate != null ? money(rate) : '—'}</td>` : '')
-          + `<td class="num amt">${money(g.chargeExGST)}</td></tr>`
-      }).join('')
+    ? groups.map(g => phaseRow(g, `<td class="num amt">${money(g.chargeExGST)}</td>`)).join('')
       // Grouping skips the uncharged hours, so they follow the phases.
-      + groupUnchargedByPhase(rows).map(g => `<tr><td>${esc(g.name)}</td>`
-        + `<td class="num">${g.hours ? hrs(g.hours) : '—'}</td>`
-        + (o.showRate ? '<td class="num">—</td>' : '')
-        + `<td class="num free">${esc(BASIS_LABEL[g.basis])}</td></tr>`).join('')
+      + groupUnchargedByPhase(rows)
+          .map(g => phaseRow(g, `<td class="num free">${esc(BASIS_LABEL[g.basis])}</td>`))
+          .join('')
     : labour.map(r => {
-        const rate = o.showRate && isCharged(r) ? ratePerHour(r.chargeExGST, r.hours) : null
+        const rate = wantCharge && o.showRate && isCharged(r)
+          ? ratePerHour(r.chargeExGST, r.hours) : null
         return '<tr>'
           + (showDates ? `<td class="dt">${esc(auDate(r.date)) || '—'}</td>` : '')
           + `<td>${esc(r.description)}</td>`
           + `<td class="num">${r.hours ? hrs(r.hours) : '—'}</td>`
-          + (o.showRate ? `<td class="num">${rate != null ? money(rate) : '—'}</td>` : '')
-          + amountCell(r) + '</tr>'
+          + moneyCells(n(r.costExGST),
+              (o.showRate ? `<td class="num">${rate != null ? money(rate) : '—'}</td>` : '')
+              + amountCell(r),
+              r.hours, true)
+          + '</tr>'
       }).join('')
 
   const matsBody = mats.map(r => '<tr>'
     + (showDates ? `<td class="dt">${esc(auDate(r.date)) || '—'}</td>` : '')
     + `<td>${esc(r.description)}</td>`
-    + amountCell(r) + '</tr>').join('')
+    + moneyCells(n(r.costExGST), amountCell(r))
+    + '</tr>').join('')
 
   /**
    * How many columns that section's table has, so the subtotal row spans all
@@ -522,11 +723,53 @@ export function buildBreakdownHTML(
    * description and the amount itself — and must agree with `cols` above.
    */
   const span = (kind: 'labour' | 'material') => {
-    let c = 2
+    let c = 1                                   // description
     if (showDates && !(kind === 'labour' && groups)) c++
-    if (kind === 'labour') { c++; if (o.showRate) c++ }
+    if (kind === 'labour') c++                  // hours
+    if (wantCost) { c++; if (kind === 'labour' && o.showRate) c++ }
+    if (wantCharge) { c++; if (kind === 'labour' && o.showRate) c++ }
     return c
   }
+
+  /** The money cells on a subtotal row, matching `cols` the same way. */
+  const subCells = (cost: number, charge: string, kind: 'labour' | 'material') => {
+    let c = ''
+    if (wantCost) {
+      if (kind === 'labour' && o.showRate) c += '<td></td>'
+      c += `<td class="num">${money(cost)}</td>`
+    }
+    if (wantCharge) {
+      if (kind === 'labour' && o.showRate) c += '<td></td>'
+      c += `<td class="num">${charge}</td>`
+    }
+    return c
+  }
+  /** Columns a subtotal's label spans: everything the money cells do not. */
+  const labelSpan = (kind: 'labour' | 'material') => {
+    let money = 0
+    if (wantCost) { money++; if (kind === 'labour' && o.showRate) money++ }
+    if (wantCharge) { money++; if (kind === 'labour' && o.showRate) money++ }
+    return span(kind) - money
+  }
+
+  // What came in, what it cost, and the gap.
+  const shortfallBlock = (() => {
+    if (!o.showShortfall || !t.hasCost) return ''
+    const s = shortfallOf(rows, o.agreedExGST ?? t.exGST)
+    const row = (label: string, value: string, cls = '') =>
+      `<tr${cls ? ` class="${cls}"` : ''}><td>${label}</td><td>${value}</td></tr>`
+    return `<h2>Where the job ended up</h2>
+<table class="grand" style="margin-left:0;width:min(420px,100%)"><tbody>
+${row(o.agreedExGST != null ? 'Agreed price ex GST' : 'Charged ex GST', money(s.revenueExGST))}
+${row('Less materials', money(s.materialsCostExGST))}
+${row(`Less labour (${hrs(s.hours)} hrs)`, money(s.labourCostExGST))}
+${row(s.marginExGST < 0 ? 'Shortfall' : 'Margin', money(s.marginExGST), s.marginExGST < 0 ? 'big loss' : 'big')}
+</tbody></table>
+<table class="grand" style="margin-left:0;width:min(420px,100%);margin-top:4px"><tbody>
+${s.earnedPerHour != null ? row('Earned per hour of labour', money(s.earnedPerHour)) : ''}
+${s.costPerHour != null ? row('Labour cost per hour', money(s.costPerHour)) : ''}
+</tbody></table>`
+  })()
 
   const meta: string[] = []
   if (o.client) meta.push(`<span class="lbl">To:</span><span>${esc(o.client)}</span>`)
@@ -554,6 +797,8 @@ td.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
 td.amt{font-weight:600}
 td.dt{white-space:nowrap;color:#555}
 td.free{color:#555;font-style:italic;font-weight:600}
+td.cost{color:#555}
+.grand tr.loss td{color:#b91c1c}
 .sub td{font-weight:700;background:#f0efec !important;border:1px solid #ccc}
 .grand{margin-top:14px;margin-left:auto;width:min(320px,100%);border-collapse:collapse}
 .grand td{border:none;padding:4px 8px;font-size:12px}
@@ -572,26 +817,28 @@ td.free{color:#555;font-style:italic;font-weight:600}
 <div class="meta">${meta.join('')}</div>
 ${labour.length ? `<h2>Labour</h2>
 <table><thead><tr>${cols('labour')}</tr></thead><tbody>${labourBody}
-<tr class="sub"><td colspan="${span('labour') - 1}">Labour${allHours ? ` — ${hrs(allHours)} hours` : ''}</td><td class="num">${labour.some(isCharged) ? money(t.labourExGST) : '—'}</td></tr>
+<tr class="sub"><td colspan="${labelSpan('labour')}">Labour${allHours ? ` — ${hrs(allHours)} hours` : ''}</td>${subCells(t.labourCostExGST, labour.some(isCharged) ? money(t.labourExGST) : '—', 'labour')}</tr>
 </tbody></table>` : ''}
 ${mats.length ? `<h2>Materials</h2>
 <table><thead><tr>${cols('material')}</tr></thead><tbody>${matsBody}
-<tr class="sub"><td colspan="${span('material') - 1}">Materials</td><td class="num">${mats.some(isCharged) ? money(t.materialsExGST) : '—'}</td></tr>
+<tr class="sub"><td colspan="${labelSpan('material')}">Materials</td>${subCells(t.materialsCostExGST, mats.some(isCharged) ? money(t.materialsExGST) : '—', 'material')}</tr>
 </tbody></table>` : ''}
 ${!labour.length && !mats.length ? '<p>Nothing selected.</p>' : ''}
-${t.allUncharged ? (o.agreedExGST != null ? `<table class="grand"><tbody>
+${t.allUncharged ? (o.agreedExGST != null && !(o.showShortfall && t.hasCost) ? `<table class="grand"><tbody>
 <tr><td>Agreed price ex GST</td><td>${money(o.agreedExGST)}</td></tr>
 ${gstRate > 0 ? `<tr><td>GST</td><td>${money(r2(o.agreedExGST * gstRate))}</td></tr>
 <tr class="big"><td>Agreed price inc GST</td><td>${money(r2(o.agreedExGST * (1 + gstRate)))}</td></tr>`
   : `<tr class="big"><td>Agreed price</td><td>${money(o.agreedExGST)}</td></tr>`}
 </tbody></table>`
-  : '<p class="note" style="margin-top:14px">All of the above is covered by the agreed price for this job.</p>')
+  : (o.showShortfall && t.hasCost ? ''
+      : '<p class="note" style="margin-top:14px">All of the above is covered by the agreed price for this job.</p>'))
 : `<table class="grand"><tbody>
 <tr><td>Total ex GST</td><td>${money(t.exGST)}</td></tr>
 ${gstRate > 0 ? `<tr><td>GST</td><td>${money(t.gst)}</td></tr>
 <tr class="big"><td>Total inc GST</td><td>${money(t.incGST)}</td></tr>`
   : `<tr class="big"><td>Total</td><td>${money(t.exGST)}</td></tr>`}
 </tbody></table>`}
+${shortfallBlock}
 <p class="note">${t.uncharged && !t.allUncharged
   ? `Entries marked <b>Included</b> are covered by the agreed price for this job; entries marked <b>No charge</b> were carried out at no cost to you. Neither is added to the total above.<br>`
   : ''}This is a breakdown of works carried out, provided for your records. It is not a tax invoice and is not a request for payment.</p>

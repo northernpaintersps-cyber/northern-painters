@@ -12,7 +12,7 @@
 
 import {
   clientLines, selected, breakdownTotals, groupLabourByPhase, groupUnchargedByPhase,
-  ratePerHour,
+  ratePerHour, shortfallOf,
   labourDescription, materialDescription, buildBreakdownText, buildBreakdownHTML,
 } from '@/lib/clientBreakdown'
 import { invoiceableLines } from '@/lib/jobBilling'
@@ -21,6 +21,8 @@ import * as fs from 'fs'
 let fail = 0
 const ok = (c: boolean, m: string) => { if (!c) { fail++; console.log('FAIL', m) } else console.log('ok  ', m) }
 const near = (a: number, b: number, tol = 0.02) => Math.abs(a - b) < tol
+/** The page without its stylesheet — the sheet names a `cost` class always. */
+const body = (html: string) => html.replace(/<style>[\s\S]*?<\/style>/g, '')
 
 // A job with a subcontractor on it, a defect made good for nothing, and
 // materials bought at cost and charged with markup.
@@ -48,15 +50,18 @@ const lines = invoiceableLines({
 })
 
 // ── 1. The cost never gets out ───────────────────────────────
-// Comments are stripped first: this file's own prose names the forbidden
-// helpers in order to explain why they are forbidden.
-const src = fs.readFileSync('src/lib/clientBreakdown.ts', 'utf8')
-  .replace(/^\s*\/\/.*$/gm, '')
-ok(!/\blabCost\b/.test(src), 'the breakdown never reaches for labCost')
-ok(!/\bmatCost\b/.test(src), 'nor for matCost')
-ok(!/\blineCost\b/.test(src), 'nor for lineCost')
-ok(!/cost_ex_gst/.test(src), 'and never reads a cost column off a row')
-ok(!/\bcost\b\s*[:.]/.test(src), 'and no code path reads a `cost` field')
+// The rule is no longer "this file never mentions cost" — the owner asked for
+// a mode that shows it. It is now "cost is absent unless it was asked for
+// twice", which is a behaviour, so it is tested as one.
+const plain = clientLines({ lines, labour, materials })
+ok(plain.every(r => r.costExGST === undefined),
+  'no row carries a cost unless withCost was passed')
+ok(!breakdownTotals(plain, 0.1).hasCost, 'and the totals know there is none')
+ok(breakdownTotals(plain, 0.1).costExGST === 0, 'so the cost total is nil')
+// Even asked to show cost, rows built without it have nothing to show.
+ok(!/cost/i.test(buildBreakdownText(plain, { money: 'both', showShortfall: true })
+  .replace(/Cost/g, '')),
+  'asking for cost on rows that do not carry it prints none')
 
 const rows = clientLines({ lines, labour, materials })
 const amounts = rows.map(r => r.chargeExGST)
@@ -73,7 +78,7 @@ const html = buildBreakdownHTML(rows, { gstRate: 0.1 })
 for (const doc of [['text', text], ['HTML', html]] as [string, string][]) {
   ok(!/\$400\.00/.test(doc[1]), `the ${doc[0]} never prints the $400 cost of the paint`)
   ok(!/markup/i.test(doc[1]), `the ${doc[0]} never mentions markup`)
-  ok(!/\bcost\b/i.test(doc[1]), `the ${doc[0]} never uses the word cost`)
+  ok(!/\bcost\b/i.test(body(doc[1])), `the ${doc[0]} never uses the word cost`)
 }
 
 // ── 2. Nobody is named unless you ask ────────────────────────
@@ -121,7 +126,7 @@ ok((fullText.match(/Rojas/g) ?? []).length === 2, 'both of Francisco\'s days are
 
 // Cost still never gets out, however much detail was asked for.
 const fullHtml = buildBreakdownHTML(full, { labourDetail: 'full', gstRate: 0.1 })
-ok(!/\bcost\b/i.test(fullHtml), 'the full log still prints no cost')
+ok(!/\bcost\b/i.test(body(fullHtml)), 'the full log still prints no cost')
 ok(!/\$400\.00/.test(fullHtml), 'nor the figure the paint cost')
 ok(!/\$500\.00/.test(fullHtml), 'nor what the labour cost')
 ok(near(breakdownTotals(full, 0.1).exGST, 2160), 'and it comes to the same money as the summary')
@@ -241,7 +246,7 @@ ok(/carries no charge/.test(freeText), 'with a line saying an entry carried no c
 const freeHtml = buildBreakdownHTML(withFree, { gstRate: 0.1, labourDetail: 'entries' })
 ok(/No charge/.test(freeHtml), 'the page says No charge')
 ok(/no cost to you/.test(freeHtml), 'and explains what that means')
-ok(!/\bcost\b/i.test(freeHtml.replace(/no cost to you/g, '')),
+ok(!/\bcost\b/i.test(body(freeHtml).replace(/no cost to you/g, '')),
   'and still prints no cost of yours anywhere else')
 
 // ── A fixed-quote job ───────────────────────────────────────
@@ -296,8 +301,102 @@ ok(/Agreed price inc GST/.test(fxHtml), 'the page prints the agreed price too')
 ok(!/Total inc GST/.test(fxHtml), 'and not a total of nil')
 ok(/Included/.test(fxHtml), 'with each line marked Included')
 ok(/33\.5|24 hours/.test(fxHtml), 'and the hours still reported')
-ok(!/\$400\.00/.test(fxHtml) && !/\bcost\b/i.test(fxHtml),
+ok(!/\$400\.00/.test(fxHtml) && !/\bcost\b/i.test(body(fxHtml)),
   'and no cost of yours on a fixed job either')
+
+// ── Showing the client what it cost, and the shortfall ──────
+// The job that prompted this: fixed price, ran long, lost money.
+const lossJob = { id: 'NP-9436', client: 'Eli & Alister', terms: 'Fixed Quote', on_books: 'Yes' }
+const lossLabour = [
+  { id: 'A', job_id: 'NP-9436', date: '2026-04-01', sub: 'Juan Cabe', billing_type: 'Fixed Quote',
+    phase_name: 'Preparation', hours: 120, cost: 6000 },
+  { id: 'B', job_id: 'NP-9436', date: '2026-04-20', sub: 'Juan Cabe', billing_type: 'Fixed Quote',
+    phase_name: 'First coat', hours: 80, cost: 4000 },
+]
+const lossMats = [
+  { id: 'P', job_id: 'NP-9436', date: '2026-04-01', supplier: 'Dulux', billing_type: 'Fixed Quote',
+    mat_desc: 'Paint and sundries', cost_ex_gst: 3000 },
+]
+const lossLines = invoiceableLines({
+  job: lossJob, invoices: [], labour: lossLabour, materials: lossMats,
+  markupPct: 20, includeUnbillable: true,
+})
+const loss = clientLines({
+  lines: lossLines, labour: lossLabour, materials: lossMats,
+  includeUncharged: true, withCost: true,
+})
+ok(loss.every(r => r.costExGST !== undefined), 'withCost puts a cost on every row')
+ok(loss.find(r => r.id === 'A')!.costExGST === 6000, 'labour carries what it cost')
+ok(loss.find(r => r.id === 'P')!.costExGST === 3000, 'and materials carry the logged total')
+
+const lt = breakdownTotals(loss, 0.1)
+ok(lt.hasCost, 'the totals know a cost is available')
+ok(near(lt.labourCostExGST, 10000), 'labour cost 10,000')
+ok(near(lt.materialsCostExGST, 3000), 'materials cost 3,000')
+ok(near(lt.costExGST, 13000), 'and 13,000 together')
+ok(near(lt.exGST, 0), 'while nothing is charged line by line — it is a fixed job')
+
+// Agreed 12,000 against 13,000 of cost: a thousand dollars down.
+const s = shortfallOf(loss, 12000)
+ok(near(s.revenueExGST, 12000), 'the agreed price is the revenue')
+ok(near(s.costExGST, 13000), 'against 13,000 of cost')
+ok(near(s.marginExGST, -1000), 'leaving a shortfall of 1,000')
+ok(near(s.hours, 200), 'over 200 hours')
+ok(near(s.costPerHour!, 50), 'labour cost $50/hr')
+// Materials come out of the price first — they were bought, not earned.
+ok(near(s.earnedPerHour!, 45), '(12,000 - 3,000) / 200 = $45/hr earned, not 60')
+ok(ratePerHour(12000, 200) === 60, 'dividing the whole price by the hours would read $60 — flattering and wrong')
+
+const lossText = buildBreakdownText(loss, {
+  gstRate: 0.1, agreedExGST: 12000, money: 'cost', showShortfall: true, showRate: true,
+})
+ok(/WHERE THE JOB ENDED UP/.test(lossText), 'the document closes with where the job ended up')
+ok(/Agreed price ex GST: \$12,000\.00/.test(lossText), 'the price')
+ok(/Less materials: \$3,000\.00/.test(lossText), 'the materials')
+ok(/Less labour \(200 hrs\): \$10,000\.00/.test(lossText), 'the labour and its hours')
+ok(/Shortfall: -\$1,000\.00/.test(lossText), 'and the shortfall, named as one')
+ok(/Earned per hour of labour: \$45\.00/.test(lossText), 'with what an hour actually earned')
+ok(/Labour cost per hour: \$50\.00/.test(lossText), 'against what an hour cost')
+// This is the bug that was reported: the rate was simply absent.
+ok(/\$50\.00\/hr/.test(lossText), 'and a rate per hour appears on the lines themselves')
+ok(/Preparation — 120 hrs/.test(lossText), 'with the hours against each phase')
+
+// A job in profit says margin, not shortfall.
+ok(/Margin: \$7,000\.00/.test(buildBreakdownText(loss, {
+  agreedExGST: 20000, money: 'cost', showShortfall: true,
+})), 'a job in profit reads as margin')
+ok(!/Shortfall/.test(buildBreakdownText(loss, {
+  agreedExGST: 20000, money: 'cost', showShortfall: true,
+})), 'and never calls a profit a shortfall')
+
+// Both sides at once, on an hourly job.
+const bothRows = clientLines({ lines, labour, materials, withCost: true })
+const bothText = buildBreakdownText(bothRows, { money: 'both', showRate: true, gstRate: 0.1 })
+ok(/cost \$/.test(bothText) && /charged \$/.test(bothText), 'both sides are labelled')
+ok(/Labour cost: \$1,200\.00/.test(bothText), 'with a cost subtotal')
+ok(/Labour total: \$1,560\.00/.test(bothText), 'beside the charge subtotal')
+const costOnly = buildBreakdownText(bothRows, { money: 'cost', gstRate: 0.1 })
+ok(/Labour cost: \$1,200\.00/.test(costOnly), 'cost only shows the cost')
+ok(!/charged/.test(costOnly), 'and does not label a charge it is not showing')
+
+// And the default is unchanged by any of it.
+ok(buildBreakdownText(rows, { gstRate: 0.1 }) === text,
+  'none of this moves the default document by a character')
+
+const lossHtml = buildBreakdownHTML(loss, {
+  gstRate: 0.1, agreedExGST: 12000, money: 'cost', showShortfall: true, showRate: true,
+})
+ok(/Where the job ended up/.test(lossHtml), 'the page has the section too')
+ok(/Shortfall/.test(lossHtml) && /class="big loss"/.test(lossHtml),
+  'with the shortfall marked as a loss')
+ok(/Cost\/hr/.test(lossHtml), 'and a cost-per-hour column on the lines')
+ok(columnsAgree(lossHtml), 'and its tables still line up')
+// The shortfall block opens with the agreed price, so nothing else should.
+ok(!/covered by the agreed price/.test(lossHtml),
+  'the page does not also say the price covers it all — the shortfall says more')
+ok((lossHtml.match(/Agreed price ex GST/g) ?? []).length === 1,
+  'and states the agreed price once, not twice')
+ok(!/&minus;/.test(lossHtml), 'one kind of minus sign on the page, not two')
 
 // ── The subtotal row has to span the table it sits in ───────
 // A colspan that disagrees with the header count puts the subtotal figure
@@ -307,9 +406,12 @@ function columnsAgree(doc: string): boolean {
   if (!tables.length) return false
   return tables.every(tbl => {
     const heads = (tbl.match(/<th\b/g) ?? []).length
-    const sub = /<tr class="sub"><td colspan="(\d+)"/.exec(tbl)
-    // colspan covers every column but the amount, which is its own cell.
-    return !!sub && Number(sub[1]) + 1 === heads
+    const sub = /<tr class="sub">([\s\S]*?)<\/tr>/.exec(tbl)
+    if (!sub) return false
+    // The label spans some columns; the money cells after it take one each.
+    const colspan = Number(/<td colspan="(\d+)"/.exec(sub[1])?.[1] ?? 0)
+    const cells = (sub[1].match(/<td\b/g) ?? []).length
+    return colspan + (cells - 1) === heads
   })
 }
 for (const o of [
@@ -344,6 +446,12 @@ ok(/type="checkbox"/.test(panel), 'the panel has tick boxes')
 ok(/BREAKDOWN_KINDS/.test(panel), 'and the labour / materials / both filter')
 ok(/showRate/.test(panel), 'and the rate toggle')
 ok(/LABOUR_DETAIL/.test(panel), 'and the by-phase / every-entry / full-log choice')
+ok(/MONEY_SHOWN/.test(panel), 'and the charge / cost / both choice')
+ok(/showShortfall/.test(panel), 'and the where-the-job-ended-up tick')
+// The panel must only compute cost when it is going to show it, so the
+// default document has no cost in it rather than a hidden one.
+ok(/withCost\s*=\s*showsCost\(money\)\s*\|\|\s*showShortfall/.test(panel),
+  'and only works out the cost when something is going to show it')
 ok(!/labCost|lineCost|cost_ex_gst/.test(panel), 'and reads no cost figure either')
 
 console.log(fail ? `\n${fail} failed` : '\nall passed')
