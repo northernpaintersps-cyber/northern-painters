@@ -6,7 +6,7 @@ import { fmtCurrency, invStatus, isCashJob, today } from '@/lib/utils'
 import { splitBooks, isCashPaid, offBooksInvoice } from '@/lib/cashBooks'
 import { moneyMoves, reconTotals, reconRows } from '@/lib/bankRecon'
 import { registerTotals } from '@/lib/assets'
-import { basTotals, hasGST, expIncGST } from '@/lib/bas'
+import { basTotals, hasGST, expIncGST, recognisedDate } from '@/lib/bas'
 import {
   fyLabel, fyRange, fyOptions, currentFY, currentQuarter,
   quarterRange, quarterLabel, inFY, inQuarter, QUARTER_MONTHS,
@@ -188,8 +188,15 @@ export default function Tax() {
   // deducted across the years it earns, so it reaches the P&L here rather
   // than as a cost in the month the invoice landed.
   const reg = useMemo(() => registerTotals(assets, year), [assets, year])
+  // Income is recognised on the same basis as the BAS — see recognisedDate in
+  // lib/bas.ts. This used to be hardwired to the invoice date while the BAS
+  // defaulted to cash, so the two halves of this page answered different
+  // questions and invited the wrong conclusion from anyone reading both.
+  //
+  // Costs are not re-dated: a material, an expense and a labour row each
+  // record the date money moved, so they are recognised when paid either way.
   const pl = useMemo(() => splitBooks({
-    invoices: invoices.filter(i => inFY(i.date, year)),
+    invoices: invoices.filter(i => inFY(recognisedDate(i, basis, invStatus), year)),
     materials: materials.filter(m => inFY(m.date, year)),
     labour: labour.filter(l => inFY(l.date, year)),
     expenses: expenses.filter(e => inFY(e.date, year)),
@@ -197,7 +204,7 @@ export default function Tax() {
     taxRate: TAX_RATE,
     depreciation: reg.deduction,
     depreciationNonDeductible: reg.nonDeductible,
-  }), [invoices, materials, labour, expenses, cashJobIds, year, reg])
+  }), [invoices, materials, labour, expenses, cashJobIds, year, reg, basis])
 
   const basRows: LineSpec[] = [
     ['SALES & INCOME', '', 'header'],
@@ -407,23 +414,29 @@ h1{font-size:18px;margin-bottom:4px}h2{font-size:14px;margin:16px 0 8px;border-b
         ))}
       </div>
 
+      {/* The basis governs both tabs, so the control sits outside them. It
+          used to live on the BAS tab alone, which left the P&L silently on
+          the invoice date while the BAS defaulted to cash — the two read
+          side by side implied a discrepancy that did not exist. */}
+      <div className="flex gap-2 mb-3 flex-wrap items-center">
+        <label className="text-[13px] font-semibold">Accounting basis:</label>
+        <div className="flex border border-black/[0.12] rounded-[7px] overflow-hidden">
+          {(['cash', 'accrual'] as const).map((b, i) => (
+            <button key={b} onClick={() => setBasis(b)}
+              className={`text-xs px-3 py-1.5 ${i ? 'border-l border-black/[0.12]' : ''} ${basis === b ? 'bg-blue-600 text-white' : 'bg-white hover:bg-[#f5f4f0]'}`}>
+              {b === 'cash' ? 'Cash basis' : 'Accrual basis'}
+            </button>
+          ))}
+        </div>
+        <span className="text-[11px] text-[#666]">
+          {basis === 'cash'
+            ? 'Income counted when payment was received (date paid). Costs are counted when paid on either basis.'
+            : 'Income counted when the invoice was issued (invoice date). Costs are counted when paid on either basis.'}
+        </span>
+      </div>
+
       {tab === 'bas' ? (
         <>
-          <div className="flex gap-2 mb-3 flex-wrap items-center">
-            <label className="text-[13px] font-semibold">Accounting basis:</label>
-            <div className="flex border border-black/[0.12] rounded-[7px] overflow-hidden">
-              {(['cash', 'accrual'] as const).map((b, i) => (
-                <button key={b} onClick={() => setBasis(b)}
-                  className={`text-xs px-3 py-1.5 ${i ? 'border-l border-black/[0.12]' : ''} ${basis === b ? 'bg-blue-600 text-white' : 'bg-white hover:bg-[#f5f4f0]'}`}>
-                  {b === 'cash' ? 'Cash basis' : 'Accrual basis'}
-                </button>
-              ))}
-            </div>
-            <span className="text-[11px] text-[#666]">
-              {basis === 'cash' ? 'GST reported when payment received (date paid)' : 'GST reported when invoice issued (invoice date)'}
-            </span>
-          </div>
-
           <div className="flex gap-2 mb-3 flex-wrap items-center">
             <label className="text-[13px] font-semibold">Financial year:</label>
             <select value={year} onChange={e => setYear(parseInt(e.target.value))}
