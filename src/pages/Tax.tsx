@@ -6,7 +6,7 @@ import { fmtCurrency, invStatus, isCashJob, today } from '@/lib/utils'
 import { splitBooks, isCashPaid, offBooksInvoice } from '@/lib/cashBooks'
 import { moneyMoves, reconTotals, reconRows } from '@/lib/bankRecon'
 import { registerTotals } from '@/lib/assets'
-import { basTotals, hasGST, expIncGST, recognisedDate } from '@/lib/bas'
+import { basTotals, hasGST, expIncGST, recognisedDate, unrecognisedIncome } from '@/lib/bas'
 import {
   fyLabel, fyRange, fyOptions, currentFY, currentQuarter,
   quarterRange, quarterLabel, inFY, inQuarter, QUARTER_MONTHS,
@@ -53,6 +53,16 @@ function StatementRows({ rows }: { rows: LineSpec[] }) {
           <div key={i} className="flex justify-between py-1 pl-4 border-b border-black/[0.04]">
             <span className="text-xs text-[#666]">{label}</span>
             <span className="text-xs text-[#666]">{value}</span>
+          </div>
+        )
+        // 'warn' is for a figure that is NOT in the total beside it — money
+        // the chosen basis recognises in no period. Amber rather than red: it
+        // is not an error, it is something the report cannot place, and it
+        // has to be visible or the total reads as the whole story.
+        if (kind === 'warn') return (
+          <div key={i} className="flex justify-between py-1.5 border-b border-black/[0.06] bg-amber-50 -mx-1 px-1 rounded">
+            <span className="text-[13px] text-amber-900">{label}</span>
+            <span className="text-[13px] font-medium text-amber-900">{value}</span>
           </div>
         )
         const bold = kind === 'bold' || kind.startsWith('total')
@@ -209,6 +219,13 @@ export default function Tax() {
   const basRows: LineSpec[] = [
     ['SALES & INCOME', '', 'header'],
     ['G1 — Total sales (inc GST)', fmtCurrency(bas.salesIncGST), ''],
+    // On a cash basis an invoice with no payment date is in no quarter at
+    // all. G1 is a lodged field, so what it cannot place is stated beside it
+    // rather than left to be noticed.
+    ...(bas.unrecognisedCount ? [[
+      `Not in G1 — ${bas.unrecognisedCount} invoice${bas.unrecognisedCount === 1 ? '' : 's'} with no payment date (ex GST)`,
+      fmtCurrency(bas.unrecognised), 'warn',
+    ] as LineSpec] : []),
     ['G2 — Export sales', '$0.00', ''],
     ['G3 — Other GST-free sales', '$0.00', ''],
     ['G10 — Capital acquisitions (assets, inc GST)', fmtCurrency(bas.assetsIncGST), ''],
@@ -226,6 +243,14 @@ export default function Tax() {
       fmtCurrency(Math.abs(bas.netGST)), bas.netGST > 0 ? 'total-red' : 'total-green'],
   ]
 
+  // Income that a cash basis recognises in no period at all: unpaid, or paid
+  // with no date recorded and never marked Paid. Named rather than silently
+  // absent, the same way the off-books cash figures are — a P&L that quietly
+  // understates income is the worst direction for that error to run.
+  const lostIncome = useMemo(
+    () => unrecognisedIncome(invoices, basis, invStatus, d => inFY(d, year), invOnBooks),
+    [invoices, basis, year, cashJobIds])
+
   const { books, offBooks } = pl
   const hasOffBooks = offBooks.income !== 0 || offBooks.costs !== 0
   const profitCol = (v: number) => v >= 0 ? 'total-green' : 'total-red'
@@ -233,6 +258,10 @@ export default function Tax() {
   const plRows: LineSpec[] = [
     ['DECLARED INCOME', '', 'header'],
     ['Revenue from painting services (ex GST)', fmtCurrency(books.income), ''],
+    lostIncome.count
+      ? [`Not counted — ${lostIncome.count} invoice${lostIncome.count === 1 ? '' : 's'} with no payment date`,
+         fmtCurrency(lostIncome.exGST), 'warn'] as LineSpec
+      : null,
     ['TOTAL INCOME', fmtCurrency(books.income), 'total-green'],
     null,
     ['COST OF GOODS SOLD', '', 'header'],

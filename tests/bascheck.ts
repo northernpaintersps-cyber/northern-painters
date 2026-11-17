@@ -14,9 +14,9 @@
 // purchases off the BAS, cash jobs' income named but not declared, the cash
 // versus accrual basis, and quarter boundaries on the Australian FY.
 
-import { basTotals, hasGST, expIncGST, recognisedDate } from '@/lib/bas'
+import { basTotals, hasGST, expIncGST, recognisedDate, unrecognisedIncome } from '@/lib/bas'
 import { splitBooks } from '@/lib/cashBooks'
-import { inFY } from '@/lib/fy'
+import { inFY, inQuarter } from '@/lib/fy'
 
 let fail = 0
 const ok = (c: boolean, m: string) => { if (!c) { fail++; console.log('FAIL', m) } else console.log('ok  ', m) }
@@ -245,6 +245,52 @@ eq(expIncGST({ amount_ex_gst: 45, gst: 0 }), 45, 'expIncGST of a GST-free purcha
       eq(onBAS, plIncome(basis, year) * 1.1,
          `${basis} FY${year - 1}: the BAS year and the P&L year agree`)
     }
+}
+
+// ── Income the basis cannot place is named, not dropped ─────
+//
+// 13 invoices worth $59,081.59 fell into this in FY2025-26: unpaid, or paid
+// with no date recorded. On a cash basis they belong to no period at all, so
+// a P&L that just omits them understates income by that much and says
+// nothing. The figure is reported separately instead, the same rule the
+// off-books cash lines already follow.
+{
+  const invoices = [
+    { date: '2026-07-05', date_paid: '2026-07-06', agreed_ex_gst: 1000, gst: 100 }, // placed
+    { date: '2026-07-07', agreed_ex_gst: 4000, gst: 400, inv_status: 'Sent' },      // nowhere
+    { date: '2026-07-08', agreed_ex_gst: 2000, gst: 200, inv_status: 'Overdue' },   // nowhere
+  ]
+  const st = (i: any) => String(i.inv_status ?? 'Paid')
+  const inQ1 = (d: unknown) => inQuarter(d, 2027, 1)
+
+  const cash = unrecognisedIncome(invoices, 'cash', st, inQ1)
+  eq(cash.exGST, 6000, 'cash: the two invoices with no payment date are reported')
+  eq(cash.count, 2, 'and counted')
+
+  const accrual = unrecognisedIncome(invoices, 'accrual', st, inQ1)
+  eq(accrual.exGST, 0, 'accrual: nothing is unplaceable, every invoice has a date')
+  eq(accrual.count, 0, 'so there is nothing to report')
+
+  // It is reported, not counted: the figure must not be in G1 as well.
+  const t = basTotals({
+    invoices, materials: [], expenses: [], assets: [],
+    basis: 'cash', year: 2027, quarter: 1,
+    onBooks: () => true, invOnBooks: () => true, invStatus: st,
+  })
+  eq(t.salesIncGST, 1100, 'G1 holds only the invoice that was actually paid')
+  eq(t.unrecognised, 6000, 'with the rest named beside it')
+  eq(t.unrecognisedCount, 2, 'and its count')
+
+  // A cash job is off the books and already has its own line, so it must not
+  // be double-reported here.
+  const withCashJob = [...invoices, { date: '2026-07-09', agreed_ex_gst: 9000, gst: 0, job_id: 'NP-CASH', inv_status: 'Sent' }]
+  const u = unrecognisedIncome(withCashJob, 'cash', st, inQ1, (i: any) => i.job_id !== 'NP-CASH')
+  eq(u.exGST, 6000, 'an off-books invoice is not reported twice')
+
+  // Nothing missing: everything either lands in a period or is named.
+  const everyInvoice = invoices.reduce((s2, i) => s2 + i.agreed_ex_gst, 0)
+  eq(t.totalSales + t.unrecognised, everyInvoice,
+     'every on-books invoice of the quarter is either in G1 or named beside it')
 }
 
 console.log(fail ? `\n${fail} FAILED` : '\nall passed')
