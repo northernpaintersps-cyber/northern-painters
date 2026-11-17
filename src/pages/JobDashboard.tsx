@@ -39,6 +39,7 @@ import { handOff } from '@/lib/handoff'
 import { useBusinessSettings } from '@/pages/SettingsPage'
 import InfoTip, { TipCalc } from '@/components/InfoTip'
 import JobModal from '@/components/JobModal'
+import ClientBreakdownPanel from '@/components/ClientBreakdownPanel'
 import {
   Loader2, ArrowLeft, Edit2, FileText, Plus, Clock, Package, Users,
   CalendarDays, Receipt, Camera, AlertTriangle, Check,
@@ -430,6 +431,14 @@ export default function JobDashboard() {
           {b.basis === 'fixed' && <> On a fixed-price job the charge column is what those hours
             would be worth billed out — the client pays the agreed price regardless.</>}
         </div>
+      </Card>
+
+      {/* ── The same work, as the client may see it ───────── */}
+      <Card className="mb-3.5"
+        title={<><FileText size={13} /> Breakdown for the client</>}>
+        <ClientBreakdownPanel
+          lines={lines} labour={jobLabour} materials={jobMaterials}
+          job={job} gstRate={jobGstRate(job)} biz={biz} />
       </Card>
 
       {/* ── The rest of it ──────────────────────────────── */}
