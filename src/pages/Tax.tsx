@@ -6,6 +6,7 @@ import { fmtCurrency, invStatus, isCashJob, today } from '@/lib/utils'
 import { splitBooks, isCashPaid, offBooksInvoice } from '@/lib/cashBooks'
 import { moneyMoves, reconTotals, reconRows } from '@/lib/bankRecon'
 import { registerTotals } from '@/lib/assets'
+import { basTotals, hasGST, expIncGST } from '@/lib/bas'
 import {
   fyLabel, fyRange, fyOptions, currentFY, currentQuarter,
   quarterRange, quarterLabel, inFY, inQuarter, QUARTER_MONTHS,
@@ -35,9 +36,7 @@ function useTable(table: string) {
 // June — with BAS quarters numbered inside it. See lib/fy.ts; this page used
 // to use calendar years and calendar quarters, which is not what is lodged.
 
-// np_expenses has no has_gst / amount_inc_gst columns — derive them
-const hasGST = (e: Row) => (e.gst || 0) > 0
-const expIncGST = (e: Row) => (e.amount_ex_gst || 0) + (e.gst || 0)
+// hasGST and expIncGST live in lib/bas.ts, beside the figures they feed.
 
 type LineSpec = [string, string, string] | null
 
@@ -173,45 +172,11 @@ export default function Tax() {
     [invoices, materials, expenses, assets])
 
   // V16 aggBAS()
-  const bas = useMemo(() => {
-    const invs = invoices.filter(i => invOnBooks(i) && (basis === 'cash'
-      ? (i.date_paid && inQuarter(i.date_paid, year, quarter)) || (invStatus(i) === 'Paid' && !i.date_paid && inQuarter(i.date, year, quarter))
-      : inQuarter(i.date, year, quarter)))
-    // A cash purchase claims no GST credit, so it is not on the BAS at all.
-    const mats = materials.filter(m => onBooks(m) && !isCashPaid(m) && inQuarter(m.date, year, quarter))
-    const exps = expenses.filter(e => onBooks(e) && !isCashPaid(e) && inQuarter(e.date, year, quarter) && hasGST(e))
-    const gstCollected = invs.reduce((s, i) => s + (i.gst || 0), 0)
-    const gstOnMats = mats.reduce((s, m) => s + (m.gst || 0), 0)
-    const gstOnExps = exps.reduce((s, e) => s + (e.gst || 0), 0)
-    // An asset bought this quarter is a capital acquisition: its GST is
-    // claimable now even though its cost is deducted over years. Cash and
-    // private-use shares are already netted off by the register.
-    const capital = assets.filter(a => inQuarter(a.purchase_date, year, quarter))
-    const gstOnAssets = registerTotals(capital, year).purchasedGST
-    const assetsExGST = capital.filter(a => !isCashPaid(a)).reduce((s, a) => s + (a.cost_ex_gst || 0), 0)
-    return {
-      gstCollected,
-      totalGSTCredits: gstOnMats + gstOnExps + gstOnAssets,
-      netGST: gstCollected - (gstOnMats + gstOnExps + gstOnAssets),
-      gstOnAssets, assetsExGST, assetCount: capital.length,
-      totalSales: invs.reduce((s, i) => s + (i.agreed_ex_gst || 0), 0),
-      totalPurchases: mats.reduce((s, m) => s + (m.cost_ex_gst || 0), 0)
-        + exps.reduce((s, e) => s + (e.amount_ex_gst || 0), 0) + assetsExGST,
-      invCount: invs.length,
-      txnCount: mats.length + exps.length,
-      matsIncGST: materials.filter(m => onBooks(m) && !isCashPaid(m) && inQuarter(m.date, year, quarter)).reduce((s, m) => s + (m.total_inc_gst || 0), 0),
-      expsIncGST: expenses.filter(e => onBooks(e) && !isCashPaid(e) && inQuarter(e.date, year, quarter)).reduce((s, e) => s + expIncGST(e), 0),
-      cashPurchases: [...materials, ...expenses].filter(r => isCashPaid(r) && inQuarter(r.date, year, quarter)).length,
-      // Declared cash, so out of every figure above. Named rather than
-      // silently missing: a BAS that is quietly smaller is worse than one
-      // that says what it left out.
-      offBooksSales: invoices
-        .filter(i => !invOnBooks(i) && inQuarter(i.date_paid || i.date, year, quarter))
-        .reduce((s2, i) => s2 + (i.agreed_ex_gst || 0), 0),
-      offBooksCount: invoices
-        .filter(i => !invOnBooks(i) && inQuarter(i.date_paid || i.date, year, quarter)).length,
-    }
-  }, [invoices, materials, expenses, assets, basis, year, quarter])
+  const bas = useMemo(() => basTotals({
+    invoices, materials, expenses, assets, basis, year, quarter,
+    onBooks, invOnBooks, invStatus,
+  }), [invoices, materials, expenses, assets, basis, year, quarter, cashJobIds])
+
 
   // V16 aggPL(), now split on the books.
   //
@@ -236,17 +201,17 @@ export default function Tax() {
 
   const basRows: LineSpec[] = [
     ['SALES & INCOME', '', 'header'],
-    ['G1 — Total sales (inc GST)', fmtCurrency(bas.totalSales * 1.1), ''],
+    ['G1 — Total sales (inc GST)', fmtCurrency(bas.salesIncGST), ''],
     ['G2 — Export sales', '$0.00', ''],
     ['G3 — Other GST-free sales', '$0.00', ''],
-    ['G10 — Capital acquisitions (assets, inc GST)', fmtCurrency(bas.assetsExGST * 1.1), ''],
+    ['G10 — Capital acquisitions (assets, inc GST)', fmtCurrency(bas.assetsIncGST), ''],
     ['1A — GST on sales', fmtCurrency(bas.gstCollected), 'bold'],
     null,
     ['PURCHASES & EXPENSES', '', 'header'],
-    ['G11 — Total purchases (inc GST)', fmtCurrency(bas.totalPurchases * 1.1), ''],
+    ['G11 — Total purchases (inc GST)', fmtCurrency(bas.purchasesIncGST), ''],
     ['Materials purchased', fmtCurrency(bas.matsIncGST), 'sub'],
     ['Overhead expenses (inc GST)', fmtCurrency(bas.expsIncGST), 'sub'],
-    ...(bas.assetsExGST ? [['Assets purchased (inc GST)', fmtCurrency(bas.assetsExGST * 1.1), 'sub'] as LineSpec] : []),
+    ...(bas.assetsExGST ? [['Assets purchased (inc GST)', fmtCurrency(bas.assetsIncGST), 'sub'] as LineSpec] : []),
     ['1B — GST credits on purchases', fmtCurrency(bas.totalGSTCredits), 'bold'],
     null,
     ['NET GST POSITION', '', 'header'],
