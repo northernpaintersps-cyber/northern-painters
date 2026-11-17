@@ -438,7 +438,9 @@ export default function JobDashboard() {
         title={<><FileText size={13} /> Breakdown for the client</>}>
         <ClientBreakdownPanel
           lines={lines} labour={jobLabour} materials={jobMaterials}
-          job={job} gstRate={jobGstRate(job)} biz={biz} />
+          job={job} gstRate={jobGstRate(job)} biz={biz}
+          fixedPrice={b.basis === 'fixed'}
+          agreedExGST={b.basis === 'fixed' ? b.contractExGST : undefined} />
       </Card>
 
       {/* ── The rest of it ──────────────────────────────── */}
