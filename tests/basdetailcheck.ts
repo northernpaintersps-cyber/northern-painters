@@ -14,6 +14,7 @@
 import {
   describe as desc, salesDetail, purchaseDetail, basDetailCSV,
 } from '@/lib/basDetail'
+import { basDetailHTML } from '@/lib/basDetailDoc'
 
 let fail = 0
 const ok = (c: boolean, m: string) => { if (!c) { fail++; console.log('FAIL', m) } else console.log('ok  ', m) }
@@ -196,6 +197,77 @@ ok(desc('Dulux', 'Inv 12345', '12345') === '',
   }))
   ok(g[0].rows[0].party === 'Unknown', 'a missing payee is named Unknown rather than left blank')
   ok(!Number.isNaN(g[0].amountIncGST), 'and junk does not produce NaN')
+}
+
+// ── The printable document ──────────────────────────────────
+//
+// Same figures, typeset. The thing worth testing is not the styling but that
+// the document agrees with itself: a total printed at the top of a page an
+// accountant is reconciling must equal the rows printed below it.
+{
+  const input = run({
+    invoices: [
+      { id: 'i1', client: 'Amplify', date: '2026-07-02', date_paid: '2026-07-02', agreed_ex_gst: 20000, gst: 2000 },
+      { id: 'i2', client: 'Basq, House', date: '2026-09-07', date_paid: '2026-09-07', agreed_ex_gst: 700, gst: 70 },
+    ],
+    materials: [
+      { date: '2026-07-05', supplier: 'Inspirations Paint', mat_desc: 'ceiling white', cost_ex_gst: 1000, gst: 100, total_inc_gst: 1100 },
+    ],
+    expenses: [
+      { date: '2026-07-11', supplier: 'CBA', exp_desc: 'account fee', amount_ex_gst: 11.50, gst: 0, category: 'Bank Charges & Fees' },
+    ],
+  })
+  const html = basDetailHTML(input, { company_name: 'Northern Painters', abn: '46435825953' })
+
+  ok(html.startsWith('<!doctype html>'), 'a whole document, not a fragment')
+  ok(html.includes('<title>BAS detail'), 'with a title')
+  ok(html.includes('46435825953'), 'the ABN on it')
+  ok(html.includes('Cash basis'), 'and the basis stated on its face')
+  ok(html.includes('Cash-paid purchases and cash jobs are excluded'),
+     'and what was left out of it')
+
+  // The summary cards must equal the detail. 20000+2000 + 700+70 = 22770.
+  ok(html.includes('$22,770.00'), 'sales card equals the sales rows')
+  ok(html.includes('$2,070.00'), 'GST card equals the GST on them')
+  ok(html.includes('$1,111.50'), 'purchases total equals the purchase rows')
+  // Net GST 2070 - 100 = 1970.
+  ok(html.includes('$1,970.00'), 'net GST is the difference')
+  ok(html.includes('payable to the ATO'), 'and is named as payable when positive')
+
+  // Pluralisation is given, not guessed — '7 categorys' reached a rendered
+  // page before anybody read it.
+  ok(html.includes('2 categories'), 'categories, not categorys')
+  ok(!/\bcategorys\b/.test(html), 'and never the guessed plural')
+  ok(html.includes('2 invoices'), 'invoices pluralised')
+
+  // A GST-free row prints a dash, not a zero: a column of zeroes reads as a
+  // column of figures to check.
+  ok(html.includes('&mdash;'), 'a GST-free purchase shows a dash rather than $0.00')
+
+  // Everything a client supplied is escaped — a payee with a comma broke the
+  // CSV and an apostrophe or a bracket must not break this.
+  ok(html.includes('Basq, House'), 'a comma in a payee is harmless here')
+  const inj = basDetailHTML(run({
+    materials: [{ date: '2026-07-05', supplier: '<script>bad()</script>', mat_desc: 'x & "y"',
+                  cost_ex_gst: 10, gst: 1, total_inc_gst: 11 }],
+  }))
+  ok(!inj.includes('<script>bad()'), 'a payee cannot inject markup')
+  ok(inj.includes('&lt;script&gt;'), 'it is escaped instead')
+  ok(inj.includes('&amp;'), 'and so is an ampersand')
+
+  // Dates read the way the bank statements print them.
+  ok(html.includes('02/07/2026'), 'dates are day/month/year')
+  ok(!html.includes('2026-07-02<'), 'not ISO')
+
+  // It has to print: a header row that repeats, rows that do not split.
+  ok(html.includes('display:table-header-group'), 'the header repeats across pages')
+  ok(html.includes('page-break-inside:avoid'), 'and a row does not split across one')
+}
+{
+  const html = basDetailHTML(run({}))
+  ok(html.includes('No sales received in this period.'), 'an empty quarter says so')
+  ok(html.includes('No purchases in this period.'), 'on both sides')
+  ok(html.includes('nothing owing'), 'rather than printing a net GST of nothing as payable')
 }
 
 console.log(fail ? `\n${fail} FAILED` : '\nall passed')
