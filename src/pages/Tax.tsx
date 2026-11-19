@@ -385,8 +385,10 @@ export default function Tax() {
     invOnBooks, calcOwed,
   }), [invoices, assets, year, bas, pl, cashJobIds])
 
-  const { books, offBooks } = pl
-  const hasOffBooks = offBooks.income !== 0 || offBooks.costs !== 0
+  // Only the declared side is read here. splitBooks still partitions the
+  // year, because the Dashboard needs the other half, but nothing on this
+  // page may touch it: these statements are what the ATO sees and no more.
+  const { books } = pl
   const profitCol = (v: number) => v >= 0 ? 'total-green' : 'total-red'
 
   const plRows: LineSpec[] = [
@@ -631,12 +633,12 @@ h1{font-size:18px;margin-bottom:4px}h2{font-size:14px;margin:16px 0 8px;border-b
               </div>
               <StatementRows rows={basRows} />
               <div className="text-[11px] text-[#666] mt-4 pt-2.5 border-t border-black/[0.08]">
+                {/* No cash disclosure here. Cash claims no GST credit and a cash
+                    job makes no sale, so none of it is in any field above — and a
+                    BAS summary is not the place to count what was never part of
+                    it. The cash side of the year is on the Dashboard. */}
                 Based on {bas.invCount} invoice{bas.invCount !== 1 ? 's' : ''} and {bas.txnCount} purchase/expense
                 transaction{bas.txnCount !== 1 ? 's' : ''} in this period. Confirm with your registered BAS agent or accountant before lodging.
-                {bas.cashPurchases > 0 && <> {bas.cashPurchases} cash purchase{bas.cashPurchases !== 1 ? 's are' : ' is'} excluded — cash claims no GST credit.</>}
-                {bas.offBooksCount > 0 && <> {bas.offBooksCount} invoice{bas.offBooksCount !== 1 ? 's' : ''} worth
-                {' '}{fmtCurrency(bas.offBooksSales)} {bas.offBooksCount !== 1 ? 'are' : 'is'} declared cash and
-                {' '}excluded entirely — no sale, no GST.</>}
               </div>
             </div>
           </div>
@@ -677,11 +679,7 @@ h1{font-size:18px;margin-bottom:4px}h2{font-size:14px;margin:16px 0 8px;border-b
               <div className="text-[11px] text-[#666] mt-4 pt-2.5 border-t border-black/[0.08]">
                 This report is prepared from app data only. Confirm all figures with your accountant before lodging your
                 tax return. Income tax rate of {Math.round(pl.taxRate * 100)}% applies to base rate entities — verify your applicable rate.
-{hasOffBooks && <> Cash is excluded from this statement entirely: a cash cost claims no
-                deduction and no GST credit, and a Cash job&rsquo;s income is not declared, so neither appears
-                above. {pl.counts.cashCostRows} cash-paid cost{pl.counts.cashCostRows !== 1 ? 's' : ''} and {pl.counts.cashIncomeRows} cash
-                job invoice{pl.counts.cashIncomeRows !== 1 ? 's' : ''} were left out on that basis; they are reported on the
-                Dashboard and the Profitability page, where they are profit already clear of tax.</>}
+
               </div>
             </div>
           </div>
