@@ -9,6 +9,7 @@ import { registerTotals } from '@/lib/assets'
 import { basTotals, hasGST, expIncGST, recognisedDate, unrecognisedIncome } from '@/lib/bas'
 import { position, AGE_BUCKETS, AGE_LABEL, cashBoughtAssets } from '@/lib/position'
 import { basDetailCSV } from '@/lib/basDetail'
+import { basDetailHTML } from '@/lib/basDetailDoc'
 import {
   fyLabel, fyRange, fyOptions, currentFY, currentQuarter,
   quarterRange, quarterLabel, inFY, inQuarter, QUARTER_MONTHS,
@@ -464,6 +465,17 @@ h1{font-size:18px;margin-bottom:4px}h2{font-size:14px;margin:16px 0 8px;border-b
    * from 1 July to 30 September" is a cash-basis question and answering it
    * from invoice dates would list sales that have not been received.
    */
+  /** The same figures, typeset to be read or saved as a PDF. */
+  function printBASDetail() {
+    const w = window.open('', '_blank')
+    if (!w) return
+    w.document.write(basDetailHTML({
+      invoices, materials, expenses, assets, basis, year, quarter,
+      onBooks, invOnBooks, invStatus,
+    }, biz))
+    w.document.close()
+  }
+
   function exportBASDetail() {
     const rows = basDetailCSV({
       invoices, materials, expenses, assets, basis, year, quarter,
@@ -578,10 +590,16 @@ h1{font-size:18px;margin-bottom:4px}h2{font-size:14px;margin:16px 0 8px;border-b
         <h2 className="text-[17px] font-semibold text-gray-900">Tax &amp; Bookkeeping</h2>
         <div className="flex gap-2 flex-wrap">
           {tab === 'bas' && (
-            <button onClick={exportBASDetail} className={`${BTN} flex items-center gap-1.5`}
-              title="Date, who paid to or received from, description, amount and GST — by category, for the quarter and basis selected">
-              <FileSpreadsheet size={14} /> BAS detail for accountant
-            </button>
+            <>
+              <button onClick={printBASDetail} className={`${BTN} flex items-center gap-1.5`}
+                title="A readable statement — date, payee, description, amount and GST by category. Print or save as PDF.">
+                <ReceiptText size={14} /> BAS detail (print / PDF)
+              </button>
+              <button onClick={exportBASDetail} className={`${BTN} flex items-center gap-1.5`}
+                title="The same figures as a spreadsheet, for your accountant to work in">
+                <FileSpreadsheet size={14} /> BAS detail (CSV)
+              </button>
+            </>
           )}
           <button onClick={() => printReport('bas')} className={`${BTN} flex items-center gap-1.5`}><Printer size={14} /> Print BAS</button>
           <button onClick={() => printReport('pl')} className={`${BTN} flex items-center gap-1.5`}><Printer size={14} /> Print P&amp;L</button>
