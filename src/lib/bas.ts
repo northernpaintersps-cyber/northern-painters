@@ -22,9 +22,18 @@
 //
 // Cash is the other axis and is handled the same way everywhere else in the
 // app: a cash purchase claims no credit and is not a BAS purchase at all, and
-// a cash job's income is not declared. Both are named in the result rather
-// than silently dropped — a BAS that is quietly smaller is worse than one
-// that says what it left out.
+// a cash job's income is not declared.
+//
+// The cash totals are still returned, because a caller may legitimately want
+// to know what was set aside, but the Tax page no longer shows any of them.
+// A BAS summary reports the fields that get lodged; counting what was never
+// part of one belongs on the Dashboard, where the cash side of the business
+// is actually read. That is a deliberate decision of the owner's, not an
+// oversight — do not add the disclosure back without asking.
+//
+// `unrecognised` below is a different thing and IS shown: that is money the
+// chosen basis cannot place in any period, so it would otherwise vanish from
+// every report rather than simply being reported elsewhere.
 
 import { isCashPaid } from './cashBooks'
 import { inQuarter } from './fy'
