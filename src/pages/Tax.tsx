@@ -2,11 +2,12 @@ import { useState, useMemo, useRef } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { supabase, selectAll } from '@/lib/supabase'
 import { useAuth } from '@/lib/auth'
-import { fmtCurrency, invStatus, isCashJob, today } from '@/lib/utils'
+import { fmtCurrency, invStatus, isCashJob, today, calcOwed } from '@/lib/utils'
 import { splitBooks, isCashPaid, offBooksInvoice } from '@/lib/cashBooks'
 import { moneyMoves, reconTotals, reconRows } from '@/lib/bankRecon'
 import { registerTotals } from '@/lib/assets'
 import { basTotals, hasGST, expIncGST, recognisedDate, unrecognisedIncome } from '@/lib/bas'
+import { position, AGE_BUCKETS, AGE_LABEL, cashBoughtAssets } from '@/lib/position'
 import {
   fyLabel, fyRange, fyOptions, currentFY, currentQuarter,
   quarterRange, quarterLabel, inFY, inQuarter, QUARTER_MONTHS,
@@ -14,7 +15,7 @@ import {
 import { reconcileBankStatement } from '@/lib/ai'
 import {
   Printer, Loader2, FileSpreadsheet, Download, ReceiptText, LineChart,
-  Landmark, Upload, X,
+  Landmark, Upload, X, Scale,
 } from 'lucide-react'
 import { useBusinessSettings } from '@/pages/SettingsPage'
 
@@ -119,6 +120,129 @@ function downloadCSV(name: string, rows: string[]) {
   setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url) }, 500)
 }
 
+// ── Position ────────────────────────────────────────────────
+//
+// Not a balance sheet, and it does not pretend to be: there is no bank
+// balance and no equity side, because the app records transactions rather
+// than account balances and has no opening capital figure. What it does
+// answer is what a sole operator acts on — what do I own, who owes me, and
+// what is the ATO going to want.
+//
+// Cash is absent, for a different reason in each row. A cash-bought asset is
+// owned and counts; it simply earns no depreciation deduction. A cash job is
+// never a receivable, because there is no invoice outstanding on one.
+function PositionTab({ pos, assets, year, biz }: {
+  pos: ReturnType<typeof position>
+  assets: Row[]
+  year: number
+  biz: any
+}) {
+  const cashAssets = cashBoughtAssets(assets)
+  const tile = (l: string, v: string, c?: string, sub?: string) => (
+    <div key={l} className="bg-[#f5f4f0] rounded-lg px-4 py-3.5">
+      <div className="text-[11px] text-[#666] mb-1">{l}</div>
+      <div className="text-xl font-semibold" style={c ? { color: c } : undefined}>{v}</div>
+      {sub && <div className="text-[11px] text-[#666] mt-0.5">{sub}</div>}
+    </div>
+  )
+
+  return (
+    <>
+      <div className="grid gap-2.5 mb-3.5" style={{ gridTemplateColumns: 'repeat(auto-fit,minmax(140px,1fr))' }}>
+        {tile('Assets (written down)', fmtCurrency(pos.assetsWrittenDown), '#16a34a',
+          `${pos.assetCount} on the register`)}
+        {tile('Owed to you', fmtCurrency(pos.receivable), pos.receivable > 0 ? '#d97706' : undefined,
+          `${pos.receivableCount} invoice${pos.receivableCount !== 1 ? 's' : ''}`)}
+        {tile('Owed to the ATO', fmtCurrency(pos.owedToATO), pos.owedToATO > 0 ? '#dc2626' : undefined,
+          'GST + estimated tax')}
+        {tile('Net position', fmtCurrency(pos.net), pos.net >= 0 ? '#16a34a' : '#dc2626')}
+      </div>
+
+      <div className="bg-white border border-black/[0.12] rounded-xl p-4 mb-3.5">
+        <h2 className="text-sm font-bold mb-1">Position — {fmtD2(today())}</h2>
+        <div className="text-[11px] text-[#666] mb-3.5">
+          {biz?.company_name || 'Northern Painters'}{biz?.abn ? ` · ABN ${biz.abn}` : ''}
+          {' '}· asset values at FY {fyLabel(year)}
+        </div>
+
+        <StatementRows rows={[
+          ['WHAT YOU OWN', '', 'header'],
+          [`Plant & equipment, written down (${pos.assetCount} asset${pos.assetCount !== 1 ? 's' : ''})`,
+            fmtCurrency(pos.assetsWrittenDown), ''],
+          pos.assetsAtCost !== pos.assetsWrittenDown
+            ? ['At original cost', fmtCurrency(pos.assetsAtCost), 'sub'] as LineSpec : null,
+          cashAssets
+            ? ['Of which bought with cash (owned, but not depreciable)', fmtCurrency(cashAssets), 'sub'] as LineSpec : null,
+          null,
+
+          ['OWED TO YOU', '', 'header'],
+          ...AGE_BUCKETS.filter(b => pos.agedCount[b]).map(b => [
+            `${AGE_LABEL[b]} (${pos.agedCount[b]})`, fmtCurrency(pos.aged[b]),
+            b === '90+' ? 'warn' : 'sub',
+          ] as LineSpec),
+          ['Total owed to you (inc GST)', fmtCurrency(pos.receivable), 'bold'],
+          null,
+
+          ['OWED TO THE ATO', '', 'header'],
+          [pos.gstOwed >= 0 ? 'GST for the quarter' : 'GST refund due to you',
+            fmtCurrency(Math.abs(pos.gstOwed)), ''],
+          [`Income tax set aside (${Math.round(pos.taxRate * 100)}% of declared profit)`,
+            fmtCurrency(pos.taxSetAside), ''],
+          ['Total owed to the ATO', fmtCurrency(pos.owedToATO), pos.owedToATO > 0 ? 'total-red' : 'total-green'],
+          null,
+
+          ['NET POSITION', fmtCurrency(pos.net), pos.net >= 0 ? 'total-green' : 'total-red'],
+        ]} />
+
+        <div className="text-[11px] text-[#666] mt-4 pt-2.5 border-t border-black/[0.08]">
+          This is not a balance sheet. It leaves out your bank balance, any loans and the equity
+          side, because the app records transactions rather than account balances — a statement
+          that cannot balance should not claim to. Cash is excluded throughout: a cash job is
+          never money owed to you, since no invoice is outstanding on one. A cash-bought asset is
+          still owned and still counted, it simply earns no depreciation deduction.
+          {pos.longOverdue > 0 && <> {fmtCurrency(pos.longOverdue)} has been owed for more than
+          90 days and needs a decision rather than another reminder.</>}
+        </div>
+      </div>
+
+      {pos.invoices.length > 0 && (
+        <div className="bg-white border border-black/[0.12] rounded-xl p-4 mb-3.5">
+          <div className="text-[13px] font-bold mb-2.5">Outstanding invoices — oldest first</div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-[13px]" style={{ borderCollapse: 'collapse' }}>
+              <thead>
+                <tr className="text-[11px] text-[#666] uppercase">
+                  <th className="text-left py-1.5 pr-2">Invoice</th>
+                  <th className="text-left py-1.5 pr-2">Client</th>
+                  <th className="text-left py-1.5 pr-2">Dated</th>
+                  <th className="text-right py-1.5 pr-2">Overdue</th>
+                  <th className="text-right py-1.5">Owed</th>
+                </tr>
+              </thead>
+              <tbody>
+                {pos.invoices.map(i => (
+                  <tr key={i.id} className="border-t border-black/[0.06]">
+                    <td className="py-1.5 pr-2">{i.id}</td>
+                    <td className="py-1.5 pr-2">{i.client}</td>
+                    <td className="py-1.5 pr-2 text-[#666]">{i.date}</td>
+                    <td className="py-1.5 pr-2 text-right" style={i.daysOverdue > 90 ? { color: '#dc2626', fontWeight: 600 } : undefined}>
+                      {i.daysOverdue > 0 ? `${i.daysOverdue} days` : '—'}
+                    </td>
+                    <td className="py-1.5 text-right font-medium">{fmtCurrency(i.owed)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </>
+  )
+}
+
+const fmtD2 = (d: string) =>
+  new Date(d + 'T00:00').toLocaleDateString('en-AU', { day: 'numeric', month: 'long', year: 'numeric' })
+
 export default function Tax() {
   const { data: invoices = [], isLoading } = useTable('np_invoices')
   const { data: materials = [] } = useTable('np_materials')
@@ -145,7 +269,7 @@ export default function Tax() {
   const { data: biz } = useBusinessSettings()
 
   const curFY = currentFY()
-  const [tab, setTab] = useState<'bas' | 'pl'>('bas')
+  const [tab, setTab] = useState<'bas' | 'pl' | 'pos'>('bas')
   const [basis, setBasis] = useState<'cash' | 'accrual'>('cash')
   const [year, setYear] = useState(curFY)
   const [quarter, setQuarter] = useState(currentQuarter())
@@ -251,6 +375,16 @@ export default function Tax() {
     () => unrecognisedIncome(invoices, basis, invStatus, d => inFY(d, year), invOnBooks),
     [invoices, basis, year, cashJobIds])
 
+  // Where the business stands today: what is owned, who owes, what the ATO
+  // is due. Built from figures already derived above rather than recomputed.
+  const pos = useMemo(() => position({
+    invoices, assets, todayStr: today(), year,
+    gstOwed: bas.netGST,
+    taxableProfit: pl.taxableProfit,
+    taxRate: pl.taxRate,
+    invOnBooks, calcOwed,
+  }), [invoices, assets, year, bas, pl, cashJobIds])
+
   const { books, offBooks } = pl
   const hasOffBooks = offBooks.income !== 0 || offBooks.costs !== 0
   const profitCol = (v: number) => v >= 0 ? 'total-green' : 'total-red'
@@ -283,21 +417,13 @@ export default function Tax() {
     [`Estimated income tax (${Math.round(pl.taxRate * 100)}%)`, fmtCurrency(pl.tax), ''],
     ['PROFIT AFTER TAX (declared)', fmtCurrency(pl.taxableProfit - pl.tax), profitCol(pl.taxableProfit - pl.tax)],
 
-    // Everything the ATO does not see, kept out of the figures above and
-    // applied here, where it belongs: real money, no tax effect.
-    ...(hasOffBooks ? [
-      null,
-      ['OFF THE BOOKS — CASH', '', 'header'],
-      offBooks.income ? ['Cash income (not declared, no GST)', fmtCurrency(offBooks.income), ''] as LineSpec : null,
-      offBooks.materials ? ['Materials paid cash (not deductible)', fmtCurrency(-offBooks.materials), ''] as LineSpec : null,
-      offBooks.labour ? ['Labour paid cash (not deductible)', fmtCurrency(-offBooks.labour), ''] as LineSpec : null,
-      offBooks.expenses ? ['Expenses paid cash (not deductible)', fmtCurrency(-offBooks.expenses), ''] as LineSpec : null,
-      offBooks.depreciation ? ['Depreciation on cash-bought assets (not deductible)', fmtCurrency(-offBooks.depreciation), ''] as LineSpec : null,
-      ['Net cash position', fmtCurrency(offBooks.net), profitCol(offBooks.net)],
-    ] as LineSpec[] : []),
+    // Cash is not here, and that is the point: this statement is the
+    // declared position, what the ATO sees and nothing else. A cash cost
+    // claims no deduction and no GST credit, and a cash job's income is not
+    // declared, so none of it belongs on a page you hand to an accountant.
+    // The money is real and is reported where it is acted on — the Dashboard
+    // and the Profitability page — as profit already clear of tax.
 
-    null,
-    ['TOTAL PROFIT AFTER TAX', fmtCurrency(pl.afterTax), profitCol(pl.afterTax)],
     null,
     ['GST SUMMARY', '', 'header'],
     ['GST collected from clients', fmtCurrency(pl.gstCollected), ''],
@@ -435,7 +561,7 @@ h1{font-size:18px;margin-bottom:4px}h2{font-size:14px;margin:16px 0 8px;border-b
 
       {/* Tabs */}
       <div className="flex border border-black/[0.12] rounded-lg overflow-hidden w-fit mb-4">
-        {([['bas', 'BAS / GST', ReceiptText], ['pl', 'P&L / Income', LineChart]] as const).map(([id, label, Icon], i) => (
+        {([['bas', 'BAS / GST', ReceiptText], ['pl', 'P&L / Income', LineChart], ['pos', 'Position', Scale]] as const).map(([id, label, Icon], i) => (
           <button key={id} onClick={() => setTab(id)}
             className={`flex items-center gap-1.5 px-3.5 py-2 text-[13px] ${i ? 'border-l border-black/[0.12]' : ''} ${tab === id ? 'bg-blue-600 text-white' : 'bg-white hover:bg-[#f5f4f0]'}`}>
             <Icon size={14} /> {label}
@@ -464,7 +590,7 @@ h1{font-size:18px;margin-bottom:4px}h2{font-size:14px;margin:16px 0 8px;border-b
         </span>
       </div>
 
-      {tab === 'bas' ? (
+      {tab === 'pos' ? <PositionTab pos={pos} assets={assets} year={year} biz={biz} /> : tab === 'bas' ? (
         <>
           <div className="flex gap-2 mb-3 flex-wrap items-center">
             <label className="text-[13px] font-semibold">Financial year:</label>
@@ -531,8 +657,7 @@ h1{font-size:18px;margin-bottom:4px}h2{font-size:14px;margin:16px 0 8px;border-b
               { l: 'Deductible expenses', v: fmtCurrency(books.costs) },
               { l: 'Taxable profit', v: fmtCurrency(pl.taxableProfit), c: pl.taxableProfit >= 0 ? '#16a34a' : '#dc2626' },
               { l: `Est. tax @ ${Math.round(pl.taxRate * 100)}%`, v: fmtCurrency(pl.tax), c: '#d97706' },
-              { l: 'Cash (off books)', v: fmtCurrency(offBooks.net), c: offBooks.net >= 0 ? '#16a34a' : '#dc2626' },
-              { l: 'Profit after tax', v: fmtCurrency(pl.afterTax), c: pl.afterTax >= 0 ? '#16a34a' : '#dc2626' },
+              { l: 'Profit after tax (declared)', v: fmtCurrency(pl.taxableProfit - pl.tax), c: pl.taxableProfit - pl.tax >= 0 ? '#16a34a' : '#dc2626' },
             ].map(m => (
               <div key={m.l} className="bg-[#f5f4f0] rounded-lg px-4 py-3.5">
                 <div className="text-[11px] text-[#666] mb-1">{m.l}</div>
@@ -552,11 +677,11 @@ h1{font-size:18px;margin-bottom:4px}h2{font-size:14px;margin:16px 0 8px;border-b
               <div className="text-[11px] text-[#666] mt-4 pt-2.5 border-t border-black/[0.08]">
                 This report is prepared from app data only. Confirm all figures with your accountant before lodging your
                 tax return. Income tax rate of {Math.round(pl.taxRate * 100)}% applies to base rate entities — verify your applicable rate.
-                {hasOffBooks && <> Cash is excluded from every figure above the off-the-books section: a cash cost claims no
-                deduction and no GST credit, and a Cash job&rsquo;s income is not declared. Both are still real money, so both
-                are applied to the total after tax. Based on {pl.counts.cashCostRows} cash-paid
-                cost{pl.counts.cashCostRows !== 1 ? 's' : ''} and {pl.counts.cashIncomeRows} cash job
-                invoice{pl.counts.cashIncomeRows !== 1 ? 's' : ''}.</>}
+{hasOffBooks && <> Cash is excluded from this statement entirely: a cash cost claims no
+                deduction and no GST credit, and a Cash job&rsquo;s income is not declared, so neither appears
+                above. {pl.counts.cashCostRows} cash-paid cost{pl.counts.cashCostRows !== 1 ? 's' : ''} and {pl.counts.cashIncomeRows} cash
+                job invoice{pl.counts.cashIncomeRows !== 1 ? 's' : ''} were left out on that basis; they are reported on the
+                Dashboard and the Profitability page, where they are profit already clear of tax.</>}
               </div>
             </div>
           </div>

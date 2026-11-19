@@ -9,6 +9,8 @@ import InfoTip, { TipCalc } from '@/components/InfoTip'
 import { fyLabel, fyRange, currentFY, currentQuarter, quarterRange, quarterLabel } from '@/lib/fy'
 import { dueTotals } from '@/lib/scheduled'
 import { jobProfit, byJob } from '@/lib/jobBilling'
+import { splitBooks, offBooksInvoice, isCashPaid } from '@/lib/cashBooks'
+import { isCashJob } from '@/lib/utils'
 import {
   AlertCircle, UserPlus, Clock, Users, ExternalLink, Plus, Banknote,
   CalendarDays, BarChart3, CheckSquare, CalendarPlus,
@@ -203,6 +205,28 @@ export default function Dashboard() {
     .reduce((a, b) => a + (b.amount_ex_gst || 0), 0)
   const fyTotalCost = fyMatCost + fyLabCost + fyExpCost
   const fyMargin = fyRevenue > 0 ? Math.round(((fyRevenue - fyTotalCost) / fyRevenue) * 100) : 0
+
+  // The cash side of the year, which the Tax page deliberately will not show.
+  // A cash cost claims no deduction and a cash job's income is not declared,
+  // so none of it belongs on a statement an accountant reads — but it is real
+  // money and this is where it is acted on. splitBooks does the partition, the
+  // same one the P&L uses, so the two pages cannot drift apart about what
+  // counts as cash.
+  //
+  // The net figure is profit already clear of tax: no tax was ever assessed on
+  // it, so nothing has to come off it.
+  const cashJobIds = useMemo(
+    () => new Set(jobs.filter(isCashJob).map(j => j.id)), [jobs])
+  const inFYRange = (d: any) => (d || '') >= fyStart && (d || '') <= fyEnd
+  const cashSide = useMemo(() => splitBooks({
+    invoices: invoices.filter(i => inFYRange(i.date_paid || i.date)),
+    materials: materials.filter(m => inFYRange(m.date)),
+    labour: labour.filter(l => inFYRange(l.date)),
+    expenses: expenses.filter(e => inFYRange(e.date)),
+    cashJobIds, taxRate: 0,
+  }).offBooks, [invoices, materials, labour, expenses, cashJobIds, fyStart, fyEnd])
+  const cashRows = invoices.filter(i =>
+    inFYRange(i.date_paid || i.date) && offBooksInvoice(i, cashJobIds)).length
   const mgColor = fyMargin >= 40 ? '#16a34a' : fyMargin >= 25 ? '#d97706' : '#dc2626'
 
   const pipelineV = jobs.filter(j => j.quote_status === 'Sent').reduce((a, b) => a + (b.quote_ex_gst || 0), 0)
@@ -340,6 +364,21 @@ export default function Dashboard() {
           at all until they settle.</TipCalc></>}
           value={fmtCurrency(fyRevenue)} valueColor="#16a34a"
           sub={`Invoiced: ${fmtCurrency(fyInvoiced)}`}
+        />
+        <Metric
+          label={`Cash profit FY ${fyLabel(fy)}`} borderColor={cashSide.net >= 0 ? '#7c3aed' : '#dc2626'}
+          help={<>Cash work, kept out of the Tax page entirely. A cash job&rsquo;s income is not
+          declared and a cash cost claims no deduction and no GST credit, so none of it appears on
+          the BAS or the P&amp;L. It is still real money, and this is where it is counted.
+          <TipCalc>Cash income less cash costs for the financial year — materials, labour and
+          expenses paid in cash, and everything belonging to a job marked Cash. It is
+          already clear of tax: no tax was assessed on it, so nothing comes off it.
+          Based on {cashRows} cash invoice{cashRows !== 1 ? 's' : ''}.</TipCalc></>}
+          value={cashSide.net !== 0 ? fmtCurrency(cashSide.net) : 'None'}
+          valueColor={cashSide.net > 0 ? '#7c3aed' : cashSide.net < 0 ? '#dc2626' : '#666'}
+          sub={cashSide.income
+            ? `${fmtCurrency(cashSide.income)} in, ${fmtCurrency(cashSide.costs)} out`
+            : 'after tax — none is assessed'}
         />
         <Metric
           label={`Gross margin FY ${fyLabel(fy)}`} borderColor={mgColor}

@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { supabase, selectAll } from '@/lib/supabase'
 import { useAuth } from '@/lib/auth'
-import { fmtCurrency, invExGST } from '@/lib/utils'
+import { fmtCurrency, invExGST, isCashJob } from '@/lib/utils'
 import { jobProfit, byJob } from '@/lib/jobBilling'
 import { useBusinessSettings } from '@/pages/SettingsPage'
 import { Loader2, X } from 'lucide-react'
@@ -85,8 +85,14 @@ export default function Profitability() {
       const margin = money.margin
       const estLab = j.est_labour_ex || 0
       const estMat = j.est_materials_ex || 0
+      // A cash job's profit is already clear of tax — none was ever assessed
+      // on it — so it is not comparable with a declared job's gross profit
+      // without saying so. Marked rather than adjusted: the margin on the
+      // work is the margin on the work, and silently grossing one up to
+      // compare with the other would misstate both.
       return { j, quoted, agreed, vars, invoicedExGST, basis: money.basis, label: money.label,
-               totalRevenue, labourCost, matCost, totalCost, grossProfit, margin, estLab, estMat }
+               totalRevenue, labourCost, matCost, totalCost, grossProfit, margin, estLab, estMat,
+               cash: isCashJob(j) }
     }).filter(r => r.agreed > 0 || r.labourCost > 0 || r.matCost > 0)
 
     if (sortBy === 'revenue') mapped.sort((a, b) => b.totalRevenue - a.totalRevenue)
@@ -175,7 +181,15 @@ export default function Profitability() {
                 return (
                   <tr key={r.j.id} className="border-b border-black/[0.06] hover:bg-[#fafaf8] cursor-pointer" onClick={() => nav(jobPath(r.j.id))}>
                     <td className="px-2.5 py-[7px] text-[#2563eb] font-medium">{r.j.id}</td>
-                    <td className="px-2.5 py-[7px]">{r.j.client}</td>
+                    <td className="px-2.5 py-[7px]">
+                      {r.j.client}
+                      {r.cash && (
+                        <span className="ml-1.5 text-[10px] font-semibold px-1 py-px rounded bg-purple-100 text-purple-800 align-middle"
+                          title="Cash job — not declared, no GST, and no tax assessed. This profit is already clear of tax.">
+                          CASH
+                        </span>
+                      )}
+                    </td>
                     <td className="px-2.5 py-[7px] text-[11px] text-[#666]">{r.j.type || ''}</td>
                     <td className={`${R} font-medium`}>{r.agreed ? fmtCurrency(r.agreed) : '—'}</td>
                     <td className={R} style={{ color: r.vars > 0 ? '#0a7c4e' : '#666' }}>{r.vars > 0 ? fmtCurrency(r.vars) : '—'}</td>
