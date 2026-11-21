@@ -81,6 +81,24 @@ function useJobs() {
   })
 }
 
+/**
+ * Just enough of the labour log to tell which jobs were being worked.
+ *
+ * Two columns, not the table: this is only ever asked "was anything logged on
+ * job X around date Y", and the intake panel is the only caller.
+ */
+function useLabourDates() {
+  const { user } = useAuth()
+  return useQuery<any[]>({
+    queryKey: ['np_labour_dates_mat', user?.id],
+    queryFn: async () => {
+      const { data } = await supabase.from('np_labour').select('job_id,date').eq('user_id', user!.id)
+      return data ?? []
+    },
+    enabled: !!user,
+  })
+}
+
 function useUpsertMaterial() {
   const qc = useQueryClient()
   const { user } = useAuth()
@@ -131,6 +149,7 @@ function emptyForm() {
 export default function Materials() {
   const { data: materials = [], isLoading } = useMaterials()
   const { data: jobs = [] } = useJobs()
+  const { data: labour = [] } = useLabourDates()
   const { data: bizSettings } = useBusinessSettings()
   const upsert = useUpsertMaterial()
   const del = useDeleteMaterial()
@@ -324,7 +343,7 @@ export default function Materials() {
       </div>
 
       <MaterialIntakePanel
-        jobs={jobs} materials={materials}
+        jobs={jobs} materials={materials} labour={labour}
         apiKey={bizSettings?.ai_api_key?.trim()}
         onSave={async (m) => { await upsert.mutateAsync(m) }} />
 
