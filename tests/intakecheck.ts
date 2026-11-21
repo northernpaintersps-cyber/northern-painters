@@ -13,7 +13,7 @@
 
 import {
   matchJob, intakeRow, failedRow, flagDuplicates, toMaterial, counts,
-  problemWith, readyToApprove, CONFIDENT,
+  problemWith, readyToApprove, CONFIDENT, activeJobs, jobsForPicker,
 } from '@/lib/materialIntake'
 
 let fail = 0
@@ -224,6 +224,118 @@ const jobs = [
   // cleanup turned on exactly this distinction.
   const noJob = toMaterial({ ...r, job_id: '' }, 'user-1')
   ok(noJob.job_id === null, 'no job writes NULL, never an empty string')
+}
+
+// ── Activity: a filter, never a picker ──────────────────────
+//
+// Measured on this business's own data before any of it was built: of 126
+// material purchases that already carry a job, the right job had work logged
+// within a week 96% of the time — but a median of 6 jobs qualified. Excellent
+// filter, hopeless picker, and the code has to treat it as exactly that.
+{
+  const work = [
+    { job_id: 'NP-0059', date: '2026-11-02' },
+    { job_id: 'NP-7142', date: '2026-10-28' },
+    { job_id: 'NP-0073', date: '2026-01-15' },   // long finished
+    { job_id: null, date: '2026-11-02' },        // no job on the row
+  ]
+  const a = activeJobs(work, '2026-11-05')
+  ok(a.has('NP-0059') && a.has('NP-7142'), 'jobs worked within the fortnight are active')
+  ok(!a.has('NP-0073'), 'one last touched in January is not')
+  ok(a.size === 2, 'and a row with no job adds nothing')
+
+  ok(activeJobs(work, '').size === 0, 'no invoice date, no activity')
+  ok(activeJobs([], '2026-11-05').size === 0, 'no work logged, nothing active')
+  // The window is adjustable, and narrowing it really does narrow: the
+  // nearest work to 5 Nov is the 2nd, three days off.
+  ok(activeJobs(work, '2026-11-05', 1).size === 0, 'a one-day window finds nothing three days away')
+  ok(activeJobs(work, '2026-11-03', 1).has('NP-0059'), 'but does find work the day before')
+}
+
+// ── It breaks a tie the address cannot ──────────────────────
+{
+  // Two jobs the address genuinely cannot separate — five such pairs exist in
+  // this business's real job list.
+  const twins = [
+    { id: 'A', client: 'X', address: '5 Short St, Lismore' },
+    { id: 'B', client: 'Y', address: '5 Short St, Lismore' },
+  ]
+  const blind = matchJob(twins, '5 Short St, Lismore')
+  ok(blind.score < CONFIDENT, 'without activity the tie stands and nobody is picked for you')
+
+  const decided = matchJob(twins, '5 Short St, Lismore', '', new Set(['B']))
+  ok(decided.jobId === 'B', 'the job actually being worked wins the tie')
+  ok(decided.score >= CONFIDENT, 'and that is a real enough answer to fill in')
+  ok(decided.decidedByActivity === true, 'marked, so the reviewer knows the address did not decide it')
+
+  // Both active is still a question for a person.
+  const both = matchJob(twins, '5 Short St, Lismore', '', new Set(['A', 'B']))
+  ok(both.score < CONFIDENT, 'two active candidates decide nothing')
+  ok(both.decidedByActivity !== true, 'and nothing claims they did')
+
+  // Neither active: the tie stands.
+  ok(matchJob(twins, '5 Short St, Lismore', '', new Set(['Z'])).score < CONFIDENT,
+     'an unrelated active job does not break it either')
+}
+
+// ── It rescues an address with no street number ─────────────
+{
+  // Ten of ninety real jobs look like this: a locality and nothing else.
+  const locals = [
+    { id: 'NP-7147', client: 'A', address: 'Billinudgel ' },
+    { id: 'NP-0100', client: 'B', address: 'Newrybar' },
+  ]
+  const cold = matchJob(locals, 'Billinudgel')
+  ok(cold.jobId === 'NP-7147' && cold.score < CONFIDENT,
+     'offered but not filled in, because a locality cannot identify a house')
+
+  const warm = matchJob(locals, 'Billinudgel', '', new Set(['NP-7147']))
+  ok(warm.jobId === 'NP-7147', 'still the same job')
+  ok(warm.active === true, 'now known to be the one being worked')
+}
+
+// ── It never picks a job on its own ─────────────────────────
+{
+  // The 96%/median-6 result is why: activity alone would be wrong most of the
+  // time, and a wrong job nobody chose is the failure this feature is for.
+  ok(matchJob(jobs, '', '', new Set(['NP-0059'])).jobId === null,
+     'an active job with no address match is not suggested')
+  ok(matchJob(jobs, 'somewhere else entirely', '', new Set(['NP-0059'])).jobId === null,
+     'nor when the address matches nothing')
+}
+
+// ── A dormant job is demoted, not excluded ──────────────────
+{
+  // A delivery can land before the first day on site, and the work log can
+  // simply be behind — so a good address match on a quiet job stays on offer.
+  const dormant = matchJob(jobs, '3 Kenzi Rise, Nimbin', '', new Set(['NP-0059']))
+  ok(dormant.jobId === 'NP-9436', 'the address still wins the suggestion')
+  ok(dormant.score < CONFIDENT, 'but it is not filled in while the job looks dormant')
+  ok(dormant.active === false, 'and it is marked as not currently being worked')
+
+  // With no activity data at all nothing is demoted.
+  ok(matchJob(jobs, '3 Kenzi Rise, Nimbin', '', new Set()).score >= CONFIDENT,
+     'an empty activity set means no information, not bad news')
+  ok(matchJob(jobs, '3 Kenzi Rise, Nimbin').score >= CONFIDENT,
+     'as does none being passed at all')
+}
+
+// ── intakeRow carries it through ────────────────────────────
+{
+  const r = intakeRow({ supplier: 'Dulux', job_address: '5 Short St', date: '2026-11-02' },
+                      'f.pdf', [{ id: 'A', address: '5 Short St' }, { id: 'B', address: '5 Short St' }],
+                      'k', new Set(['B']))
+  ok(r.job_id === 'B', 'a row filled in by the tie-break is ready to approve')
+}
+
+// ── The picker is ordered for a person ──────────────────────
+{
+  const ordered = jobsForPicker(jobs, new Set(['NP-9436', 'NP-7142']))
+  ok(ordered.length === jobs.length, 'every job is still offered')
+  ok(['NP-9436', 'NP-7142'].includes(String(ordered[0].id)), 'the active ones come first')
+  ok(['NP-9436', 'NP-7142'].includes(String(ordered[1].id)), 'both of them')
+  ok(!['NP-9436', 'NP-7142'].includes(String(ordered[2].id)), 'then the rest')
+  ok(jobsForPicker(jobs, new Set()).length === jobs.length, 'with nothing active the order is untouched')
 }
 
 console.log(fail ? `\n${fail} FAILED` : '\nall passed')

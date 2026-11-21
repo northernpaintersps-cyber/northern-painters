@@ -14,7 +14,8 @@ import { useRef, useState, useMemo } from 'react'
 import { extractInvoice } from '@/lib/ai'
 import {
   intakeRow, failedRow, flagDuplicates, toMaterial, counts, problemWith,
-  readyToApprove, CONFIDENT, type IntakeRow,
+  readyToApprove, CONFIDENT, activeJobs, jobsForPicker, ACTIVE_DAYS,
+  type IntakeRow,
 } from '@/lib/materialIntake'
 import { fmtCurrency } from '@/lib/utils'
 import JobPicker from '@/components/JobPicker'
@@ -24,9 +25,11 @@ import {
 
 type Row = Record<string, any>
 
-export default function MaterialIntakePanel({ jobs, materials, apiKey, onSave }: {
+export default function MaterialIntakePanel({ jobs, materials, labour, apiKey, onSave }: {
   jobs: Row[]
   materials: Row[]
+  /** Work logged, so a job being worked can break a tie the address cannot. */
+  labour: Row[]
   apiKey?: string
   /** Writes one approved row. Returns when it is saved. */
   onSave: (material: Row) => Promise<void>
@@ -59,7 +62,12 @@ export default function MaterialIntakePanel({ jobs, materials, apiKey, onSave }:
     // progress count is only honest if they finish in order.
     for (const [i, file] of files.entries()) {
       try {
-        found.push(intakeRow(await extractInvoice(apiKey, file), file.name, jobs))
+        const x = await extractInvoice(apiKey, file)
+        // Activity is worked out per invoice, from that invoice's own date —
+        // a batch spanning a fortnight has a different set of live jobs at
+        // each end of it.
+        found.push(intakeRow(x, file.name, jobs, undefined,
+          activeJobs([...labour, ...materials], x.date)))
       } catch (e: any) {
         found.push(failedRow(file.name, e?.message || 'Could not be read'))
       }
@@ -203,8 +211,21 @@ export default function MaterialIntakePanel({ jobs, materials, apiKey, onSave }:
                   {!done && r.status !== 'failed' && (
                     <div className="mt-2 flex items-end gap-2 flex-wrap">
                       <div className="min-w-[200px] flex-1">
-                        <JobPicker jobs={jobs} value={r.job_id}
+                        <JobPicker
+                          jobs={jobsForPicker(jobs, activeJobs([...labour, ...materials], r.date))}
+                          value={r.job_id}
                           onChange={(id: string) => update(r.key, { job_id: id })} />
+                        {r.job_id && r.suggestion.decidedByActivity && r.job_id === r.suggestion.jobId && (
+                          <div className="mt-1 text-[11px] text-[#666]">
+                            Two jobs share this address — chose the one worked in the last {ACTIVE_DAYS} days. Check it.
+                          </div>
+                        )}
+                        {r.job_id && !r.suggestion.decidedByActivity && r.suggestion.active === false
+                          && r.job_id === r.suggestion.jobId && (
+                          <div className="mt-1 text-[11px] text-[#666]">
+                            No work logged on this job around {r.date || 'the invoice date'}.
+                          </div>
+                        )}
                         {!r.job_id && r.suggestion.jobId && (
                           <button onClick={() => update(r.key, { job_id: r.suggestion.jobId! })}
                             className="mt-1 text-[11px] text-blue-700 hover:underline text-left">

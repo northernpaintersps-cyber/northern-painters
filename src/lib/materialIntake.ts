@@ -45,12 +45,48 @@ const tokens = (s: unknown): string[] =>
   String(s ?? '').toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').split(/\s+/)
     .filter(w => w && !NOISE.has(w))
 
+/** How many days either side of an invoice count as "this job was running". */
+export const ACTIVE_DAYS = 14
+
+const dayOf = (s: unknown): number | null => {
+  const t = Date.parse(`${String(s ?? '').slice(0, 10)}T00:00:00`)
+  return Number.isFinite(t) ? Math.floor(t / 864e5) : null
+}
+
+/**
+ * The jobs being worked on around a date.
+ *
+ * Measured on this data before it was built: of 126 material purchases that
+ * already carry a job, the right job had labour or materials logged within a
+ * week 96% of the time — but a median of 6 jobs qualified. So this is an
+ * excellent filter and a hopeless picker, and it is only ever used as the
+ * former. A job is never suggested because it was active; an address match is
+ * only believed, or disbelieved, in the light of whether it was.
+ */
+export function activeJobs(
+  rows: Row[], onDate: unknown, days = ACTIVE_DAYS,
+): Set<string> {
+  const d = dayOf(onDate)
+  const out = new Set<string>()
+  if (d === null) return out
+  for (const r of rows) {
+    if (!r.job_id) continue
+    const rd = dayOf(r.date)
+    if (rd !== null && Math.abs(rd - d) <= days) out.add(String(r.job_id))
+  }
+  return out
+}
+
 export interface JobMatch {
   jobId: string | null
   /** 0–1. Below CONFIDENT the suggestion is shown but not pre-selected. */
   score: number
   /** What matched, for the reviewer: "12 Bay St" rather than a number. */
   on: string
+  /** True when work was logged on this job around the invoice date. */
+  active?: boolean
+  /** Set when the address alone could not decide and activity did. */
+  decidedByActivity?: boolean
 }
 
 /** At or above this a suggestion is good enough to fill in for you. */
@@ -68,14 +104,23 @@ export const CONFIDENT = 0.6
  * A street number must match if both sides have one. "12 Bay St" and "14 Bay
  * St" are different houses and often different clients, and a wrong job here
  * is the error the whole review step exists to prevent.
+ *
+ * `active` is the set of jobs being worked around the invoice date. It never
+ * creates a match — see activeJobs — but it decides between two addresses
+ * that score the same, and it rescues the case the address cannot answer at
+ * all. Ten of this business's ninety jobs have an address with no street
+ * number ("Billinudgel", "Newrybar", "Wategos Beach") and five pairs are
+ * indistinguishable from one another; those are the twenty where the string
+ * has run out of information and something else has to supply it.
  */
-export function matchJob(jobs: Row[], address: unknown, client?: unknown): JobMatch {
+export function matchJob(
+  jobs: Row[], address: unknown, client?: unknown, active?: Set<string> | null,
+): JobMatch {
   const want = tokens(address)
   if (!want.length && !String(client ?? '').trim()) return { jobId: null, score: 0, on: '' }
 
   const wantNums = want.filter(w => /^\d+$/.test(w))
-  let best: JobMatch = { jobId: null, score: 0, on: '' }
-  let second = 0
+  const scored: { id: string; score: number; on: string }[] = []
 
   for (const j of jobs) {
     const have = tokens(j.address)
@@ -99,26 +144,56 @@ export function matchJob(jobs: Row[], address: unknown, client?: unknown): JobMa
       if (c.some(w => jc.includes(w))) score = Math.min(1, score + 0.15)
     }
 
-    if (score > best.score) {
-      second = best.score
-      best = { jobId: String(j.id), score: r2(score), on: String(j.address ?? '') }
-    } else if (score > second) second = score
+    if (score > 0) scored.push({ id: String(j.id), score, on: String(j.address ?? '') })
   }
 
-  // Two guards against a confident wrong answer, both found by running real
-  // addresses through this rather than by reading it:
-  //
-  // An address with no street number cannot identify a house. "Byron Bay"
-  // shares every word with "12 Bay St, Byron Bay" and scored a perfect match
-  // on it — and on "120 Bay St, Byron Bay" equally, so it picked whichever
-  // job came first. It is still worth offering; it is not worth filling in.
-  if (!wantNums.length) best = { ...best, score: r2(Math.min(best.score, CONFIDENT - 0.2)) }
+  if (!scored.length) return { jobId: null, score: 0, on: '' }
+  scored.sort((a, b) => b.score - a.score)
 
-  // And a near-tie is not a match either way round: if two jobs score within
-  // a hair of each other, the reviewer picks, not the loop order.
-  if (best.score - second < 0.1) best = { ...best, score: r2(Math.min(best.score, CONFIDENT - 0.1)) }
+  const top = scored[0].score
+  // Everything the address cannot separate from the leader.
+  const tied = scored.filter(s => top - s.score < 0.1)
+  const live = active ? tied.filter(s => active.has(s.id)) : []
 
-  return best
+  // Activity decides, but only when it decides cleanly: exactly one of the
+  // tied jobs was being worked. Two active candidates is still a question for
+  // a person, and so is none.
+  const decided = live.length === 1 ? live[0] : null
+  const pick = decided ?? scored[0]
+  const wasActive = !!active?.has(pick.id)
+
+  let score = pick.score
+  let decidedByActivity = false
+
+  if (decided && tied.length > 1) {
+    // The address was ambiguous and the work log was not. That is a real
+    // answer, so it is allowed to be filled in — but it is marked, because
+    // the reviewer should know the address alone did not pick this job.
+    score = Math.max(score, CONFIDENT)
+    decidedByActivity = true
+  } else {
+    // An address with no street number cannot identify a house. "Byron Bay"
+    // shares every word with "12 Bay St, Byron Bay" and scored a perfect
+    // match — on both Bay St jobs equally, so it took whichever came first.
+    // It is still worth offering; it is not worth filling in.
+    if (!wantNums.length) score = Math.min(score, CONFIDENT - 0.2)
+    // And an unresolved near-tie is nobody's to break but the reviewer's.
+    if (tied.length > 1) score = Math.min(score, CONFIDENT - 0.1)
+  }
+
+  // A job nobody has touched for a fortnight is not where today's paint went,
+  // whatever its address says. Not ruled out — a delivery can precede the
+  // first day on site, and the work log can simply be behind — but not filled
+  // in either, which leaves it as a one-click suggestion.
+  if (active && active.size > 0 && !wasActive) score = Math.min(score, CONFIDENT - 0.1)
+
+  return {
+    jobId: pick.id,
+    score: r2(score),
+    on: pick.on,
+    active: wasActive,
+    ...(decidedByActivity ? { decidedByActivity: true } : {}),
+  }
 }
 
 export type IntakeStatus = 'pending' | 'approved' | 'rejected' | 'failed'
@@ -154,8 +229,10 @@ export interface IntakeRow {
 /** One extracted invoice, before anybody has looked at it. */
 export function intakeRow(
   extraction: Row, fileName: string, jobs: Row[], key?: string,
+  /** Jobs worked around this invoice's date — see activeJobs. */
+  active?: Set<string> | null,
 ): IntakeRow {
-  const suggestion = matchJob(jobs, extraction.job_address, extraction.supplier)
+  const suggestion = matchJob(jobs, extraction.job_address, extraction.supplier, active)
   const ex = n(extraction.cost_ex_gst)
   const gst = n(extraction.gst)
   return {
@@ -302,3 +379,20 @@ export function problemWith(r: IntakeRow): string | null {
 /** The rows an Approve all would take: everything clean and unambiguous. */
 export const readyToApprove = (rows: IntakeRow[]): IntakeRow[] =>
   rows.filter(r => r.status === 'pending' && !r.duplicateOf && !problemWith(r) && !!r.job_id)
+
+/**
+ * The job list, ordered for somebody choosing by hand.
+ *
+ * Every case the matcher cannot answer ends here, and that is not a small
+ * set: ten of ninety jobs have an address with no street number, so they will
+ * be chosen by hand every time no matter how good the matching gets. Putting
+ * the jobs that were being worked that fortnight at the top turns a search
+ * into a glance.
+ */
+export function jobsForPicker(jobs: Row[], active: Set<string>): Row[] {
+  if (!active.size) return jobs
+  const live: Row[] = []
+  const rest: Row[] = []
+  for (const j of jobs) (active.has(String(j.id)) ? live : rest).push(j)
+  return [...live, ...rest]
+}
