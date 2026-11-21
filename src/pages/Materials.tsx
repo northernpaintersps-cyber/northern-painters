@@ -12,6 +12,7 @@ import {
 import { PAID_BY, isCashPaid } from '@/lib/cashBooks'
 import { NOT_BILLABLE } from '@/lib/utils'
 import { extractInvoice } from '@/lib/ai'
+import MaterialIntakePanel from '@/components/MaterialIntakePanel'
 import { useBusinessSettings } from '@/pages/SettingsPage'
 import {
   Plus, Loader2, Trash2, Edit2, Scan, AlertCircle,
@@ -321,6 +322,11 @@ export default function Materials() {
           </button>
         </div>
       </div>
+
+      <MaterialIntakePanel
+        jobs={jobs} materials={materials}
+        apiKey={bizSettings?.ai_api_key?.trim()}
+        onSave={async (m) => { await upsert.mutateAsync(m) }} />
 
       {/* Filters */}
       <div className="bg-white border border-black/[0.12] rounded-xl px-3.5 py-3 mb-2.5">
