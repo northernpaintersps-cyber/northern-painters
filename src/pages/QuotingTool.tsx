@@ -40,7 +40,7 @@ import {
   type PartDef, type SplitBy,
 } from '@/lib/quoteSplit'
 import { useRateCard, cardHoursPerUnit, cardSummary } from '@/lib/rateCard'
-import { Plus, Trash2, Loader2, Sparkles, Save, ClipboardList, Settings2, FileText, Image as ImageIcon, Ruler, Hammer, RefreshCw, FileDown, Lock, ArrowUp, ArrowDown, Check, CopyPlus, ListChecks, Download, Users, Info, AlertTriangle, X } from 'lucide-react'
+import { Plus, Trash2, Loader2, Sparkles, Save, ClipboardList, Settings2, FileText, HardDrive, Image as ImageIcon, Ruler, Hammer, RefreshCw, FileDown, Lock, ArrowUp, ArrowDown, Check, CopyPlus, ListChecks, Download, Users, Info, AlertTriangle, X } from 'lucide-react'
 
 type Row = Record<string, any>
 const INP = 'w-full px-2.5 py-2 text-[13px] bg-white border border-black/20 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500'
@@ -259,6 +259,8 @@ export default function QuotingTool() {
   const overheadSet = useRef(false)
   const [scopePhotos, setScopePhotos] = useState<ScopePhoto[]>([])
   const [photoLinks, setPhotoLinks] = useState<Record<string, string[]>>({})
+  const [docFileNote, setDocFileNote] = useState('')
+  const driveRef = useRef<HTMLInputElement>(null)
   const [highlightKey, setHighlightKey] = useState('')
   const [scopeOpen, setScopeOpen] = useState(false)   // the phone sheet
   // Show every substrate, or only the groups this service touches. Narrowed
@@ -713,10 +715,27 @@ export default function QuotingTool() {
     ? scaleTo(split.parts, lockedPrice as number)
     : split.parts
 
+  /**
+   * Files chosen for the takeoff, from wherever.
+   *
+   * The Images and PDF buttons filter by type at the picker, but the Drive
+   * button cannot: on Android, an input with `accept="image/*"` opens the
+   * photo picker, which has no Drive in it. Only an unfiltered input opens
+   * the document picker where Drive, Dropbox and the rest appear as
+   * providers — and an unfiltered picker can hand back a .docx. So the type
+   * check lives here instead, where it covers every route in.
+   */
   function addDocFiles(e: React.ChangeEvent<HTMLInputElement>) {
     const picked = Array.from(e.target.files ?? [])
-    if (picked.length) setDocs(d => [...d, ...picked.map(f => ({ file: f, measurements: '' }))])
     e.target.value = ''
+    if (!picked.length) return
+    const usable = picked.filter(f =>
+      f.type.startsWith('image/') || f.type === 'application/pdf')
+    const dropped = picked.filter(f => !usable.includes(f))
+    setDocFileNote(dropped.length
+      ? `${dropped.map(f => f.name).join(', ')} — only photos and PDFs can be read.`
+      : '')
+    if (usable.length) setDocs(d => [...d, ...usable.map(f => ({ file: f, measurements: '' }))])
   }
 
   /**
@@ -1472,6 +1491,16 @@ export default function QuotingTool() {
               <input ref={imgRef} type="file" accept="image/*" multiple className="hidden" onChange={addDocFiles} />
               <button onClick={() => pdfRef.current?.click()} className={BTN}><FileText size={13} /> Add PDF</button>
               <input ref={pdfRef} type="file" accept="application/pdf" multiple className="hidden" onChange={addDocFiles} />
+              {/* Deliberately unfiltered. On Android an input with an accept
+                  of image/* opens the photo picker, which cannot see Drive;
+                  only an unfiltered one opens the document picker, where
+                  Drive is listed as a provider. addDocFiles does the type
+                  check that the picker therefore cannot. */}
+              <button onClick={() => driveRef.current?.click()} className={BTN}
+                title="Opens the system file picker, where Google Drive and other cloud providers appear">
+                <HardDrive size={13} /> From Drive / Files
+              </button>
+              <input ref={driveRef} type="file" multiple className="hidden" onChange={addDocFiles} />
               {docs.length > 0 && (
                 <button onClick={runExtract} disabled={extracting} className={`${BTN_P} disabled:opacity-50`}>
                   {extracting ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />} Extract quantities
@@ -1481,6 +1510,9 @@ export default function QuotingTool() {
                 <span className="text-[11px] text-[#666] self-center">{extractStage}</span>
               )}
             </div>
+            {docFileNote && (
+              <div className="text-[11px] text-[#b3261e] mb-2">{docFileNote}</div>
+            )}
 
             {/* A failure has to appear where the button is. This used to render
                 only inside the Estimate panel, which is not the tab you are on

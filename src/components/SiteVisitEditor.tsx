@@ -6,7 +6,7 @@ import JobPicker from '@/components/JobPicker'
 import { genId, today } from '@/lib/utils'
 import {
   ArrowLeft, Save, Check, Plus, Trash2, Mic, Camera, Upload, Copy,
-  Pencil, Eraser, Undo2, Sparkles, Loader2,
+  Pencil, Eraser, Undo2, Sparkles, Loader2, HardDrive,
 } from 'lucide-react'
 import { shrinkToDataUrl } from '@/lib/image'
 import { uploadPhoto, signPhotos } from '@/lib/photoStore'
@@ -210,6 +210,8 @@ export default function SiteVisitEditor({ initial, jobs, visitId, userId, isNew,
   const [uploading, setUploading] = useState(0)
   const camRef = useRef<HTMLInputElement>(null)
   const upRef = useRef<HTMLInputElement>(null)
+  const driveRef = useRef<HTMLInputElement>(null)
+  const [photoNote, setPhotoNote] = useState('')
 
   const patch = (p: Partial<SVState>) => setSv(s => ({ ...s, ...p }))
 
@@ -223,8 +225,17 @@ export default function SiteVisitEditor({ initial, jobs, visitId, userId, isNew,
 
   // Photos
   async function addPhotos(e: React.ChangeEvent<HTMLInputElement>, tag = 'reference') {
-    const files = Array.from(e.target.files ?? [])
+    const picked = Array.from(e.target.files ?? [])
     e.target.value = ''
+    if (!picked.length) return
+    // The Drive button's input is unfiltered on purpose — on Android an
+    // accept of image/* opens the photo picker, which cannot see Drive — so
+    // anything that is not an image is turned away here rather than being
+    // shrunk, uploaded and then found to be a spreadsheet.
+    const files = picked.filter(f => f.type.startsWith('image/'))
+    setPhotoNote(files.length < picked.length
+      ? `${picked.length - files.length} file${picked.length - files.length !== 1 ? 's' : ''} skipped — photos only.`
+      : '')
     if (!files.length) return
     setUploading(n => n + files.length)
 
@@ -512,8 +523,17 @@ export default function SiteVisitEditor({ initial, jobs, visitId, userId, isNew,
               <button onClick={() => camRef.current?.click()} className={BTN_P}><Camera size={13} /> Take photo</button>
               <input ref={camRef} type="file" accept="image/*" capture="environment" className="hidden"
                 onChange={e => addPhotos(e, 'before')} />
-              <button onClick={() => upRef.current?.click()} className={BTN}><Upload size={13} /> Upload</button>
+              <button onClick={() => upRef.current?.click()} className={BTN}><Upload size={13} /> Gallery</button>
               <input ref={upRef} type="file" accept="image/*" multiple className="hidden"
+                onChange={e => addPhotos(e, 'reference')} />
+              {/* Unfiltered, so Android opens the document picker that lists
+                  Google Drive as a provider instead of the gallery-only photo
+                  picker. addPhotos turns away anything that is not an image. */}
+              <button onClick={() => driveRef.current?.click()} className={BTN}
+                title="Opens the system file picker, where Google Drive and other cloud providers appear">
+                <HardDrive size={13} /> Drive / Files
+              </button>
+              <input ref={driveRef} type="file" multiple className="hidden"
                 onChange={e => addPhotos(e, 'reference')} />
               {/* One request for the lot: ten photos dictated on a walkthrough
                   should not be ten taps and ten calls. */}
@@ -524,6 +544,7 @@ export default function SiteVisitEditor({ initial, jobs, visitId, userId, isNew,
               )}
             </div>
           </div>
+          {photoNote && <div className="text-[11px] text-[#b3261e] mb-2">{photoNote}</div>}
           {sortErr && (
             <div className="mb-2 text-[11px] text-[#991b1b] bg-[#fee2e2] border border-[#fca5a5] rounded px-2 py-1.5">
               {sortErr}
